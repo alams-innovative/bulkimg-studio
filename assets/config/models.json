@@ -1,0 +1,29 @@
+{
+  "defaultModel": "gpt-image-2",
+  "models": [
+    {
+      "id": "gpt-image-2",
+      "label": "GPT Image 2",
+      "enabled": true,
+      "maxResolution": "2048x2048",
+      "ratios": ["1:1", "4:5", "16:9", "9:16"],
+      "features": ["Photorealism", "Prompt adherence", "High-fidelity image inputs"]
+    },
+    {
+      "id": "dall-e-3",
+      "label": "DALL-E 3 (deprecated)",
+      "enabled": false,
+      "maxResolution": "1024x1792",
+      "ratios": ["1:1", "7:4", "4:7"],
+      "features": ["Legacy compatibility"]
+    },
+    {
+      "id": "dall-e-2",
+      "label": "DALL-E 2 (deprecated)",
+      "enabled": false,
+      "maxResolution": "1024x1024",
+      "ratios": ["1:1"],
+      "features": ["Legacy compatibility"]
+    }
+  ]
+}

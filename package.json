@@ -1,0 +1,29 @@
+{
+  "name": "bulkimg-studio",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Windows-first batch AI image generation studio built with Electrobun and Bun.",
+  "scripts": {
+    "start": "electrobun dev",
+    "dev": "electrobun dev --watch",
+    "build": "electrobun build --env=stable",
+    "build:canary": "electrobun build --env=canary",
+    "check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "electrobun": "1.18.1",
+    "fflate": "0.8.3",
+    "papaparse": "5.5.4"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "@types/papaparse": "5.3.16",
+    "@types/three": "0.180.0",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "bun": ">=1.3.14"
+  }
+}

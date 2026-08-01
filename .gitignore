@@ -1,0 +1,14 @@
+node_modules/
+build/
+artifacts/
+dist/
+*.log
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+coverage/
+.DS_Store
+Thumbs.db
