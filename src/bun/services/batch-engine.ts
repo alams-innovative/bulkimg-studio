@@ -2,6 +2,7 @@ import type { AppDatabase } from "../database";
 import type { KeyVault } from "./key-vault";
 import type { FxService } from "./fx-service";
 import { OpenAIClient } from "./openai-client";
+import type { HistoryService } from "./history-service";
 import type { SessionStatus, SessionTelemetry, SubmitRunInput } from "../../shared/contracts";
 
 function normalizeBatchStatus(status: string): SessionStatus {
@@ -17,9 +18,13 @@ export class BatchEngine {
     private readonly database: AppDatabase,
     private readonly keyVault: KeyVault,
     private readonly fx: FxService,
+    private readonly history: HistoryService,
   ) {}
 
-  private async withRotatingKey<T>(operation: (client: OpenAIClient, keyId: string) => Promise<T>): Promise<T> {
+  private async withRotatingKey<T>(
+    operation: (client: OpenAIClient, keyId: string) => Promise<T>,
+    onSelected?: (keyId: string) => void,
+  ): Promise<{ result: T; keyId: string }> {
     const keys = await this.keyVault.activeKeys();
     if (keys.length === 0) throw new Error("Add an active OpenAI API key before starting a run.");
     let lastError: unknown;
@@ -28,9 +33,10 @@ export class BatchEngine {
       const candidate = keys[index];
       if (!candidate) continue;
       try {
+        onSelected?.(candidate.id);
         const result = await operation(new OpenAIClient(candidate.key), candidate.id);
         this.nextKeyIndex = (index + 1) % keys.length;
-        return result;
+        return { result, keyId: candidate.id };
       } catch (error) {
         lastError = error;
         const status = (error as { status?: number }).status;
@@ -49,7 +55,12 @@ export class BatchEngine {
 
     try {
       if (input.mode === "batch") {
-        const batch = await this.withRotatingKey((client) => client.submitBatch(input));
+        const selected = await this.withRotatingKey(
+          (client) => client.submitBatch(input),
+          (keyId) => this.database.assignSessionKey(sessionId, keyId),
+        );
+        const batch = selected.result;
+        this.database.recordKeyUsage(selected.keyId, { requests: input.prompts.length });
         this.database.updateSession(sessionId, {
           status: "processing",
           message: `OpenAI batch ${batch.status}; completion window is up to 24 hours.`,
@@ -58,11 +69,23 @@ export class BatchEngine {
         });
       } else {
         this.database.updateSession(sessionId, { status: "processing", message: "Generating images directly…" });
-        const direct = await this.withRotatingKey((client) => client.generateDirect(input));
+        const selected = await this.withRotatingKey(
+          (client) => client.generateDirect(input),
+          (keyId) => this.database.assignSessionKey(sessionId, keyId),
+        );
+        const direct = selected.result;
+        this.database.recordKeyUsage(selected.keyId, {
+          requests: direct.completed,
+          inputTokens: direct.inputTokens,
+          outputTokens: direct.outputTokens,
+        });
+        const saved = await this.history.persistDirect(sessionId, input.model, selected.keyId, direct.images);
         this.database.updateSession(sessionId, {
           status: "completed",
-          message: "Direct generation completed. Output persistence is the next implementation milestone.",
+          message: `Direct generation completed; ${saved} image${saved === 1 ? "" : "s"} saved to History.`,
           completedCount: direct.completed,
+          inputTokens: direct.inputTokens,
+          outputTokens: direct.outputTokens,
         });
       }
     } catch (error) {
@@ -79,15 +102,42 @@ export class BatchEngine {
     const externalId = this.database.getExternalBatchId(sessionId);
     if (!externalId || current.status === "completed" || current.status === "failed") return current;
     try {
-      const batch = await this.withRotatingKey((client) => client.getBatch(externalId));
+      const selected = await this.withRotatingKey(async (client) => {
+        const batch = await client.getBatch(externalId);
+        const output = batch.status === "completed" && batch.output_file_id
+          ? await client.getFileContent(batch.output_file_id)
+          : null;
+        return { batch, output };
+      });
+      const { batch, output } = selected.result;
       const status = normalizeBatchStatus(batch.status);
       const errorMessage = batch.errors?.data?.map((item) => item.message).filter(Boolean).join("; ");
+      const nextInputTokens = batch.usage?.input_tokens ?? current.inputTokens;
+      const nextOutputTokens = batch.usage?.output_tokens ?? current.outputTokens;
+      const sessionKeyId = this.database.getSessionKeyId(sessionId);
+      let savedImages = 0;
+      if (status === "completed" && output) {
+        savedImages = await this.history.persistBatchOutput(
+          sessionId,
+          this.database.getSessionModel(sessionId),
+          sessionKeyId,
+          output,
+        );
+      }
+      if (sessionKeyId) {
+        this.database.recordKeyUsage(sessionKeyId, {
+          inputTokens: Math.max(0, nextInputTokens - current.inputTokens),
+          outputTokens: Math.max(0, nextOutputTokens - current.outputTokens),
+        });
+      }
       this.database.updateSession(sessionId, {
         status,
-        message: errorMessage || `OpenAI batch status: ${batch.status}`,
+        message: errorMessage || (status === "completed"
+          ? `OpenAI batch completed; ${savedImages} image${savedImages === 1 ? "" : "s"} saved to History.`
+          : `OpenAI batch status: ${batch.status}`),
         completedCount: batch.request_counts?.completed ?? current.completedCount,
-        inputTokens: batch.usage?.input_tokens ?? current.inputTokens,
-        outputTokens: batch.usage?.output_tokens ?? current.outputTokens,
+        inputTokens: nextInputTokens,
+        outputTokens: nextOutputTokens,
       });
     } catch (error) {
       this.database.updateSession(sessionId, {

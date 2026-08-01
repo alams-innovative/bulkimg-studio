@@ -53,6 +53,69 @@ export type SessionTelemetry = {
   message: string;
 };
 
+export type ApiKeyStats = {
+  id: string;
+  label: string;
+  keyHint: string;
+  provider: "OpenAI";
+  isActive: boolean;
+  isRateLimited: boolean;
+  rateLimitedUntil: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  totalRequests: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  costPkr: number;
+  currentSessionId: string | null;
+  currentModel: string | null;
+  currentRunMode: RunMode | null;
+  currentStatus: SessionStatus | null;
+  currentPrompts: number;
+  currentCompleted: number;
+};
+
+export type SessionSummary = {
+  sessionId: string;
+  status: SessionStatus;
+  model: string;
+  runMode: RunMode;
+  totalPrompts: number;
+  completedCount: number;
+  costUsd: number;
+  costPkr: number;
+  startTime: string;
+  endTime: string | null;
+  keyLabel: string | null;
+};
+
+export type ExportSummary = {
+  name: string;
+  filePath: string;
+  sizeBytes: number;
+  modifiedAt: string;
+};
+
+export type HistoryItem = {
+  promptId: string;
+  assetId: string | null;
+  sessionId: string;
+  promptText: string;
+  week: string;
+  scheduleDate: string;
+  themeColumn: string;
+  model: string;
+  status: SessionStatus;
+  createdAt: string;
+  imageFilename: string | null;
+  hasImage: boolean;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  costPkr: number;
+};
+
 export type AppBootstrap = {
   brand: BrandTheme;
   models: {
@@ -78,8 +141,18 @@ export type AppRPC = {
       parseManualPrompts: { params: { text: string }; response: PromptMatrix };
       submitBatchRun: { params: SubmitRunInput; response: SessionTelemetry };
       pollBatchStatus: { params: { sessionId: string }; response: SessionTelemetry };
-      listApiKeys: { params: {}; response: Array<{ id: string; label: string; isActive: boolean }> };
+      listApiKeys: { params: {}; response: ApiKeyStats[] };
       addApiKey: { params: { label: string; key: string }; response: { id: string; label: string; isActive: boolean } };
+      setApiKeyActive: { params: { id: string; isActive: boolean }; response: { success: boolean } };
+      deleteApiKey: { params: { id: string }; response: { success: boolean } };
+      listSessions: { params: {}; response: SessionSummary[] };
+      listHistory: { params: {}; response: HistoryItem[] };
+      getHistoryImage: { params: { assetId: string }; response: { dataUrl: string } };
+      downloadHistoryAsset: { params: { assetId: string }; response: { filePath: string } };
+      deleteHistoryItem: { params: { promptId: string }; response: { success: boolean } };
+      clearHistory: { params: {}; response: { deletedPrompts: number; deletedAssets: number } };
+      listExports: { params: {}; response: ExportSummary[] };
+      revealExportsFolder: { params: {}; response: { directory: string } };
       exportSessionZip: { params: { sessionId: string }; response: { filePath: string } };
     };
     messages: {};

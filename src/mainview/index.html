@@ -13,32 +13,36 @@
     <div class="app-shell">
       <aside class="sidebar glass">
         <div class="brand-lockup">
-          <img id="brand-logo" src="/assets/brand/logo.svg" alt="" />
+          <div class="brand-logo" aria-hidden="true">
+            <svg viewBox="0 0 64 64" focusable="false"><defs><linearGradient id="brand-gradient" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse"><stop stop-color="var(--brand-primary)"/><stop offset="1" stop-color="var(--brand-secondary)"/></linearGradient></defs><rect x="4" y="4" width="56" height="56" rx="16" fill="#0f172a" stroke="url(#brand-gradient)" stroke-width="3"/><path d="M16 43l10-12 8 8 6-7 9 11H16z" fill="url(#brand-gradient)"/><circle cx="43" cy="21" r="6" fill="#f8fafc" opacity=".9"/></svg>
+          </div>
           <div><strong id="brand-name">BulkImg Studio</strong><span id="brand-version">2.0.0</span></div>
         </div>
         <nav aria-label="Primary navigation">
-          <button class="nav-item active"><span>◫</span> Generator</button>
-          <button class="nav-item"><span>◷</span> Sessions</button>
-          <button class="nav-item"><span>⌁</span> Exports</button>
+          <button id="nav-generator" class="nav-item active" data-view="generator"><span>◫</span><span class="nav-label">Generator</span></button>
+          <button id="nav-sessions" class="nav-item" data-view="sessions"><span>◷</span><span class="nav-label">Sessions</span></button>
+          <button id="nav-history" class="nav-item" data-view="history"><span>▣</span><span class="nav-label">History</span></button>
+          <button id="nav-exports" class="nav-item" data-view="exports"><span>⌁</span><span class="nav-label">Exports</span></button>
         </nav>
         <div class="sidebar-spacer"></div>
-        <button id="manage-keys" class="nav-item"><span>⚿</span> API keys <b id="key-count">0</b></button>
+        <button id="manage-keys" class="nav-item"><span>⚿</span><span class="nav-label">API keys</span><b id="key-count">0</b></button>
         <div class="platform-pill" id="platform">Windows</div>
       </aside>
 
       <main>
         <header class="topbar">
           <div>
-            <p class="eyebrow">IMAGE OPERATIONS</p>
-            <h1>Batch generation studio</h1>
+            <p id="page-eyebrow" class="eyebrow">IMAGE OPERATIONS</p>
+            <h1 id="page-title">Batch generation studio</h1>
           </div>
-          <div class="header-stats glass">
+          <div id="header-stats" class="header-stats glass">
             <div><span>Selected</span><strong id="selected-count">0</strong></div>
             <div><span>Est. cost</span><strong id="estimated-cost">$0.00</strong></div>
             <div><span>FX rate</span><strong id="fx-rate">Rs. —</strong></div>
           </div>
         </header>
 
+        <div id="generator-view" class="view-content generator-view">
         <section class="workspace-grid">
           <div class="composer glass">
             <div class="section-heading">
@@ -90,7 +94,7 @@
               <label class="mode-option selected"><input type="radio" name="run-mode" value="batch" checked /><span><strong>Batch async</strong><small>50% API discount · up to 24h</small></span><b>Recommended</b></label>
               <label class="mode-option"><input type="radio" name="run-mode" value="direct" /><span><strong>Direct</strong><small>Immediate testing</small></span></label>
             </fieldset>
-            <div class="reference-dock" tabindex="0"><span>＋</span><div><strong>Reference image</strong><small>Docking hook scaffolded</small></div></div>
+            <button class="reference-dock" type="button" disabled title="Reference image upload is not enabled in this build"><span>＋</span><div><strong>Reference image</strong><small>Unavailable until image-edit routing is enabled</small></div><b>Coming next</b></button>
             <button id="run-button" class="primary-button" disabled><span>Generate selected</span><b>→</b></button>
             <p class="privacy-note">API keys stay encrypted in the app data directory and never enter the webview.</p>
           </aside>
@@ -105,20 +109,50 @@
           <div><span>Session cost</span><strong id="session-cost">$0.000 · Rs. 0.00</strong></div>
           <button id="export-button" class="secondary-button" disabled>Export ZIP</button>
         </section>
+        </div>
+
+        <section id="sessions-view" class="view-content management-view glass hidden">
+          <div class="management-head">
+            <div><p class="step">RUN HISTORY</p><h2>Generation sessions</h2><p>Recent direct and asynchronous runs, including the key assignment used by this app.</p></div>
+            <button id="refresh-sessions" class="secondary-button">Refresh</button>
+          </div>
+          <div id="session-list" class="data-list"></div>
+        </section>
+
+        <section id="history-view" class="view-content management-view glass hidden">
+          <div class="management-head history-head">
+            <div><p class="step">PROMPT + IMAGE LIBRARY</p><h2>Generation history</h2><p>Every submitted prompt, with locally stored output images when generation completed.</p></div>
+            <div class="button-row"><button id="refresh-history" class="secondary-button">Refresh</button><button id="clear-history" class="secondary-button danger-button">Clear history</button></div>
+          </div>
+          <div class="history-toolbar"><label><span>Search history</span><input id="history-search" type="search" placeholder="Prompt, model, theme, or date" /></label><div><span>Showing</span><strong id="history-count">0 items</strong></div></div>
+          <div id="history-list" class="history-grid"></div>
+        </section>
+
+        <section id="exports-view" class="view-content management-view glass hidden">
+          <div class="management-head">
+            <div><p class="step">ARCHIVES</p><h2>Session exports</h2><p>ZIP packages created by BulkImg Studio.</p></div>
+            <div class="button-row"><button id="refresh-exports" class="secondary-button">Refresh</button><button id="open-exports-folder" class="secondary-button">Open folder</button></div>
+          </div>
+          <div id="export-list" class="data-list"></div>
+        </section>
       </main>
     </div>
 
     <dialog id="keys-dialog" class="glass">
-      <form method="dialog" class="dialog-head"><div><p class="step">SECURE STORAGE</p><h2>OpenAI API keys</h2></div><button aria-label="Close">×</button></form>
-      <p>Keys are encrypted by the Bun process. The webview only receives safe labels and IDs.</p>
+      <form method="dialog" class="dialog-head"><div><p class="step">SECURE STORAGE + TELEMETRY</p><h2>OpenAI API keys</h2></div><div class="button-row"><button id="refresh-keys" type="button" class="icon-button" aria-label="Refresh keys">↻</button><button class="icon-button" aria-label="Close">×</button></div></form>
+      <p>Usage below is recorded by this app per key. OpenAI does not expose the key's complete account-wide quota or billing balance through generation responses.</p>
+      <div class="key-summary"><div><span>Active keys</span><strong id="active-key-total">0</strong></div><div><span>App requests</span><strong id="key-request-total">0</strong></div><div><span>Tracked tokens</span><strong id="key-token-total">0</strong></div><div><span>Tracked spend</span><strong id="key-spend-total">$0.000</strong></div></div>
       <div id="key-list" class="key-list"></div>
-      <form id="key-form">
+      <form id="key-form" class="key-form">
+        <div class="form-heading"><strong>Add another key</strong><small>Only the final four characters are displayed after saving.</small></div>
         <label>Label<input id="key-label" autocomplete="off" placeholder="Production key" /></label>
         <label>API key<input id="api-key" type="password" autocomplete="new-password" placeholder="sk-…" required /></label>
         <button class="primary-button" type="submit">Add encrypted key</button>
       </form>
       <div id="key-error" class="warnings hidden"></div>
     </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script type="module" src="index.js"></script>
   </body>

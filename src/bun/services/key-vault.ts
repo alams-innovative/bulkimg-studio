@@ -51,16 +51,17 @@ export class KeyVault {
   async add(label: string, key: string): Promise<{ id: string; label: string; isActive: boolean }> {
     if (!key.startsWith("sk-") || key.length < 20) throw new Error("Enter a valid OpenAI API key");
     const id = crypto.randomUUID();
-    this.database.insertKey({ id, encryptedKey: await this.encrypt(key), label: label.trim() || "OpenAI key" });
+    this.database.insertKey({
+      id,
+      encryptedKey: await this.encrypt(key),
+      label: label.trim() || "OpenAI key",
+      keyHint: `••••${key.slice(-4)}`,
+    });
     return { id, label: label.trim() || "OpenAI key", isActive: true };
   }
 
-  listSafe(): Array<{ id: string; label: string; isActive: boolean }> {
-    return this.database.listKeys().map((record) => ({
-      id: record.id,
-      label: record.label,
-      isActive: record.is_active === 1,
-    }));
+  listSafe() {
+    return this.database.listKeyStats();
   }
 
   async activeKeys(): Promise<Array<{ id: string; key: string }>> {

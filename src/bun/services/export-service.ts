@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { strToU8, zipSync } from "fflate";
 import type { AppDatabase } from "../database";
@@ -51,5 +51,25 @@ export class ExportService {
     const filePath = join(exportsDirectory, `${root}.zip`);
     await Bun.write(filePath, archive);
     return filePath;
+  }
+
+  list() {
+    const exportsDirectory = join(this.dataDirectory, "exports");
+    mkdirSync(exportsDirectory, { recursive: true });
+    return readdirSync(exportsDirectory)
+      .filter((name) => name.toLowerCase().endsWith(".zip"))
+      .map((name) => {
+        const filePath = join(exportsDirectory, name);
+        const stat = statSync(filePath);
+        return { name, filePath, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString() };
+      })
+      .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+  }
+
+  revealFolder(): string {
+    const exportsDirectory = join(this.dataDirectory, "exports");
+    mkdirSync(exportsDirectory, { recursive: true });
+    Bun.spawn(["explorer.exe", exportsDirectory], { stdout: "ignore", stderr: "ignore" });
+    return exportsDirectory;
   }
 }
