@@ -7,7 +7,16 @@ type BatchObject = {
   status: "validating" | "failed" | "in_progress" | "finalizing" | "completed" | "expired" | "cancelling" | "cancelled";
   request_counts?: { total: number; completed: number; failed: number };
   usage?: { input_tokens?: number; output_tokens?: number };
+  output_file_id?: string | null;
   errors?: { data?: Array<{ message?: string }> } | null;
+};
+
+export type DirectImageResult = {
+  index: number;
+  b64Json: string | null;
+  url: string | null;
+  inputTokens: number;
+  outputTokens: number;
 };
 
 export function createBatchJsonl(input: SubmitRunInput): string {
@@ -62,10 +71,26 @@ export class OpenAIClient {
     return this.request<BatchObject>(`/batches/${encodeURIComponent(batchId)}`);
   }
 
-  async generateDirect(input: SubmitRunInput): Promise<{ completed: number }> {
+  async getFileContent(fileId: string): Promise<string> {
+    const response = await fetch(`${API_BASE}/files/${encodeURIComponent(fileId)}/content`, {
+      headers: { Authorization: `Bearer ${this.apiKey}` },
+    });
+    if (!response.ok) throw new Error(`OpenAI ${response.status}: ${await response.text()}`);
+    return response.text();
+  }
+
+  async generateDirect(input: SubmitRunInput): Promise<{
+    completed: number; inputTokens: number; outputTokens: number; images: DirectImageResult[];
+  }> {
     let completed = 0;
-    for (const prompt of input.prompts) {
-      await this.request("/images/generations", {
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const images: DirectImageResult[] = [];
+    for (const [index, prompt] of input.prompts.entries()) {
+      const response = await this.request<{
+        data?: Array<{ b64_json?: string; url?: string }>;
+        usage?: { input_tokens?: number; output_tokens?: number };
+      }>("/images/generations", {
         method: "POST",
         body: JSON.stringify({
           model: input.model,
@@ -76,7 +101,18 @@ export class OpenAIClient {
         }),
       });
       completed += 1;
+      const requestInputTokens = response.usage?.input_tokens ?? 0;
+      const requestOutputTokens = response.usage?.output_tokens ?? 0;
+      inputTokens += requestInputTokens;
+      outputTokens += requestOutputTokens;
+      images.push({
+        index,
+        b64Json: response.data?.[0]?.b64_json ?? null,
+        url: response.data?.[0]?.url ?? null,
+        inputTokens: requestInputTokens,
+        outputTokens: requestOutputTokens,
+      });
     }
-    return { completed };
+    return { completed, inputTokens, outputTokens, images };
   }
 }
