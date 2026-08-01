@@ -1,6 +1,7 @@
 import type { SubmitRunInput } from "../../shared/contracts";
 
 const API_BASE = Bun.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1";
+const APP_VERSION = "1.0.0-beta.0";
 
 type BatchObject = {
   id: string;
@@ -19,19 +20,36 @@ export type DirectImageResult = {
   outputTokens: number;
 };
 
+function generationBody(input: SubmitRunInput, promptText: string) {
+  return {
+    model: input.model,
+    prompt: promptText,
+    size: input.size,
+    quality: input.quality,
+    output_format: "png" as const,
+  };
+}
+
 export function createBatchJsonl(input: SubmitRunInput): string {
-  return input.prompts.map((prompt, index) => JSON.stringify({
-    custom_id: `prompt-${String(index + 1).padStart(5, "0")}`,
-    method: "POST",
-    url: "/v1/images/generations",
-    body: {
-      model: input.model,
-      prompt: prompt.promptText,
-      size: input.size,
-      quality: input.quality,
-      output_format: "png",
-    },
-  })).join("\n");
+  const endpoint = input.referenceImageFileId ? "/v1/images/edits" : "/v1/images/generations";
+  return input.prompts.map((prompt, index) => {
+    const body = input.referenceImageFileId
+      ? {
+          model: input.model,
+          prompt: prompt.promptText,
+          image: input.referenceImageFileId,
+          size: input.size,
+          quality: input.quality,
+          output_format: "png",
+        }
+      : generationBody(input, prompt.promptText);
+    return JSON.stringify({
+      custom_id: `prompt-${String(index + 1).padStart(5, "0")}`,
+      method: "POST",
+      url: endpoint,
+      body,
+    });
+  }).join("\n");
 }
 
 export class OpenAIClient {
@@ -48,10 +66,21 @@ export class OpenAIClient {
       Object.assign(error, { status: response.status });
       throw error;
     }
-    return response.json() as Promise<T>;
+    if (response.status === 204) return undefined as T;
+    const text = await response.text();
+    return text ? JSON.parse(text) as T : undefined as T;
+  }
+
+  async uploadReferenceImage(bytes: Uint8Array, filename: string, mimeType: string): Promise<string> {
+    const form = new FormData();
+    form.set("purpose", "vision");
+    form.set("file", new File([Buffer.from(bytes)], filename, { type: mimeType }));
+    const uploaded = await this.request<{ id: string }>("/files", { method: "POST", body: form });
+    return uploaded.id;
   }
 
   async submitBatch(input: SubmitRunInput): Promise<BatchObject> {
+    const endpoint = input.referenceImageFileId ? "/v1/images/edits" : "/v1/images/generations";
     const form = new FormData();
     form.set("purpose", "batch");
     form.set("file", new File([createBatchJsonl(input)], "bulkimg-batch.jsonl", { type: "application/jsonl" }));
@@ -60,15 +89,19 @@ export class OpenAIClient {
       method: "POST",
       body: JSON.stringify({
         input_file_id: uploaded.id,
-        endpoint: "/v1/images/generations",
+        endpoint,
         completion_window: "24h",
-        metadata: { application: "bulkimg-studio", version: "2.0.0" },
+        metadata: { application: "bulkimg-studio", version: APP_VERSION },
       }),
     });
   }
 
   async getBatch(batchId: string): Promise<BatchObject> {
     return this.request<BatchObject>(`/batches/${encodeURIComponent(batchId)}`);
+  }
+
+  async cancelBatch(batchId: string): Promise<BatchObject> {
+    return this.request<BatchObject>(`/batches/${encodeURIComponent(batchId)}/cancel`, { method: "POST" });
   }
 
   async getFileContent(fileId: string): Promise<string> {
@@ -79,7 +112,10 @@ export class OpenAIClient {
     return response.text();
   }
 
-  async generateDirect(input: SubmitRunInput): Promise<{
+  async generateDirect(
+    input: SubmitRunInput,
+    options?: { signal?: AbortSignal; onPromptDone?: (completed: number) => void },
+  ): Promise<{
     completed: number; inputTokens: number; outputTokens: number; images: DirectImageResult[];
   }> {
     let completed = 0;
@@ -87,19 +123,27 @@ export class OpenAIClient {
     let outputTokens = 0;
     const images: DirectImageResult[] = [];
     for (const [index, prompt] of input.prompts.entries()) {
-      const response = await this.request<{
+      if (options?.signal?.aborted) throw new Error("Run cancelled.");
+      let response: {
         data?: Array<{ b64_json?: string; url?: string }>;
         usage?: { input_tokens?: number; output_tokens?: number };
-      }>("/images/generations", {
-        method: "POST",
-        body: JSON.stringify({
-          model: input.model,
-          prompt: prompt.promptText,
-          size: input.size,
-          quality: input.quality,
-          output_format: "png",
-        }),
-      });
+      };
+      if (input.referenceImageFileId) {
+        const form = new FormData();
+        form.set("model", input.model);
+        form.set("prompt", prompt.promptText);
+        form.set("image", input.referenceImageFileId);
+        form.set("size", input.size);
+        form.set("quality", input.quality);
+        form.set("output_format", "png");
+        response = await this.request("/images/edits", { method: "POST", body: form, signal: options?.signal });
+      } else {
+        response = await this.request("/images/generations", {
+          method: "POST",
+          body: JSON.stringify(generationBody(input, prompt.promptText)),
+          signal: options?.signal,
+        });
+      }
       completed += 1;
       const requestInputTokens = response.usage?.input_tokens ?? 0;
       const requestOutputTokens = response.usage?.output_tokens ?? 0;
@@ -112,6 +156,7 @@ export class OpenAIClient {
         inputTokens: requestInputTokens,
         outputTokens: requestOutputTokens,
       });
+      options?.onPromptDone?.(completed);
     }
     return { completed, inputTokens, outputTokens, images };
   }

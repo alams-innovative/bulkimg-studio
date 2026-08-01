@@ -14,7 +14,14 @@ import type {
 
 const rpc = Electroview.defineRPC<AppRPC>({
   maxRequestTime: 120_000,
-  handlers: { requests: {}, messages: {} },
+  handlers: {
+    requests: {},
+    messages: {
+      sessionProgress: (telemetry) => {
+        renderTelemetry(telemetry);
+      },
+    },
+  },
 });
 const app = new Electrobun.Electroview({ rpc });
 
@@ -27,6 +34,8 @@ function byId<T extends HTMLElement>(id: string): T {
 const elements = {
   brandName: byId("brand-name"),
   brandVersion: byId("brand-version"),
+  brandLogoImg: byId<HTMLImageElement>("brand-logo-img"),
+  brandLogoFallback: byId("brand-logo-fallback"),
   platform: byId("platform"),
   keyCount: byId("key-count"),
   pageEyebrow: byId("page-eyebrow"),
@@ -44,6 +53,7 @@ const elements = {
   csvPanel: byId("csv-panel"),
   manualPanel: byId("manual-panel"),
   csvFile: byId<HTMLInputElement>("csv-file"),
+  pickCsvNative: byId<HTMLButtonElement>("pick-csv-native"),
   manualPrompts: byId<HTMLTextAreaElement>("manual-prompts"),
   parseManual: byId<HTMLButtonElement>("parse-manual"),
   sourceName: byId("source-name"),
@@ -53,7 +63,13 @@ const elements = {
   model: byId<HTMLSelectElement>("model"),
   size: byId<HTMLSelectElement>("size"),
   quality: byId<HTMLSelectElement>("quality"),
+  referenceDock: byId("reference-dock"),
+  referenceFile: byId<HTMLInputElement>("reference-file"),
+  referenceTitle: byId("reference-title"),
+  referenceHint: byId("reference-hint"),
+  referenceBadge: byId("reference-badge"),
   runButton: byId<HTMLButtonElement>("run-button"),
+  cancelButton: byId<HTMLButtonElement>("cancel-button"),
   manageKeys: byId<HTMLButtonElement>("manage-keys"),
   keysDialog: byId<HTMLDialogElement>("keys-dialog"),
   refreshKeys: byId<HTMLButtonElement>("refresh-keys"),
@@ -73,6 +89,7 @@ const elements = {
   tokens: byId("tokens"),
   sessionCost: byId("session-cost"),
   exportButton: byId<HTMLButtonElement>("export-button"),
+  retryButton: byId<HTMLButtonElement>("retry-button"),
   refreshSessions: byId<HTMLButtonElement>("refresh-sessions"),
   sessionList: byId("session-list"),
   refreshHistory: byId<HTMLButtonElement>("refresh-history"),
@@ -94,6 +111,8 @@ let pollTimer: number | null = null;
 let toastTimer: number | null = null;
 let historyItems: HistoryItem[] = [];
 let historyImageObserver: IntersectionObserver | null = null;
+let referenceImageFileId: string | undefined;
+let estimateTimer: number | null = null;
 
 function escapeHtml(value: string): string {
   const node = document.createElement("div");
@@ -162,12 +181,41 @@ function selectableCells(): PromptCell[] {
   return matrix?.cells.filter((cell) => !cell.disabled) ?? [];
 }
 
+function currentMode(): RunMode {
+  return document.querySelector<HTMLInputElement>('input[name="run-mode"]:checked')?.value as RunMode ?? "batch";
+}
+
 function updateSelection(): void {
   const count = selected.size;
   elements.selectedCount.textContent = String(count);
-  elements.estimatedCost.textContent = count ? "API priced" : "$0.00";
   elements.runButton.disabled = count === 0;
   elements.runButton.querySelector("span")!.textContent = count ? `Generate ${count} selected` : "Generate selected";
+  if (estimateTimer !== null) window.clearTimeout(estimateTimer);
+  if (count === 0) {
+    elements.estimatedCost.textContent = "$0.00";
+    return;
+  }
+  estimateTimer = window.setTimeout(() => void refreshEstimate(), 180);
+}
+
+async function refreshEstimate(): Promise<void> {
+  const count = selected.size;
+  if (count === 0) {
+    elements.estimatedCost.textContent = "$0.00";
+    return;
+  }
+  try {
+    const estimate = await app.rpc!.request.estimateRunCost({
+      model: elements.model.value,
+      promptCount: count,
+      mode: currentMode(),
+      quality: elements.quality.value as "low" | "medium" | "high",
+    });
+    elements.fxRate.textContent = `Rs. ${estimate.fxRate.toFixed(2)}`;
+    elements.estimatedCost.textContent = `$${estimate.costUsd.toFixed(2)}`;
+  } catch {
+    elements.estimatedCost.textContent = "—";
+  }
 }
 
 function applyMatrix(next: PromptMatrix): void {
@@ -217,9 +265,43 @@ function renderTelemetry(next: SessionTelemetry): void {
   elements.sessionCost.textContent = `$${next.costUsd.toFixed(3)} · Rs. ${next.costPkr.toFixed(2)}`;
   elements.fxRate.textContent = `Rs. ${next.fxRate.toFixed(2)}`;
   elements.exportButton.disabled = false;
+  const active = next.status === "pending" || next.status === "processing";
+  elements.cancelButton.disabled = !active;
+  elements.retryButton.disabled = next.status !== "failed" && next.status !== "completed";
   if (pollTimer !== null && ["completed", "failed"].includes(next.status)) {
     window.clearInterval(pollTimer);
     pollTimer = null;
+  }
+}
+
+async function attachReferenceFile(file: File): Promise<void> {
+  if (!file.type.startsWith("image/")) {
+    showToast("Choose a PNG, JPEG, or WebP image.", true);
+    return;
+  }
+  elements.referenceBadge.textContent = "Uploading";
+  try {
+    const buffer = new Uint8Array(await file.arrayBuffer());
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < buffer.length; i += chunk) {
+      binary += String.fromCharCode(...buffer.subarray(i, i + chunk));
+    }
+    const dataBase64 = btoa(binary);
+    const result = await app.rpc!.request.uploadReferenceImage({
+      dataBase64,
+      filename: file.name,
+      mimeType: file.type || "image/png",
+    });
+    referenceImageFileId = result.fileId;
+    elements.referenceDock.classList.add("has-image");
+    elements.referenceTitle.textContent = file.name;
+    elements.referenceHint.textContent = `Cached file_id ${result.fileId.slice(0, 12)}… · click to replace`;
+    elements.referenceBadge.textContent = "Attached";
+    showToast("Reference image uploaded once for this session.");
+  } catch (error) {
+    elements.referenceBadge.textContent = "Optional";
+    showToast(error instanceof Error ? error.message : "Could not upload reference image", true);
   }
 }
 
@@ -445,6 +527,16 @@ async function bootstrap(): Promise<void> {
   elements.brandVersion.textContent = data.brand.version;
   elements.platform.textContent = data.platform;
   elements.keyCount.textContent = String(data.keyCount);
+  elements.fxRate.textContent = `Rs. ${data.fxRate.toFixed(2)}`;
+  if (data.brand.logoPath) {
+    elements.brandLogoImg.src = data.brand.logoPath;
+    elements.brandLogoImg.hidden = false;
+    elements.brandLogoFallback.hidden = true;
+    elements.brandLogoImg.onerror = () => {
+      elements.brandLogoImg.hidden = true;
+      elements.brandLogoFallback.hidden = false;
+    };
+  }
   elements.model.innerHTML = data.models.models.map((model) =>
     `<option value="${escapeHtml(model.id)}" ${model.enabled ? "" : "disabled"}>${escapeHtml(model.label)}</option>`,
   ).join("");
@@ -459,6 +551,16 @@ elements.manualTab.addEventListener("click", () => setTab("manual"));
 elements.csvFile.addEventListener("change", () => {
   const file = elements.csvFile.files?.[0];
   if (file) void importCsvFile(file);
+});
+elements.pickCsvNative.addEventListener("click", async () => {
+  try {
+    const picked = await app.rpc!.request.pickCsvFile({});
+    if (!picked) return;
+    applyMatrix(await app.rpc!.request.importCSV(picked));
+    showToast(`Loaded ${picked.sourceName}`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not open CSV", true);
+  }
 });
 if (dropzone) {
   ["dragenter", "dragover"].forEach((eventName) => dropzone.addEventListener(eventName, (event) => {
@@ -497,7 +599,42 @@ document.querySelectorAll<HTMLInputElement>('input[name="run-mode"]').forEach((r
   radio.addEventListener("change", () => {
     document.querySelectorAll(".mode-option").forEach((label) => label.classList.remove("selected"));
     radio.closest(".mode-option")?.classList.add("selected");
+    void refreshEstimate();
   });
+});
+elements.model.addEventListener("change", () => void refreshEstimate());
+elements.quality.addEventListener("change", () => void refreshEstimate());
+
+elements.referenceDock.addEventListener("click", () => elements.referenceFile.click());
+elements.referenceDock.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    elements.referenceFile.click();
+  }
+});
+elements.referenceFile.addEventListener("change", () => {
+  const file = elements.referenceFile.files?.[0];
+  if (file) void attachReferenceFile(file);
+});
+["dragenter", "dragover"].forEach((eventName) => elements.referenceDock.addEventListener(eventName, (event) => {
+  event.preventDefault();
+  elements.referenceDock.classList.add("dragging");
+}));
+["dragleave", "drop"].forEach((eventName) => elements.referenceDock.addEventListener(eventName, (event) => {
+  event.preventDefault();
+  elements.referenceDock.classList.remove("dragging");
+}));
+elements.referenceDock.addEventListener("drop", (event) => {
+  const file = event.dataTransfer?.files[0];
+  if (file) void attachReferenceFile(file);
+});
+window.addEventListener("paste", (event) => {
+  const item = [...(event.clipboardData?.items ?? [])].find((entry) => entry.type.startsWith("image/"));
+  const file = item?.getAsFile();
+  if (file) {
+    event.preventDefault();
+    void attachReferenceFile(file);
+  }
 });
 
 elements.runButton.addEventListener("click", async () => {
@@ -505,13 +642,13 @@ elements.runButton.addEventListener("click", async () => {
   elements.runButton.disabled = true;
   try {
     const prompts = matrix.cells.filter((cell) => selected.has(cell.id)).map(({ promptText, week, scheduleDate, themeColumn }) => ({ promptText, week, scheduleDate, themeColumn }));
-    const mode = document.querySelector<HTMLInputElement>('input[name="run-mode"]:checked')?.value as RunMode ?? "batch";
     const next = await app.rpc!.request.submitBatchRun({
       prompts,
       model: elements.model.value,
-      mode,
+      mode: currentMode(),
       size: elements.size.value,
       quality: elements.quality.value as "low" | "medium" | "high",
+      referenceImageFileId,
     });
     renderTelemetry(next);
     await loadKeys();
@@ -531,6 +668,40 @@ elements.runButton.addEventListener("click", async () => {
     showToast(error instanceof Error ? error.message : "Could not start generation", true);
   } finally {
     elements.runButton.disabled = selected.size === 0;
+  }
+});
+
+elements.cancelButton.addEventListener("click", async () => {
+  if (!session) return;
+  elements.cancelButton.disabled = true;
+  try {
+    renderTelemetry(await app.rpc!.request.cancelBatchRun({ sessionId: session.sessionId }));
+    showToast("Run cancelled.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not cancel run", true);
+  }
+});
+
+elements.retryButton.addEventListener("click", async () => {
+  if (!session) return;
+  elements.retryButton.disabled = true;
+  try {
+    const next = await app.rpc!.request.retryFailedPrompts({ sessionId: session.sessionId });
+    renderTelemetry(next);
+    showToast("Retry run submitted.");
+    if (next.status === "processing") {
+      pollTimer = window.setInterval(async () => {
+        if (!session) return;
+        try {
+          renderTelemetry(await app.rpc!.request.pollBatchStatus({ sessionId: session.sessionId }));
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "Could not refresh the run", true);
+        }
+      }, 10_000);
+    }
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not retry prompts", true);
+    elements.retryButton.disabled = false;
   }
 });
 
@@ -565,9 +736,10 @@ elements.exportButton.addEventListener("click", async () => {
   if (!session) return;
   elements.exportButton.disabled = true;
   try {
-    const result = await app.rpc!.request.exportSessionZip({ sessionId: session.sessionId });
+    const result = await app.rpc!.request.exportSessionZip({ sessionId: session.sessionId, pickPath: true });
     elements.sessionMessage.textContent = `Exported to ${result.filePath}`;
     showToast("Session ZIP exported.");
+    await loadExports();
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not export session", true);
   } finally {

@@ -112,7 +112,18 @@ export class AppDatabase {
     this.ensureColumn("api_keys", "cost_usd", "REAL NOT NULL DEFAULT 0.0");
     this.ensureColumn("api_keys", "cost_pkr", "REAL NOT NULL DEFAULT 0.0");
     this.ensureColumn("batch_sessions", "key_used_id", "TEXT");
+    this.ensureColumn("batch_sessions", "quality", "TEXT NOT NULL DEFAULT 'high'");
+    this.ensureColumn("batch_sessions", "size_used", "TEXT NOT NULL DEFAULT '1024x1024'");
+    this.ensureColumn("batch_sessions", "reference_file_id", "TEXT");
     this.ensureColumn("generated_assets", "prompt_id", "TEXT");
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS reference_files (
+        file_id TEXT PRIMARY KEY,
+        local_path TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
   }
 
   private ensureColumn(table: "api_keys" | "batch_sessions" | "generated_assets", column: string, definition: string): void {
@@ -228,13 +239,87 @@ export class AppDatabase {
     return row.model_used;
   }
 
+  getSessionPricingContext(sessionId: string): {
+    model: string;
+    runMode: "batch" | "direct";
+    quality: "low" | "medium" | "high";
+  } {
+    const row = this.db.query<{
+      model_used: string; run_mode: "batch" | "direct"; quality: "low" | "medium" | "high";
+    }, [string]>(
+      "SELECT model_used, run_mode, quality FROM batch_sessions WHERE session_id = ?",
+    ).get(sessionId);
+    if (!row) throw new Error(`Unknown session: ${sessionId}`);
+    return { model: row.model_used, runMode: row.run_mode, quality: row.quality };
+  }
+
+  listSessionAssets(sessionId: string): Array<{ image_filename: string; file_path: string }> {
+    return this.db.query<{ image_filename: string; file_path: string }, [string]>(`
+      SELECT image_filename, file_path FROM generated_assets
+      WHERE session_id = ? ORDER BY image_filename
+    `).all(sessionId);
+  }
+
+  cacheReferenceFile(fileId: string, localPath: string, mimeType: string): void {
+    this.db.query(`
+      INSERT INTO reference_files (file_id, local_path, mime_type)
+      VALUES (?, ?, ?)
+      ON CONFLICT(file_id) DO UPDATE SET local_path=excluded.local_path, mime_type=excluded.mime_type
+    `).run(fileId, localPath, mimeType);
+  }
+
+  getReferenceFile(fileId: string): { local_path: string; mime_type: string } | null {
+    return this.db.query<{ local_path: string; mime_type: string }, [string]>(
+      "SELECT local_path, mime_type FROM reference_files WHERE file_id = ?",
+    ).get(fileId) ?? null;
+  }
+
+  recoverOrphanedSessions(): number {
+    const direct = this.db.query(`
+      UPDATE batch_sessions SET status = 'failed',
+        status_message = 'Interrupted by app restart before direct generation finished.',
+        end_time = CURRENT_TIMESTAMP
+      WHERE status IN ('pending', 'processing') AND run_mode = 'direct'
+        AND (external_batch_id IS NULL OR external_batch_id = '')
+    `).run().changes;
+    const stale = this.db.query(`
+      UPDATE batch_sessions SET status_message = 'Recovered after restart; polling OpenAI batch…'
+      WHERE status = 'processing' AND external_batch_id IS NOT NULL AND external_batch_id != ''
+    `).run().changes;
+    return direct + stale;
+  }
+
+  listRetryablePrompts(sessionId: string): Array<{
+    promptText: string; week: string; scheduleDate: string; themeColumn: string;
+  }> {
+    return this.db.query<{
+      prompt_text: string; week: string; schedule_date: string; theme_column: string;
+    }, [string]>(`
+      SELECT p.prompt_text, COALESCE(p.week, '') AS week,
+        COALESCE(p.schedule_date, '') AS schedule_date,
+        COALESCE(p.theme_column, '') AS theme_column
+      FROM session_prompts p
+      LEFT JOIN generated_assets a ON a.prompt_id = p.prompt_id
+      WHERE p.session_id = ? AND a.asset_id IS NULL
+      ORDER BY p.ordinal
+    `).all(sessionId).map((row) => ({
+      promptText: row.prompt_text,
+      week: row.week,
+      scheduleDate: row.schedule_date,
+      themeColumn: row.theme_column,
+    }));
+  }
+
   createSession(sessionId: string, input: SubmitRunInput, fxRate: number): void {
     const transaction = this.db.transaction(() => {
       this.db.query(`
         INSERT INTO batch_sessions
-          (session_id, model_used, run_mode, total_prompts, status, status_message, fx_rate)
-        VALUES (?, ?, ?, ?, 'pending', 'Queued locally', ?)
-      `).run(sessionId, input.model, input.mode, input.prompts.length, fxRate);
+          (session_id, model_used, run_mode, total_prompts, status, status_message, fx_rate, quality, size_used, reference_file_id)
+        VALUES (?, ?, ?, ?, 'pending', 'Queued locally', ?, ?, ?, ?)
+      `).run(
+        sessionId, input.model, input.mode, input.prompts.length, fxRate,
+        input.quality, input.size, input.referenceImageFileId ?? null,
+      );
 
       const insertPrompt = this.db.query(`
         INSERT INTO session_prompts
@@ -327,9 +412,30 @@ export class AppDatabase {
 
   getExportRows(sessionId: string): Array<Record<string, string | number>> {
     return this.db.query<Record<string, string | number>, [string]>(`
-      SELECT ordinal AS Ordinal, week AS Week, schedule_date AS Schedule_Date,
-        theme_column AS Theme_Column, prompt_text AS Prompt_Text
-      FROM session_prompts WHERE session_id = ? ORDER BY ordinal
+      SELECT
+        p.ordinal AS Ordinal,
+        COALESCE(a.image_filename, '') AS Image_Filename,
+        COALESCE(p.week, '') AS Week,
+        COALESCE(p.schedule_date, '') AS Schedule_Date,
+        COALESCE(p.theme_column, '') AS Theme_Column,
+        p.prompt_text AS Prompt_Text,
+        COALESCE(a.model_used, s.model_used, '') AS Model_Used,
+        COALESCE(a.seed_value, '') AS Seed,
+        COALESCE(a.input_tokens, 0) AS Input_Tokens,
+        COALESCE(a.output_tokens, 0) AS Output_Tokens,
+        COALESCE(a.cost_usd, 0) AS Cost_USD,
+        COALESCE(a.cost_pkr, 0) AS Cost_PKR,
+        COALESCE(k.label, '') AS Key_Used
+      FROM session_prompts p
+      JOIN batch_sessions s ON s.session_id = p.session_id
+      LEFT JOIN generated_assets a ON a.asset_id = (
+        SELECT asset_id FROM generated_assets
+        WHERE prompt_id = p.prompt_id
+        ORDER BY rowid DESC LIMIT 1
+      )
+      LEFT JOIN api_keys k ON k.id = COALESCE(a.key_used_id, s.key_used_id)
+      WHERE p.session_id = ?
+      ORDER BY p.ordinal
     `).all(sessionId);
   }
 

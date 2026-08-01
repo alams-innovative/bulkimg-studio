@@ -1,5 +1,7 @@
+import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { AppDatabase, ApiKeyRecord } from "../database";
+import { protectWithDpapi, unprotectWithDpapi } from "./windows-native";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -9,20 +11,28 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 }
 
 export class KeyVault {
-  private readonly keyPath: string;
+  private readonly legacyKeyPath: string;
+  private readonly dpapiKeyPath: string;
 
   constructor(private readonly database: AppDatabase, dataDirectory: string) {
-    this.keyPath = join(dataDirectory, ".key-vault.bin");
+    this.legacyKeyPath = join(dataDirectory, ".key-vault.bin");
+    this.dpapiKeyPath = join(dataDirectory, ".key-vault.dpapi");
   }
 
   private async getDeviceKey(): Promise<CryptoKey> {
-    const file = Bun.file(this.keyPath);
     let material: Uint8Array;
-    if (await file.exists()) {
-      material = new Uint8Array(await file.arrayBuffer());
+    if (existsSync(this.dpapiKeyPath)) {
+      const protectedBytes = new Uint8Array(await Bun.file(this.dpapiKeyPath).arrayBuffer());
+      material = await unprotectWithDpapi(protectedBytes);
+    } else if (existsSync(this.legacyKeyPath)) {
+      material = new Uint8Array(await Bun.file(this.legacyKeyPath).arrayBuffer());
+      const protectedBytes = await protectWithDpapi(material);
+      await Bun.write(this.dpapiKeyPath, protectedBytes);
+      try { unlinkSync(this.legacyKeyPath); } catch { /* keep legacy if delete fails */ }
     } else {
       material = crypto.getRandomValues(new Uint8Array(32));
-      await Bun.write(this.keyPath, material);
+      const protectedBytes = await protectWithDpapi(material);
+      await Bun.write(this.dpapiKeyPath, protectedBytes);
     }
     return crypto.subtle.importKey("raw", asArrayBuffer(material), "AES-GCM", false, ["encrypt", "decrypt"]);
   }

@@ -1,6 +1,6 @@
 {
   "appName": "BulkImg Studio",
-  "version": "2.0.0",
+  "version": "1.0.0 beta",
   "logoPath": "views://assets/brand/logo.svg",
   "iconPath": "/assets/brand/app_icon.ico",
   "accentColor": "#38bdf8",

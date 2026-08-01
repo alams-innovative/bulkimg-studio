@@ -76,6 +76,9 @@ export class HistoryService {
     const imageFilename = this.filename(params.prompt);
     const filePath = join(sessionDirectory, imageFilename);
     await Bun.write(filePath, bytes);
+    const telemetry = this.database.getTelemetry(params.sessionId);
+    const promptShare = Math.max(1, telemetry.totalPrompts);
+    const costUsd = telemetry.costUsd > 0 ? telemetry.costUsd / promptShare : 0;
     this.database.insertGeneratedAsset({
       assetId: crypto.randomUUID(),
       promptId: params.prompt.prompt_id,
@@ -90,6 +93,8 @@ export class HistoryService {
       model: params.model,
       inputTokens: params.result.inputTokens,
       outputTokens: params.result.outputTokens,
+      costUsd,
+      costPkr: costUsd * telemetry.fxRate,
     });
     return true;
   }

@@ -1,5 +1,7 @@
 # Architecture
 
+Current product stage: **BulkImg Studio 1.0.0 beta**.
+
 ## Process boundary
 
 The WebView owns presentation and local selection state. It receives only safe configuration, prompt matrices, telemetry, and API-key labels. File access, SQLite, encryption, external API calls, FX lookup, and ZIP creation remain in the Bun main process.
@@ -32,14 +34,14 @@ Windows WebView2 UI
 | ZIP manifests | `src/bun/services/export-service.ts` |
 | WebView UI | `src/mainview/` |
 
-## Production milestones
+## Production milestones (1.0.0 beta status)
 
-1. Persist base64/direct results and ingest completed Batch API output files into `generated_assets`.
-2. Implement reference-image upload once per session and use the image-edit batch route when a reference is attached.
-3. Replace the portable AES-GCM vault with a Windows DPAPI/Credential Manager adapter while retaining the current interface.
-4. Add model-versioned pricing configuration and reconcile token/image usage from API responses.
-5. Add native save/open dialogs, Windows notifications, cancellation, retry queues, and crash recovery.
-6. Add signed x64 and ARM64 release targets, a branded `.ico`, update hosting, and installer smoke tests.
+1. Persist base64/direct results and ingest completed Batch API output files into `generated_assets` — **done**; export ZIP includes images.
+2. Reference-image upload once per session + image-edit routing — **done** (UI dock + `/v1/files` cache + edits endpoint).
+3. Windows DPAPI wrapper for the device key (AES-GCM payloads unchanged) — **done** via `.key-vault.dpapi`.
+4. Model-versioned pricing (`assets/config/pricing.json`) + USD/PKR estimates — **done**.
+5. Native open/save dialogs, Windows balloon notifications, cancel/retry, crash recovery — **done**.
+6. Branded `.ico` + build wiring — **done**; signed x64/ARM64 distribution still requires a code-signing cert (see `docs/RELEASE.md`).
 
 ## API compatibility notes
 

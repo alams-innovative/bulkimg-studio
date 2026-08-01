@@ -4,7 +4,7 @@ export default {
   app: {
     name: "bulkimg-studio",
     identifier: "com.bulkimg.studio",
-    version: "2.0.0",
+    version: "1.0.0-beta.0",
   },
   runtime: {
     exitOnLastWindowClosed: true,
@@ -25,6 +25,7 @@ export default {
     },
     win: {
       bundleCEF: false,
+      icon: "assets/brand/app_icon.ico",
     },
   },
 } satisfies ElectrobunConfig;

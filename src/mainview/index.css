@@ -29,7 +29,7 @@ button { color: inherit; }
 .sidebar { border-radius: 22px; padding: 18px 12px; display: flex; flex-direction: column; }
 .brand-lockup { display: flex; align-items: center; gap: 11px; padding: 7px 8px 24px; }
 .brand-logo { width: 38px; height: 38px; flex: 0 0 38px; }
-.brand-logo svg { display: block; width: 100%; height: 100%; }
+.brand-logo svg, .brand-logo img { display: block; width: 100%; height: 100%; border-radius: 10px; object-fit: cover; }
 .brand-lockup strong, .brand-lockup span { display: block; }
 .brand-lockup strong { letter-spacing: -.02em; }
 .brand-lockup span { color: var(--muted); font-size: 11px; margin-top: 2px; }
@@ -105,12 +105,17 @@ legend { color: var(--muted); font-size: 11px; margin-bottom: 5px; }
 .mode-option strong, .mode-option small { display: block; }
 .mode-option small { color: var(--muted); font-size: 10px; }
 .mode-option b { color: var(--brand-secondary); font-size: 8px; text-transform: uppercase; }
-.reference-dock { width: 100%; display: flex; gap: 9px; align-items: center; border: 1px dashed var(--border); padding: 11px; border-radius: 11px; color: var(--muted); background: rgba(2,6,23,.28); text-align: left; }
+.reference-dock { width: 100%; display: flex; gap: 9px; align-items: center; border: 1px dashed var(--border); padding: 11px; border-radius: 11px; color: var(--muted); background: rgba(2,6,23,.28); text-align: left; cursor: pointer; }
+.reference-dock:hover, .reference-dock:focus-visible { border-color: var(--brand-primary); color: var(--ink); outline: none; }
+.reference-dock.has-image { border-style: solid; border-color: rgba(52,211,153,.55); background: rgba(52,211,153,.08); }
+.reference-dock.dragging { border-color: var(--brand-secondary); background: rgba(52,211,153,.12); }
 .reference-dock > span { color: var(--brand-primary); font-size: 20px; }
 .reference-dock strong, .reference-dock small { display: block; }
 .reference-dock small { font-size: 10px; }
 .reference-dock b { margin-left: auto; color: #64748b; font-size: 8px; text-transform: uppercase; letter-spacing: .08em; }
-.reference-dock:disabled { cursor: not-allowed; opacity: .68; }
+.csv-native-button { margin-top: 8px; width: 100%; }
+.run-actions { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+.run-actions .primary-button { width: 100%; }
 .primary-button, .secondary-button { border: 0; border-radius: 10px; cursor: pointer; }
 .primary-button { min-height: 43px; padding: 0 13px; display: flex; align-items: center; justify-content: space-between; background: linear-gradient(135deg, var(--brand-primary), #0ea5e9); color: #082f49; font-weight: 750; box-shadow: 0 10px 25px rgba(14,165,233,.17); }
 .primary-button:disabled { cursor: not-allowed; filter: grayscale(1); opacity: .38; box-shadow: none; }
