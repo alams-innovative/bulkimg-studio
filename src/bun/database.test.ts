@@ -49,4 +49,42 @@ describe("history database", () => {
     expect(database.listHistory()).toEqual([]);
     database.db.close();
   });
+
+  test("recovers interrupted direct runs and retains retry/reference context", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bulkimg-recovery-test-"));
+    temporaryDirectories.push(directory);
+    const database = new AppDatabase(directory);
+    database.createSession("session-recovery", {
+      prompts: [{
+        promptText: "A layered monochrome image icon",
+        week: "Week 2",
+        scheduleDate: "2026-08-08",
+        themeColumn: "Brand",
+      }],
+      model: "gpt-image-2",
+      mode: "direct",
+      size: "1024x1024",
+      quality: "medium",
+      referenceImageFileId: "file-reference",
+    }, 278);
+    database.updateSession("session-recovery", {
+      status: "processing",
+      message: "Generating image 1 of 1…",
+    });
+    database.cacheReferenceFile("file-reference", join(directory, "reference.png"), "image/png");
+
+    expect(database.getSessionPricingContext("session-recovery")).toEqual({
+      model: "gpt-image-2",
+      runMode: "direct",
+      quality: "medium",
+    });
+    expect(database.getReferenceFile("file-reference")).toMatchObject({ mime_type: "image/png" });
+    expect(database.listRetryablePrompts("session-recovery")).toHaveLength(1);
+    expect(database.recoverOrphanedSessions()).toBe(1);
+    expect(database.getTelemetry("session-recovery")).toMatchObject({
+      status: "failed",
+      message: "Interrupted by app restart before direct generation finished.",
+    });
+    database.db.close();
+  });
 });

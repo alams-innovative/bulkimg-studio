@@ -896,10 +896,10 @@ kbd {
 .run-panel {
   min-width: 0;
   min-height: 0;
-  padding: 20px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   overflow: auto;
 }
 
@@ -937,7 +937,7 @@ legend {
 
 .mode-option {
   min-width: 0;
-  min-height: 56px;
+  min-height: 52px;
   padding: 10px;
   display: flex;
   align-items: center;
@@ -995,7 +995,7 @@ legend {
 
 .reference-dock {
   width: 100%;
-  min-height: 64px;
+  min-height: 58px;
   padding: 10px;
   display: flex;
   align-items: center;
@@ -1004,7 +1004,33 @@ legend {
   border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
+  cursor: pointer;
   text-align: left;
+  transition: border-color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard), color var(--motion-fast) var(--ease-standard);
+}
+
+.reference-dock:hover,
+.reference-dock:focus-visible {
+  border-color: var(--border-strong);
+  background: var(--control-hover);
+  color: var(--text-primary);
+}
+
+.reference-dock.has-image {
+  border-style: solid;
+  border-color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 8%, transparent);
+}
+
+.reference-dock.dragging {
+  border-color: var(--color-information);
+  background: color-mix(in srgb, var(--color-information) 10%, transparent);
+}
+
+.reference-dock > svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
 }
 
 .reference-dock > span {
@@ -1029,6 +1055,27 @@ legend {
 .run-spacer {
   flex: 1;
   min-height: 4px;
+}
+
+.csv-native-button {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.run-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.run-actions .primary-button {
+  width: 100%;
+}
+
+.telemetry-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .primary-button,
@@ -1784,6 +1831,7 @@ legend {
   .run-panel fieldset,
   .run-panel .reference-dock,
   .run-panel .run-spacer,
+  .run-panel .run-actions,
   .run-panel .primary-button,
   .run-panel .privacy-note {
     grid-column: 1 / -1;
@@ -1881,8 +1929,12 @@ legend {
     grid-template-columns: auto 1fr auto;
   }
 
-  .telemetry > div:not(.telemetry-status) {
+  .telemetry > div:not(.telemetry-status):not(.telemetry-actions) {
     display: none;
+  }
+
+  .telemetry-actions {
+    display: flex;
   }
 
   .history-toolbar > label {

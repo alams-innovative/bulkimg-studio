@@ -1,25 +1,47 @@
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 import type { AppDatabase } from "../database";
 import type { KeyVault } from "./key-vault";
 import type { FxService } from "./fx-service";
 import { OpenAIClient } from "./openai-client";
 import type { HistoryService } from "./history-service";
+import type { PricingService } from "./pricing-service";
 import type { SessionStatus, SessionTelemetry, SubmitRunInput } from "../../shared/contracts";
+import { showNotification } from "./windows-native";
 
 function normalizeBatchStatus(status: string): SessionStatus {
   if (status === "completed") return "completed";
-  if (["failed", "expired", "cancelled"].includes(status)) return "failed";
+  if (["failed", "expired", "cancelled", "cancelling"].includes(status)) return "failed";
   return "processing";
 }
 
 export class BatchEngine {
   private nextKeyIndex = 0;
+  private readonly abortControllers = new Map<string, AbortController>();
+  private progressSink: ((telemetry: SessionTelemetry) => void) | null = null;
+  private readonly referenceDirectory: string;
 
   constructor(
     private readonly database: AppDatabase,
     private readonly keyVault: KeyVault,
     private readonly fx: FxService,
     private readonly history: HistoryService,
-  ) {}
+    private readonly pricing: PricingService,
+    dataDirectory: string,
+  ) {
+    this.referenceDirectory = join(dataDirectory, "references");
+    mkdirSync(this.referenceDirectory, { recursive: true });
+  }
+
+  setProgressSink(sink: (telemetry: SessionTelemetry) => void): void {
+    this.progressSink = sink;
+  }
+
+  private emit(sessionId: string): SessionTelemetry {
+    const telemetry = this.database.getTelemetry(sessionId);
+    try { this.progressSink?.(telemetry); } catch { /* webview may not be ready */ }
+    return telemetry;
+  }
 
   private async withRotatingKey<T>(
     operation: (client: OpenAIClient, keyId: string) => Promise<T>,
@@ -48,10 +70,32 @@ export class BatchEngine {
     throw lastError instanceof Error ? lastError : new Error("All API keys are rate limited.");
   }
 
+  private applyCost(sessionId: string, imageCount: number, inputTokens: number, outputTokens: number): number {
+    const ctx = this.database.getSessionPricingContext(sessionId);
+    const costUsd = this.pricing.costFromUsage({
+      model: ctx.model,
+      mode: ctx.runMode,
+      quality: ctx.quality,
+      imageCount,
+      inputTokens,
+      outputTokens,
+    });
+    return costUsd;
+  }
+
+  async uploadReference(bytes: Uint8Array, filename: string, mimeType: string): Promise<{ fileId: string }> {
+    const selected = await this.withRotatingKey((client) => client.uploadReferenceImage(bytes, filename, mimeType));
+    const localPath = join(this.referenceDirectory, `${selected.result}.${filename.replace(/[^\w.-]+/g, "_")}`);
+    await Bun.write(localPath, bytes);
+    this.database.cacheReferenceFile(selected.result, localPath, mimeType);
+    return { fileId: selected.result };
+  }
+
   async submit(input: SubmitRunInput): Promise<SessionTelemetry> {
     if (input.prompts.length === 0) throw new Error("Select at least one prompt.");
     const sessionId = crypto.randomUUID();
     this.database.createSession(sessionId, input, await this.fx.getUsdPkrRate());
+    this.emit(sessionId);
 
     try {
       if (input.mode === "batch") {
@@ -68,16 +112,40 @@ export class BatchEngine {
           completedCount: batch.request_counts?.completed ?? 0,
         });
       } else {
+        const controller = new AbortController();
+        this.abortControllers.set(sessionId, controller);
         this.database.updateSession(sessionId, { status: "processing", message: "Generating images directly…" });
+        this.emit(sessionId);
         const selected = await this.withRotatingKey(
-          (client) => client.generateDirect(input),
+          (client) => client.generateDirect(input, {
+            signal: controller.signal,
+            onPromptDone: (completed) => {
+              this.database.updateSession(sessionId, {
+                status: "processing",
+                message: `Generating image ${completed} of ${input.prompts.length}…`,
+                completedCount: completed,
+              });
+              this.emit(sessionId);
+            },
+          }),
           (keyId) => this.database.assignSessionKey(sessionId, keyId),
         );
         const direct = selected.result;
+        const costUsd = this.applyCost(sessionId, direct.completed, direct.inputTokens, direct.outputTokens);
         this.database.recordKeyUsage(selected.keyId, {
           requests: direct.completed,
           inputTokens: direct.inputTokens,
           outputTokens: direct.outputTokens,
+          costUsd,
+          costPkr: costUsd * this.database.getTelemetry(sessionId).fxRate,
+        });
+        this.database.updateSession(sessionId, {
+          status: "processing",
+          message: "Saving generated images to History…",
+          completedCount: direct.completed,
+          inputTokens: direct.inputTokens,
+          outputTokens: direct.outputTokens,
+          costUsd,
         });
         const saved = await this.history.persistDirect(sessionId, input.model, selected.keyId, direct.images);
         this.database.updateSession(sessionId, {
@@ -86,15 +154,19 @@ export class BatchEngine {
           completedCount: direct.completed,
           inputTokens: direct.inputTokens,
           outputTokens: direct.outputTokens,
+          costUsd,
         });
+        void showNotification("BulkImg Studio", `Direct run finished · ${saved} image(s).`);
       }
     } catch (error) {
       this.database.updateSession(sessionId, {
         status: "failed",
         message: error instanceof Error ? error.message : "Run failed",
       });
+    } finally {
+      this.abortControllers.delete(sessionId);
     }
-    return this.database.getTelemetry(sessionId);
+    return this.emit(sessionId);
   }
 
   async poll(sessionId: string): Promise<SessionTelemetry> {
@@ -115,19 +187,39 @@ export class BatchEngine {
       const nextInputTokens = batch.usage?.input_tokens ?? current.inputTokens;
       const nextOutputTokens = batch.usage?.output_tokens ?? current.outputTokens;
       const sessionKeyId = this.database.getSessionKeyId(sessionId);
+      const completedCount = batch.request_counts?.completed ?? current.completedCount;
       let savedImages = 0;
-      if (status === "completed" && output) {
-        savedImages = await this.history.persistBatchOutput(
+      let costUsd = current.costUsd;
+      if (status === "completed") {
+        costUsd = this.applyCost(
           sessionId,
-          this.database.getSessionModel(sessionId),
-          sessionKeyId,
-          output,
+          Math.max(completedCount, 1),
+          nextInputTokens,
+          nextOutputTokens,
         );
+        this.database.updateSession(sessionId, {
+          status: "processing",
+          message: "Batch completed; saving images to History…",
+          completedCount,
+          inputTokens: nextInputTokens,
+          outputTokens: nextOutputTokens,
+          costUsd,
+        });
+        if (output) {
+          savedImages = await this.history.persistBatchOutput(
+            sessionId,
+            this.database.getSessionModel(sessionId),
+            sessionKeyId,
+            output,
+          );
+        }
       }
       if (sessionKeyId) {
         this.database.recordKeyUsage(sessionKeyId, {
           inputTokens: Math.max(0, nextInputTokens - current.inputTokens),
           outputTokens: Math.max(0, nextOutputTokens - current.outputTokens),
+          costUsd: Math.max(0, costUsd - current.costUsd),
+          costPkr: Math.max(0, (costUsd - current.costUsd) * current.fxRate),
         });
       }
       this.database.updateSession(sessionId, {
@@ -135,16 +227,73 @@ export class BatchEngine {
         message: errorMessage || (status === "completed"
           ? `OpenAI batch completed; ${savedImages} image${savedImages === 1 ? "" : "s"} saved to History.`
           : `OpenAI batch status: ${batch.status}`),
-        completedCount: batch.request_counts?.completed ?? current.completedCount,
+        completedCount,
         inputTokens: nextInputTokens,
         outputTokens: nextOutputTokens,
+        costUsd,
       });
+      if (status === "completed") {
+        void showNotification("BulkImg Studio", `Batch completed · ${savedImages} image(s).`);
+      }
     } catch (error) {
       this.database.updateSession(sessionId, {
         status: "processing",
         message: `Status check deferred: ${error instanceof Error ? error.message : "unknown error"}`,
       });
     }
-    return this.database.getTelemetry(sessionId);
+    return this.emit(sessionId);
+  }
+
+  async cancel(sessionId: string): Promise<SessionTelemetry> {
+    const current = this.database.getTelemetry(sessionId);
+    if (current.status !== "pending" && current.status !== "processing") return current;
+    const controller = this.abortControllers.get(sessionId);
+    controller?.abort();
+    const externalId = this.database.getExternalBatchId(sessionId);
+    if (externalId) {
+      try {
+        await this.withRotatingKey((client) => client.cancelBatch(externalId));
+      } catch {
+        // Local cancellation still recorded if remote cancel fails.
+      }
+    }
+    this.database.updateSession(sessionId, {
+      status: "failed",
+      message: "Cancelled by user.",
+    });
+    return this.emit(sessionId);
+  }
+
+  async retryFailed(sessionId: string): Promise<SessionTelemetry> {
+    const prompts = this.database.listRetryablePrompts(sessionId);
+    if (prompts.length === 0) throw new Error("No failed or missing prompts to retry for this session.");
+    const ctx = this.database.getSessionPricingContext(sessionId);
+    const sessionRow = this.database.db.query<{
+      size_used: string; reference_file_id: string | null;
+    }, [string]>(
+      "SELECT size_used, reference_file_id FROM batch_sessions WHERE session_id = ?",
+    ).get(sessionId);
+    return this.submit({
+      prompts,
+      model: ctx.model,
+      mode: ctx.runMode,
+      size: sessionRow?.size_used ?? "1024x1024",
+      quality: ctx.quality,
+      referenceImageFileId: sessionRow?.reference_file_id ?? undefined,
+    });
+  }
+
+  recoverOnStartup(): number {
+    return this.database.recoverOrphanedSessions();
+  }
+
+  estimate(input: {
+    model: string;
+    promptCount: number;
+    mode: "batch" | "direct";
+    quality: "low" | "medium" | "high";
+  }, fxRate: number): { costUsd: number; costPkr: number; fxRate: number } {
+    const costUsd = this.pricing.estimateUsd(input);
+    return { costUsd, costPkr: costUsd * fxRate, fxRate };
   }
 }

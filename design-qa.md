@@ -1,40 +1,39 @@
 # BulkImg Studio design QA
 
-## Visual truth
+## Evidence
 
-- Primary source: `assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-512.png`
-- Light source: `assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-512.png`
-- Palette source: `assets/brand-pack/BulkImg_Studio_Brand_Pack/previews/bulkimg-studio-color-palette.png`
-- Brand rules: `assets/brand-pack/BulkImg_Studio_Brand_Pack/docs/color-branding.md` and `docs/design-system.md`
+- Source visual truth: `assets/brand-pack/BulkImg_Studio_Brand_Pack/previews/bulkimg-studio-color-palette.png` (1600 x 900) and `assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-512.png` (512 x 512).
+- Implementation screenshot: `qa-artifacts/design/production-final-1440x840.png` (1440 x 840, final packaged runtime).
+- Full-view comparison input: `qa-artifacts/design/brand-vs-implementation-combined.png` (1600 x 1700).
+- Focused logo/brand comparison: `qa-artifacts/design/brand-focused-comparison.png` (1100 x 600).
+- Responsive evidence: `qa-artifacts/design/integration-minimum-900x640.png` (900 x 640).
+- Native-dialog evidence: `qa-artifacts/design/integration-native-csv-dialog.png` (1440 x 860).
+- CSS viewport / density: native Windows frame at 1440 x 840, 100% capture scale, one physical screenshot pixel per captured window pixel. Source assets were proportionally scaled only inside the combined comparison board.
+- State: dark theme, Generator route, CSV empty state, no selected prompts, batch mode selected, live FX loaded, actions correctly disabled.
 
-## Implementation evidence
+## Findings
 
-- Full production state with real CSV content, 1440 × 900 at 100% scale: `qa-artifacts/design/production-dark-populated-1440x900.png`
-- Enforced production minimum window, 900 × 640: `qa-artifacts/design/production-dark-minimum.png`
-- Production API-key modal state: `qa-artifacts/design/production-dark-api-dialog-1440x900.png`
-- Side-by-side source/production comparison: `qa-artifacts/design/comparison-production-dark.png`
+No actionable P0, P1, or P2 visual findings remain.
 
-The density target is a desktop production utility: information-dense, dark-first, keyboard-friendly, and scroll-safe at the enforced 900 × 640 minimum. The full screenshot uses real, long CSV prompts and disabled schedule cells; the focused screenshot covers the native API-key modal.
+- Fonts and typography: passed. The supplied Manrope, Inter, and JetBrains Mono families are bundled locally and retain clear display, interface, and telemetry roles.
+- Spacing and layout rhythm: passed. The compacted configuration panel fits without its former unnecessary scrollbar at the default size; section gaps, radii, borders, and alignment follow the supplied 4/8 px rhythm.
+- Colors and visual tokens: passed. The rendered UI maps directly to the supplied SlateStack gray ramp, with green, blue, amber, and red restricted to semantic states.
+- Image quality and asset fidelity: passed. The exact supplied raster logo is used in the app shell, app PNG, and installer icon; it remains sharp at its displayed size. No handcrafted SVG, CSS art, emoji, or placeholder image substitutes are present.
+- Copy and content: passed. CSV limits, reference-image constraints, execution timing, privacy, empty state, retry, cancel, and export behaviors are named in plain task-oriented language.
+- Icons: passed. One Lucide family is used consistently for navigation and actions, with aligned stroke weight and control sizing.
+- States and interactions: passed for the core inspected path. CSV browse opens the real Windows file picker without exposing a console window; the minimum-window clamp, empty state, disabled actions, and live FX state were observed.
+- Responsiveness and accessibility: passed. Attempts to resize below 900 x 640 are clamped; at the minimum, navigation becomes icon-only and the page remains reachable through vertical scrolling. Semantic labels, keyboard support, focus-visible styles, reduced-motion handling, and forced-colors support remain implemented.
 
 ## Comparison history
 
-1. The original functional baseline used blue/green glass surfaces, improvised iconography, and an unrelated mark. The first implementation replaced these with the supplied SlateStack palette, exact dark/light raster logos, bundled brand fonts, and one Lucide icon family.
-2. At 980 px, the first pass retained a narrow two-column configuration panel. This was a P2 responsiveness issue because labels and controls became cramped. The single-column breakpoint was moved to 1040 px and the second capture passed.
-3. An artificial 640 px native-window test exposed an Electrobun/WebView resize defect that left part of the window surface uncovered. This was a P1 native-shell issue. The Bun window now enforces a 900 × 640 minimum, where the responsive top navigation and vertical scrolling remain usable.
-4. Dark and light source assets were placed beside the final screenshots in the comparison sheets. Color families, matte depth, logo treatment, controlled radii, typography, spacing, and icon consistency visibly match the supplied system.
+1. Earlier integration capture `qa-artifacts/design/integration-backend-ui-v2.png` showed the configuration content exceeding the available vertical space. This was a P2 density issue. Panel padding/gaps, mode rows, and the reference dock were compacted; `integration-backend-ui-v5.png` shows the entire configuration and telemetry without clipped controls.
+2. Integration capture `qa-artifacts/design/integration-backend-ui-v3.png` exposed a P1 native-shell issue: Electrobun maximized the OS frame but left the webview at its original 1280 x 720 size, producing a large blank region. The maximize call was removed and the default native frame was set to 1440 x 840; `integration-backend-ui-v5.png` shows the webview filling the window.
+3. The first packaged launch revealed a P2 client-area synchronization issue: the initial webview used the outer frame height and clipped the bottom telemetry until the user resized the window. A delayed one-pixel native resize now synchronizes the webview after startup; `production-final-1440x840.png` shows the final packaged runtime with all persistent controls visible on first launch.
+4. The app was forced below its supported size. The native resize guard returned it to 900 x 640, and `integration-minimum-900x640.png` shows the responsive navigation and scroll-safe content with no overlap.
+5. The final source and packaged implementation were placed together in `brand-vs-implementation-combined.png`, followed by a focused logo inspection in `brand-focused-comparison.png`. The official logo, gray palette, matte surface hierarchy, typography, and restrained semantic accents visibly match the supplied brand system.
 
-## Final rubric
+## Residual test gaps
 
-- Fonts and typography: passed. Manrope, Inter, and JetBrains Mono are bundled locally with the supplied weight hierarchy.
-- Spacing and layout: passed. The 8/4 px rhythm, controlled radii, aligned panels, and desktop density are consistent.
-- Viewport resilience: passed at 1440 × 900, 980 × 760, and the enforced 900 × 640 minimum. Content scrolls without clipped controls.
-- Colors and tokens: passed. The exact supplied gray ramp is used for structure; green, blue, amber, and red are restricted to state.
-- Image quality and assets: passed. Both official logos are used directly at appropriate sizes; no fake SVG or CSS artwork remains.
-- Copy and content: passed. Empty, disabled, privacy, and upcoming-feature states are explicit and actionable.
-- Icons: passed. Visible actions use Lucide at one stroke weight and align to consistent control boxes.
-- States and interactions: passed. Navigation, tabs, manual parsing, file validation, selection, loading/empty/error states, theme persistence, modal behavior, and disabled actions are implemented.
-- Accessibility: passed. Semantic controls, labels, tab keyboard behavior, focus-visible rings, native dialog focus trapping, reduced-motion handling, forced-color support, practical targets, and responsive text wrapping are present.
+- A live paid OpenAI generation was intentionally not submitted during visual QA because no user API key or spending authorization was supplied. The request builders, reference-image JSON shape, pricing, persistence, recovery, and export plumbing are covered by automated tests.
 
-## Final result
-
-**passed** — no open P0, P1, or P2 findings.
+final result: passed

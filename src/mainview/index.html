@@ -17,7 +17,7 @@
           </div>
           <div class="brand-copy">
             <strong id="brand-name">BulkImg Studio</strong>
-            <span><span id="brand-version">2.0.0</span> · SlateStack</span>
+            <span><span id="brand-version">1.0.0-beta</span> · SlateStack</span>
           </div>
         </div>
 
@@ -83,6 +83,7 @@
                   <small>We’ll turn supported calendar columns into selectable prompt cards.</small>
                   <span class="file-chip"><i data-lucide="file-spreadsheet" aria-hidden="true"></i> CSV up to 10 MB</span>
                 </label>
+                <button id="pick-csv-native" type="button" class="secondary-button csv-native-button"><i data-lucide="folder-open" aria-hidden="true"></i>Browse with Windows</button>
               </div>
               <div id="manual-panel" class="input-panel hidden" role="tabpanel" aria-labelledby="manual-tab">
                 <label class="sr-only" for="manual-prompts">Manual prompts</label>
@@ -127,11 +128,15 @@
                 <label class="mode-option selected"><input type="radio" name="run-mode" value="batch" checked /><span><strong>Batch async</strong><small>50% API discount · up to 24h</small></span><b>Recommended</b></label>
                 <label class="mode-option"><input type="radio" name="run-mode" value="direct" /><span><strong>Direct</strong><small>Immediate testing</small></span></label>
               </fieldset>
-              <button class="reference-dock" type="button" disabled title="Reference image upload is not enabled in this build">
-                <i data-lucide="image-plus" aria-hidden="true"></i><span><strong>Reference image</strong><small>Available when image-edit routing lands</small></span><b>Coming next</b>
-              </button>
+              <div id="reference-dock" class="reference-dock" tabindex="0" role="button" aria-label="Attach reference image">
+                <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" hidden />
+                <i data-lucide="image-plus" aria-hidden="true"></i><span><strong id="reference-title">Reference image</strong><small id="reference-hint">Drop, paste, or click to attach once per session</small></span><b id="reference-badge">Optional</b>
+              </div>
               <div class="run-spacer"></div>
-              <button id="run-button" class="primary-button" disabled><span>Generate selected</span><i data-lucide="arrow-right" aria-hidden="true"></i></button>
+              <div class="run-actions">
+                <button id="run-button" class="primary-button" disabled><span>Generate selected</span><i data-lucide="arrow-right" aria-hidden="true"></i></button>
+                <button id="cancel-button" class="secondary-button danger-button" disabled><i data-lucide="x" aria-hidden="true"></i>Cancel</button>
+              </div>
               <p class="privacy-note"><i data-lucide="shield-check" aria-hidden="true"></i><span>API keys stay encrypted locally and never enter the webview.</span></p>
             </aside>
           </section>
@@ -143,7 +148,10 @@
             <div><span>Progress</span><strong id="progress">0 / 0</strong></div>
             <div><span>Tokens</span><strong id="tokens">0 in · 0 out</strong></div>
             <div><span>Session cost</span><strong id="session-cost">$0.000 · Rs. 0.00</strong></div>
-            <button id="export-button" class="secondary-button" disabled><i data-lucide="package-open" aria-hidden="true"></i>Export ZIP</button>
+            <div class="telemetry-actions">
+              <button id="retry-button" class="secondary-button" disabled><i data-lucide="refresh-cw" aria-hidden="true"></i>Retry missing</button>
+              <button id="export-button" class="secondary-button" disabled><i data-lucide="package-open" aria-hidden="true"></i>Export ZIP</button>
+            </div>
           </section>
         </div>
 

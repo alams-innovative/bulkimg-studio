@@ -53,6 +53,12 @@ export type SessionTelemetry = {
   message: string;
 };
 
+export type CostEstimate = {
+  costUsd: number;
+  costPkr: number;
+  fxRate: number;
+};
+
 export type ApiKeyStats = {
   id: string;
   label: string;
@@ -131,6 +137,7 @@ export type AppBootstrap = {
   };
   keyCount: number;
   platform: string;
+  fxRate: number;
 };
 
 export type AppRPC = {
@@ -139,8 +146,24 @@ export type AppRPC = {
       getBootstrap: { params: {}; response: AppBootstrap };
       importCSV: { params: { csvText: string; sourceName: string }; response: PromptMatrix };
       parseManualPrompts: { params: { text: string }; response: PromptMatrix };
+      pickCsvFile: { params: {}; response: { csvText: string; sourceName: string } | null };
       submitBatchRun: { params: SubmitRunInput; response: SessionTelemetry };
       pollBatchStatus: { params: { sessionId: string }; response: SessionTelemetry };
+      cancelBatchRun: { params: { sessionId: string }; response: SessionTelemetry };
+      retryFailedPrompts: { params: { sessionId: string }; response: SessionTelemetry };
+      estimateRunCost: {
+        params: {
+          model: string;
+          promptCount: number;
+          mode: RunMode;
+          quality: "low" | "medium" | "high";
+        };
+        response: CostEstimate;
+      };
+      uploadReferenceImage: {
+        params: { dataBase64: string; filename: string; mimeType: string };
+        response: { fileId: string };
+      };
       listApiKeys: { params: {}; response: ApiKeyStats[] };
       addApiKey: { params: { label: string; key: string }; response: { id: string; label: string; isActive: boolean } };
       setApiKeyActive: { params: { id: string; isActive: boolean }; response: { success: boolean } };
@@ -153,7 +176,7 @@ export type AppRPC = {
       clearHistory: { params: {}; response: { deletedPrompts: number; deletedAssets: number } };
       listExports: { params: {}; response: ExportSummary[] };
       revealExportsFolder: { params: {}; response: { directory: string } };
-      exportSessionZip: { params: { sessionId: string }; response: { filePath: string } };
+      exportSessionZip: { params: { sessionId: string; pickPath?: boolean }; response: { filePath: string } };
     };
     messages: {};
   };
