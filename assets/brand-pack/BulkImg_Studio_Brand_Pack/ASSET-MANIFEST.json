@@ -1,0 +1,99 @@
+{
+  "package": "BulkImg Studio Brand Pack",
+  "version": "1.0",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 1103,
+      "sha256": "f284d54927a502d0c606605177c7a4f1f3aed1ce5e51b13d94f7d1dd0d74ec39"
+    },
+    {
+      "path": "docs/color-branding.md",
+      "bytes": 2914,
+      "sha256": "610efd3e84e6dd851158eee4ebb04273cfd52137b62129fd3e1e75e4df6a887f"
+    },
+    {
+      "path": "docs/design-system.md",
+      "bytes": 5981,
+      "sha256": "df033354687811941542a763f229393b667974340e02f62de543d37991644a33"
+    },
+    {
+      "path": "logos/bulkimg-studio-logo-dark-256.png",
+      "bytes": 60373,
+      "sha256": "41fdf80f29cf8e92507f84e2ae19b8445ab58bf3bcc2effe766acaf6354b01ba",
+      "dimensions": [
+        256,
+        256
+      ]
+    },
+    {
+      "path": "logos/bulkimg-studio-logo-dark-512.png",
+      "bytes": 265890,
+      "sha256": "df9142d80cb9f6b44bb2c06e3649f1e3ca052c0154753b2579779154b9c6444a",
+      "dimensions": [
+        512,
+        512
+      ]
+    },
+    {
+      "path": "logos/bulkimg-studio-logo-dark.png",
+      "bytes": 2573221,
+      "sha256": "f7ff7253e7ccec5ffcb6a8483ce480d945f3b550d929c354fa6039abd111a7c1",
+      "dimensions": [
+        1254,
+        1254
+      ]
+    },
+    {
+      "path": "logos/bulkimg-studio-logo-light-256.png",
+      "bytes": 62877,
+      "sha256": "65611506775c3791c35a04e38e16d61245a09566e5e50a79ebafa0e0a93e154c",
+      "dimensions": [
+        256,
+        256
+      ]
+    },
+    {
+      "path": "logos/bulkimg-studio-logo-light-512.png",
+      "bytes": 281007,
+      "sha256": "2215947e3599667831b1a674ca6bf30f291d6f5e08874cf7aa8e87957d910ae8",
+      "dimensions": [
+        512,
+        512
+      ]
+    },
+    {
+      "path": "logos/bulkimg-studio-logo-light.png",
+      "bytes": 2847755,
+      "sha256": "7915ff890c9fd64832f42525fdb773378a8baf435c5e983ddb4b9b586b1fbb15",
+      "dimensions": [
+        1254,
+        1254
+      ]
+    },
+    {
+      "path": "previews/bulkimg-studio-color-palette.png",
+      "bytes": 27232,
+      "sha256": "b5f617a5802213f65e5d4bbfb0ee6338c32b904dc75aece45101c0c09b4f2550",
+      "dimensions": [
+        1600,
+        900
+      ]
+    },
+    {
+      "path": "tokens/design-tokens.css",
+      "bytes": 1636,
+      "sha256": "604948a9b932c061533d8b40b30e07f45cc203bfef163e86c5a98f5243d2826e"
+    },
+    {
+      "path": "tokens/design-tokens.json",
+      "bytes": 4276,
+      "sha256": "058c64ce7e7bf15a3b73e9c481c5b021ca0c612bfea89bd743292e33c06281de"
+    },
+    {
+      "path": "tokens/tailwind-token-snippet.js",
+      "bytes": 1080,
+      "sha256": "ee75404210eb7547c233ff51674828147d25c144f22f046139d33b9358eba3cf"
+    }
+  ]
+}

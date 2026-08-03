@@ -16,11 +16,11 @@ if (process.platform !== "win32") {
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
   version: "2.0.0",
-  logoPath: "views://assets/brand/logo.svg",
-  iconPath: "/assets/brand/app_icon.ico",
-  accentColor: "#38bdf8",
-  accentSecondary: "#34d399",
-  themeMode: "liquid-glass-dark",
+  logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
+  iconPath: "views://assets/brand/app_icon.ico",
+  accentColor: "#D5DAE0",
+  accentSecondary: "#B5BDC7",
+  themeMode: "slatestack-dark",
 };
 
 async function readJson<T>(paths: string[], fallback: T): Promise<T> {
@@ -97,7 +97,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
   },
 });
 
-new BrowserWindow({
+const mainWindow = new BrowserWindow({
   title: `${brand.appName} ${brand.version}`,
   url: "views://mainview/index.html",
   rpc,
@@ -107,6 +107,20 @@ new BrowserWindow({
     x: 80,
     y: 50,
   },
+});
+
+// Electrobun's native webview can become partially uncovered at very small
+// Windows sizes. Keep the utility usable and let the responsive single-column
+// layout take over before controls become cramped.
+mainWindow.on("resize", (event: unknown) => {
+  const size = (event as { data?: { width?: number; height?: number } }).data;
+  if (typeof size?.width !== "number" || typeof size.height !== "number") return;
+
+  const width = Math.max(900, Math.round(size.width));
+  const height = Math.max(640, Math.round(size.height));
+  if (width !== size.width || height !== size.height) {
+    mainWindow.setSize(width, height);
+  }
 });
 
 console.log(`${brand.appName} ${brand.version} started`);

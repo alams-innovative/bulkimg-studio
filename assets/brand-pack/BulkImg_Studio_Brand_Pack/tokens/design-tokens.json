@@ -1,0 +1,219 @@
+{
+  "$schema": "https://design-tokens.github.io/community-group/format/",
+  "brand": {
+    "name": "BulkImg Studio",
+    "system": "SlateStack Design System",
+    "systemType": "custom"
+  },
+  "color": {
+    "slateBlack": {
+      "$type": "color",
+      "$value": "#0B0F14"
+    },
+    "midnightSlate": {
+      "$type": "color",
+      "$value": "#11171F"
+    },
+    "deepSlate": {
+      "$type": "color",
+      "$value": "#18212B"
+    },
+    "slateSurface": {
+      "$type": "color",
+      "$value": "#222D39"
+    },
+    "graphiteSlate": {
+      "$type": "color",
+      "$value": "#344150"
+    },
+    "steelGray": {
+      "$type": "color",
+      "$value": "#566272"
+    },
+    "coolGray": {
+      "$type": "color",
+      "$value": "#7D8794"
+    },
+    "silverGray": {
+      "$type": "color",
+      "$value": "#B5BDC7"
+    },
+    "mistGray": {
+      "$type": "color",
+      "$value": "#D5DAE0"
+    },
+    "cloudGray": {
+      "$type": "color",
+      "$value": "#E9ECEF"
+    },
+    "softWhite": {
+      "$type": "color",
+      "$value": "#F6F7F9"
+    },
+    "success": {
+      "$type": "color",
+      "$value": "#55A887"
+    },
+    "information": {
+      "$type": "color",
+      "$value": "#668FB3"
+    },
+    "warning": {
+      "$type": "color",
+      "$value": "#C59A57"
+    },
+    "error": {
+      "$type": "color",
+      "$value": "#B96568"
+    }
+  },
+  "theme": {
+    "dark": {
+      "backgroundPrimary": {
+        "$type": "color",
+        "$value": "#0B0F14"
+      },
+      "backgroundSecondary": {
+        "$type": "color",
+        "$value": "#11171F"
+      },
+      "surfacePrimary": {
+        "$type": "color",
+        "$value": "#18212B"
+      },
+      "surfaceElevated": {
+        "$type": "color",
+        "$value": "#222D39"
+      },
+      "logoContainer": {
+        "$type": "color",
+        "$value": "#1B232D"
+      },
+      "logoFrontCard": {
+        "$type": "color",
+        "$value": "#D6DBE1"
+      },
+      "logoMiddleCard": {
+        "$type": "color",
+        "$value": "#566170"
+      },
+      "logoBackCard": {
+        "$type": "color",
+        "$value": "#323C48"
+      },
+      "logoMountain": {
+        "$type": "color",
+        "$value": "#252E39"
+      },
+      "logoHighlight": {
+        "$type": "color",
+        "$value": "#EEF1F4"
+      }
+    },
+    "light": {
+      "backgroundPrimary": {
+        "$type": "color",
+        "$value": "#E5E8EC"
+      },
+      "backgroundSecondary": {
+        "$type": "color",
+        "$value": "#EDF0F3"
+      },
+      "surfacePrimary": {
+        "$type": "color",
+        "$value": "#F4F5F7"
+      },
+      "surfaceElevated": {
+        "$type": "color",
+        "$value": "#FAFAFB"
+      },
+      "logoContainer": {
+        "$type": "color",
+        "$value": "#D8DDE3"
+      },
+      "logoFrontCard": {
+        "$type": "color",
+        "$value": "#F1F3F5"
+      },
+      "logoMiddleCard": {
+        "$type": "color",
+        "$value": "#BAC2CC"
+      },
+      "logoBackCard": {
+        "$type": "color",
+        "$value": "#9DA7B3"
+      },
+      "logoMountain": {
+        "$type": "color",
+        "$value": "#8D97A3"
+      },
+      "logoOutline": {
+        "$type": "color",
+        "$value": "#C1C8D0"
+      }
+    }
+  },
+  "font": {
+    "display": {
+      "$type": "fontFamily",
+      "$value": [
+        "Manrope",
+        "sans-serif"
+      ]
+    },
+    "interface": {
+      "$type": "fontFamily",
+      "$value": [
+        "Inter",
+        "sans-serif"
+      ]
+    },
+    "technical": {
+      "$type": "fontFamily",
+      "$value": [
+        "JetBrains Mono",
+        "monospace"
+      ]
+    }
+  },
+  "radius": {
+    "controlSmall": {
+      "$type": "dimension",
+      "$value": "6px"
+    },
+    "control": {
+      "$type": "dimension",
+      "$value": "8px"
+    },
+    "card": {
+      "$type": "dimension",
+      "$value": "12px"
+    },
+    "panel": {
+      "$type": "dimension",
+      "$value": "16px"
+    },
+    "modal": {
+      "$type": "dimension",
+      "$value": "20px"
+    },
+    "feature": {
+      "$type": "dimension",
+      "$value": "24px"
+    }
+  },
+  "motion": {
+    "fast": {
+      "$type": "duration",
+      "$value": "120ms"
+    },
+    "standard": {
+      "$type": "duration",
+      "$value": "180ms"
+    },
+    "slow": {
+      "$type": "duration",
+      "$value": "260ms"
+    }
+  }
+}

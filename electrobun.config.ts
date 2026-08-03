@@ -2,9 +2,10 @@ import type { ElectrobunConfig } from "electrobun";
 
 export default {
   app: {
-    name: "bulkimg-studio",
+    name: "BulkImg Studio",
     identifier: "com.bulkimg.studio",
     version: "2.0.0",
+    description: "A local-first workspace for high-volume AI image generation.",
   },
   runtime: {
     exitOnLastWindowClosed: true,
@@ -25,6 +26,7 @@ export default {
     },
     win: {
       bundleCEF: false,
+      icon: "assets/brand/app_icon.ico",
     },
   },
 } satisfies ElectrobunConfig;

@@ -1,4 +1,32 @@
 import Electrobun, { Electroview } from "electrobun/view";
+import {
+  Archive,
+  ArrowRight,
+  Check,
+  CircleAlert,
+  Clock3,
+  createIcons,
+  Database,
+  Download,
+  FileSpreadsheet,
+  FolderOpen,
+  ImageOff,
+  ImagePlus,
+  Images,
+  KeyRound,
+  Layers3,
+  LayoutGrid,
+  LoaderCircle,
+  Moon,
+  PackageOpen,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Sun,
+  Trash2,
+  UploadCloud,
+  X,
+} from "lucide";
 import type {
   ApiKeyStats,
   AppBootstrap,
@@ -29,6 +57,8 @@ const elements = {
   brandVersion: byId("brand-version"),
   platform: byId("platform"),
   keyCount: byId("key-count"),
+  themeToggle: byId<HTMLButtonElement>("theme-toggle"),
+  themeLabel: byId("theme-label"),
   pageEyebrow: byId("page-eyebrow"),
   pageTitle: byId("page-title"),
   headerStats: byId("header-stats"),
@@ -95,6 +125,71 @@ let toastTimer: number | null = null;
 let historyItems: HistoryItem[] = [];
 let historyImageObserver: IntersectionObserver | null = null;
 
+const slateStackIcons = {
+  Archive,
+  ArrowRight,
+  Check,
+  CircleAlert,
+  Clock3,
+  Database,
+  Download,
+  FileSpreadsheet,
+  FolderOpen,
+  ImageOff,
+  ImagePlus,
+  Images,
+  KeyRound,
+  Layers3,
+  LayoutGrid,
+  LoaderCircle,
+  Moon,
+  PackageOpen,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Sun,
+  Trash2,
+  UploadCloud,
+  X,
+};
+
+function refreshIcons(): void {
+  createIcons({
+    icons: slateStackIcons,
+    attrs: {
+      "aria-hidden": "true",
+      "stroke-width": "1.75",
+    },
+  });
+}
+
+type Theme = "dark" | "light";
+
+function getInitialTheme(): Theme {
+  try {
+    const saved = window.localStorage.getItem("bulkimg-theme");
+    if (saved === "dark" || saved === "light") return saved;
+  } catch {
+    // Local storage can be unavailable in hardened webview configurations.
+  }
+  // The supplied SlateStack system is dark-first. Keep light mode available as
+  // an explicit, persisted choice instead of inheriting the OS on first run.
+  return "dark";
+}
+
+function applyTheme(theme: Theme, persist = false): void {
+  document.documentElement.dataset["theme"] = theme;
+  elements.themeLabel.textContent = theme === "dark" ? "Dark theme" : "Light theme";
+  elements.themeToggle.setAttribute("aria-label", `Switch to ${theme === "dark" ? "light" : "dark"} theme`);
+  if (persist) {
+    try {
+      window.localStorage.setItem("bulkimg-theme", theme);
+    } catch {
+      // Theme still applies for this session when persistence is unavailable.
+    }
+  }
+}
+
 function escapeHtml(value: string): string {
   const node = document.createElement("div");
   node.textContent = value;
@@ -121,6 +216,8 @@ function formatDate(value: string | null): string {
 function showToast(message: string, isError = false): void {
   elements.toast.textContent = message;
   elements.toast.classList.toggle("error", isError);
+  elements.toast.setAttribute("role", isError ? "alert" : "status");
+  elements.toast.setAttribute("aria-live", isError ? "assertive" : "polite");
   elements.toast.classList.add("show");
   if (toastTimer !== null) window.clearTimeout(toastTimer);
   toastTimer = window.setTimeout(() => elements.toast.classList.remove("show"), 4200);
@@ -132,13 +229,19 @@ function setTab(mode: "csv" | "manual"): void {
   elements.manualTab.classList.toggle("active", !csv);
   elements.csvTab.setAttribute("aria-selected", String(csv));
   elements.manualTab.setAttribute("aria-selected", String(!csv));
+  elements.csvTab.tabIndex = csv ? 0 : -1;
+  elements.manualTab.tabIndex = csv ? -1 : 0;
   elements.csvPanel.classList.toggle("hidden", !csv);
   elements.manualPanel.classList.toggle("hidden", csv);
+  elements.csvPanel.toggleAttribute("hidden", !csv);
+  elements.manualPanel.toggleAttribute("hidden", csv);
 }
 
 async function setView(view: "generator" | "sessions" | "history" | "exports"): Promise<void> {
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
-    button.classList.toggle("active", button.dataset["view"] === view);
+    const active = button.dataset["view"] === view;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   });
   elements.generatorView.classList.toggle("hidden", view !== "generator");
   elements.sessionsView.classList.toggle("hidden", view !== "sessions");
@@ -185,16 +288,18 @@ function applyMatrix(next: PromptMatrix): void {
 
 function renderMatrix(): void {
   if (!matrix || matrix.cells.length === 0) {
-    elements.matrix.innerHTML = '<div class="empty-state"><span>✦</span><strong>No prompts found</strong><small>Try another source format.</small></div>';
+    elements.matrix.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="circle-alert"></i></span><strong>No prompts found</strong><small>Check the file structure or try the manual prompt pad.</small></div>';
+    refreshIcons();
     return;
   }
   elements.matrix.innerHTML = matrix.cells.map((cell) => `
-    <article class="prompt-card ${cell.disabled ? "disabled" : ""} ${selected.has(cell.id) ? "selected" : ""}" data-id="${cell.id}" aria-disabled="${cell.disabled}">
-      <div class="prompt-meta"><span>${escapeHtml(cell.week || "—")}</span><span>${escapeHtml(cell.themeColumn)}</span></div>
+    <button type="button" class="prompt-card ${cell.disabled ? "disabled" : ""} ${selected.has(cell.id) ? "selected" : ""}" data-id="${cell.id}" aria-pressed="${selected.has(cell.id)}" ${cell.disabled ? `disabled title="${escapeHtml(cell.disabledReason ?? "This schedule cell cannot generate an image")}"` : ""}>
+      <span class="prompt-meta"><span>${escapeHtml(cell.week || "—")}</span><span>${escapeHtml(cell.themeColumn)}</span></span>
       <p class="prompt-text">${escapeHtml(cell.promptText)}</p>
-      <span class="check-dot">${selected.has(cell.id) ? "✓" : ""}</span>
-    </article>
+      <span class="check-dot" aria-hidden="true">${selected.has(cell.id) ? '<i data-lucide="check"></i>' : ""}</span>
+    </button>
   `).join("");
+  refreshIcons();
   elements.matrix.querySelectorAll<HTMLElement>(".prompt-card:not(.disabled)").forEach((card) => {
     card.addEventListener("click", () => {
       const id = card.dataset["id"];
@@ -208,6 +313,7 @@ function renderMatrix(): void {
 
 function renderTelemetry(next: SessionTelemetry): void {
   session = next;
+  document.querySelector<HTMLElement>(".telemetry")?.setAttribute("data-status", next.status);
   elements.sessionStatus.textContent = next.status.toUpperCase();
   elements.sessionMessage.textContent = next.message;
   const seconds = Math.floor(next.elapsedMs / 1000);
@@ -255,7 +361,7 @@ async function loadKeys(): Promise<void> {
     return `
       <article class="key-item ${key.currentSessionId ? "current" : ""}" data-key-id="${key.id}">
         <div class="key-item-head">
-          <div class="key-identity"><div class="provider-mark">AI</div><div><strong>${escapeHtml(key.label)}</strong><small>${escapeHtml(key.keyHint)} · ${key.provider}</small></div></div>
+          <div class="key-identity"><div class="provider-mark"><i data-lucide="key-round" aria-hidden="true"></i></div><div><strong>${escapeHtml(key.label)}</strong><small>${escapeHtml(key.keyHint)} · ${key.provider}</small></div></div>
           <span class="status-badge ${status.className}">${status.label}</span>
         </div>
         <div class="key-current-api"><div><span>API currently involved</span><strong>${escapeHtml(keyApiLabel(key))}</strong></div>${currentDetail}</div>
@@ -267,7 +373,8 @@ async function loadKeys(): Promise<void> {
         </div>
         <div class="key-footer"><span>Added ${formatDate(key.createdAt)} · Last used ${formatDate(key.lastUsedAt)}${key.isRateLimited ? ` · Retry after ${formatDate(key.rateLimitedUntil)}` : ""}</span><div class="key-actions"><button class="text-button toggle-key" data-key-id="${key.id}" data-active="${key.isActive}">${key.isActive ? "Pause" : "Resume"}</button><button class="text-button danger delete-key" data-key-id="${key.id}">Remove</button></div></div>
       </article>`;
-  }).join("") : '<div class="empty-state"><strong>No keys stored</strong><small>Add one to enable generation.</small></div>';
+  }).join("") : '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="key-round"></i></span><strong>No keys stored</strong><small>Add an encrypted OpenAI key to enable generation.</small></div>';
+  refreshIcons();
 
   elements.keyList.querySelectorAll<HTMLButtonElement>(".toggle-key").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -301,7 +408,9 @@ async function loadKeys(): Promise<void> {
 }
 
 async function loadSessions(): Promise<void> {
-  elements.sessionList.innerHTML = '<div class="empty-state"><strong>Loading sessions…</strong></div>';
+  elements.sessionList.setAttribute("aria-busy", "true");
+  elements.sessionList.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="loader-circle"></i></span><strong>Loading sessions…</strong><small>Reading local run history.</small></div>';
+  refreshIcons();
   try {
     const sessions: SessionSummary[] = await app.rpc!.request.listSessions({});
     elements.sessionList.innerHTML = sessions.length ? sessions.map((item) => `
@@ -311,14 +420,19 @@ async function loadSessions(): Promise<void> {
         <div><span>Mode</span><strong>${escapeHtml(item.runMode)}</strong></div>
         <div><span>Progress</span><strong>${item.completedCount} / ${item.totalPrompts}</strong></div>
         <div><span>API key / cost</span><strong>${escapeHtml(item.keyLabel ?? "Unassigned")} · $${item.costUsd.toFixed(3)}</strong></div>
-      </article>`).join("") : '<div class="empty-state"><strong>No sessions yet</strong><small>Completed and active runs will appear here.</small></div>';
+      </article>`).join("") : '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="clock-3"></i></span><strong>No sessions yet</strong><small>Completed and active runs will appear here.</small></div>';
   } catch (error) {
     elements.sessionList.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load sessions")}</div>`;
+  } finally {
+    elements.sessionList.removeAttribute("aria-busy");
+    refreshIcons();
   }
 }
 
 async function loadExports(): Promise<void> {
-  elements.exportList.innerHTML = '<div class="empty-state"><strong>Loading exports…</strong></div>';
+  elements.exportList.setAttribute("aria-busy", "true");
+  elements.exportList.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="loader-circle"></i></span><strong>Loading exports…</strong><small>Scanning the local exports folder.</small></div>';
+  refreshIcons();
   try {
     const exports: ExportSummary[] = await app.rpc!.request.listExports({});
     elements.exportList.innerHTML = exports.length ? exports.map((item) => `
@@ -328,9 +442,12 @@ async function loadExports(): Promise<void> {
         <div><span>Size</span><strong>${formatBytes(item.sizeBytes)}</strong></div>
         <div><span>Modified</span><strong>${formatDate(item.modifiedAt)}</strong></div>
         <div><span>Location</span><strong>App exports folder</strong></div>
-      </article>`).join("") : '<div class="empty-state"><strong>No exports yet</strong><small>Exported session ZIPs will appear here.</small></div>';
+      </article>`).join("") : '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="archive"></i></span><strong>No exports yet</strong><small>Exported session ZIPs will appear here.</small></div>';
   } catch (error) {
     elements.exportList.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load exports")}</div>`;
+  } finally {
+    elements.exportList.removeAttribute("aria-busy");
+    refreshIcons();
   }
 }
 
@@ -340,12 +457,13 @@ function renderHistory(): void {
   const visible = query ? historyItems.filter((item) => [
     item.promptText, item.model, item.themeColumn, item.week, item.scheduleDate, item.status,
   ].some((value) => value.toLowerCase().includes(query))) : historyItems;
+  elements.clearHistory.disabled = historyItems.length === 0;
   elements.historyCount.textContent = `${visible.length} item${visible.length === 1 ? "" : "s"}`;
   elements.historyList.innerHTML = visible.length ? visible.map((item) => `
     <article class="history-card" data-prompt-id="${item.promptId}">
       <div class="history-image">
         ${item.assetId ? `<img alt="Generated output for: ${escapeHtml(item.promptText)}" data-asset-id="${item.assetId}" />` : ""}
-        <div class="image-placeholder"><b>${item.hasImage ? "◌" : "◇"}</b><strong>${item.hasImage ? "Loading preview" : "No image saved"}</strong><small>${item.hasImage ? "Stored locally" : "Prompt retained from this session"}</small></div>
+        <div class="image-placeholder"><i data-lucide="${item.hasImage ? "loader-circle" : "image-off"}" aria-hidden="true"></i><strong>${item.hasImage ? "Loading preview" : "No image saved"}</strong><small>${item.hasImage ? "Stored locally" : "Prompt retained from this session"}</small></div>
       </div>
       <div class="history-card-body">
         <div class="history-card-meta"><span>${formatDate(item.createdAt)}</span><span class="status-badge ${item.status === "processing" ? "current" : item.status === "failed" ? "limited" : ""}">${escapeHtml(item.status)}</span></div>
@@ -358,7 +476,8 @@ function renderHistory(): void {
         </div>
         <div class="history-actions"><button class="secondary-button download-history" data-asset-id="${item.assetId ?? ""}" ${item.assetId ? "" : "disabled"}>Download</button><button class="secondary-button danger-button delete-history" data-prompt-id="${item.promptId}">Delete</button></div>
       </div>
-    </article>`).join("") : `<div class="empty-state"><strong>${query ? "No matching history" : "History is empty"}</strong><small>${query ? "Try a broader search." : "Submitted prompts and generated images will appear here."}</small></div>`;
+    </article>`).join("") : `<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="${query ? "search" : "images"}"></i></span><strong>${query ? "No matching history" : "History is empty"}</strong><small>${query ? "Try a broader search." : "Submitted prompts and generated images will appear here."}</small></div>`;
+  refreshIcons();
 
   historyImageObserver = new IntersectionObserver((entries, observer) => {
     for (const entry of entries) {
@@ -374,7 +493,8 @@ function renderHistory(): void {
         const placeholder = image.nextElementSibling as HTMLElement | null;
         if (placeholder) {
           placeholder.classList.add("history-load-error");
-          placeholder.innerHTML = `<b>!</b><strong>Preview unavailable</strong><small>${escapeHtml(error instanceof Error ? error.message : "Stored file is missing")}</small>`;
+          placeholder.innerHTML = `<i data-lucide="circle-alert" aria-hidden="true"></i><strong>Preview unavailable</strong><small>${escapeHtml(error instanceof Error ? error.message : "Stored file is missing")}</small>`;
+          refreshIcons();
         }
       });
     }
@@ -414,18 +534,31 @@ function renderHistory(): void {
 }
 
 async function loadHistory(): Promise<void> {
-  elements.historyList.innerHTML = '<div class="empty-state"><strong>Loading history…</strong></div>';
+  elements.historyList.setAttribute("aria-busy", "true");
+  elements.historyList.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="loader-circle"></i></span><strong>Loading history…</strong><small>Reading locally stored prompts and images.</small></div>';
+  refreshIcons();
   try {
     historyItems = await app.rpc!.request.listHistory({});
     renderHistory();
   } catch (error) {
     elements.historyList.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load history")}</div>`;
+  } finally {
+    elements.historyList.removeAttribute("aria-busy");
+    refreshIcons();
   }
 }
 
 async function importCsvFile(file: File): Promise<void> {
   if (!file.name.toLowerCase().endsWith(".csv") && file.type !== "text/csv") {
     showToast("Choose a CSV file.", true);
+    return;
+  }
+  if (file.size > 10 * 1024 * 1024) {
+    showToast("That CSV is larger than 10 MB. Split it into smaller batches and try again.", true);
+    return;
+  }
+  if (file.size === 0) {
+    showToast("That CSV is empty.", true);
     return;
   }
   try {
@@ -438,8 +571,6 @@ async function importCsvFile(file: File): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   const data: AppBootstrap = await app.rpc!.request.getBootstrap({});
-  document.documentElement.style.setProperty("--brand-primary", data.brand.accentColor);
-  document.documentElement.style.setProperty("--brand-secondary", data.brand.accentSecondary);
   document.title = `${data.brand.appName} ${data.brand.version}`;
   elements.brandName.textContent = data.brand.appName;
   elements.brandVersion.textContent = data.brand.version;
@@ -451,11 +582,29 @@ async function bootstrap(): Promise<void> {
   elements.model.value = data.models.defaultModel;
 }
 
+applyTheme(getInitialTheme());
+refreshIcons();
+
+elements.themeToggle.addEventListener("click", () => {
+  const current = document.documentElement.dataset["theme"] === "light" ? "light" : "dark";
+  applyTheme(current === "dark" ? "light" : "dark", true);
+});
+
 document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
   button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "sessions" | "history" | "exports"));
 });
 elements.csvTab.addEventListener("click", () => setTab("csv"));
 elements.manualTab.addEventListener("click", () => setTab("manual"));
+[elements.csvTab, elements.manualTab].forEach((tab) => {
+  tab.addEventListener("keydown", (event) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const useManual = event.key === "ArrowRight" || event.key === "End";
+    const target = useManual ? elements.manualTab : elements.csvTab;
+    setTab(useManual ? "manual" : "csv");
+    target.focus();
+  });
+});
 elements.csvFile.addEventListener("change", () => {
   const file = elements.csvFile.files?.[0];
   if (file) void importCsvFile(file);
@@ -475,6 +624,11 @@ if (dropzone) {
   });
 }
 elements.parseManual.addEventListener("click", async () => {
+  if (!elements.manualPrompts.value.trim()) {
+    showToast("Add at least one prompt before building cards.", true);
+    elements.manualPrompts.focus();
+    return;
+  }
   try {
     applyMatrix(await app.rpc!.request.parseManualPrompts({ text: elements.manualPrompts.value }));
   } catch (error) {
@@ -503,6 +657,7 @@ document.querySelectorAll<HTMLInputElement>('input[name="run-mode"]').forEach((r
 elements.runButton.addEventListener("click", async () => {
   if (!matrix) return;
   elements.runButton.disabled = true;
+  elements.runButton.setAttribute("aria-busy", "true");
   try {
     const prompts = matrix.cells.filter((cell) => selected.has(cell.id)).map(({ promptText, week, scheduleDate, themeColumn }) => ({ promptText, week, scheduleDate, themeColumn }));
     const mode = document.querySelector<HTMLInputElement>('input[name="run-mode"]:checked')?.value as RunMode ?? "batch";
@@ -530,6 +685,7 @@ elements.runButton.addEventListener("click", async () => {
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not start generation", true);
   } finally {
+    elements.runButton.removeAttribute("aria-busy");
     elements.runButton.disabled = selected.size === 0;
   }
 });
@@ -537,7 +693,10 @@ elements.runButton.addEventListener("click", async () => {
 elements.manageKeys.addEventListener("click", async () => {
   try {
     await loadKeys();
-    if (!elements.keysDialog.open) elements.keysDialog.showModal();
+    if (!elements.keysDialog.open) {
+      elements.keysDialog.showModal();
+      byId<HTMLElement>("keys-title").focus();
+    }
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not load API keys", true);
   }

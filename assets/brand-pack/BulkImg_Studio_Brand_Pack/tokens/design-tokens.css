@@ -1,0 +1,65 @@
+:root {
+  --color-slate-black: #0B0F14;
+  --color-midnight-slate: #11171F;
+  --color-deep-slate: #18212B;
+  --color-slate-surface: #222D39;
+  --color-graphite-slate: #344150;
+  --color-steel-gray: #566272;
+  --color-cool-gray: #7D8794;
+  --color-silver-gray: #B5BDC7;
+  --color-mist-gray: #D5DAE0;
+  --color-cloud-gray: #E9ECEF;
+  --color-soft-white: #F6F7F9;
+
+  --color-success: #55A887;
+  --color-information: #668FB3;
+  --color-warning: #C59A57;
+  --color-error: #B96568;
+
+  --font-display: "Manrope", sans-serif;
+  --font-interface: "Inter", sans-serif;
+  --font-technical: "JetBrains Mono", monospace;
+
+  --radius-control-small: 6px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-panel: 16px;
+  --radius-modal: 20px;
+  --radius-feature: 24px;
+
+  --motion-fast: 120ms;
+  --motion-standard: 180ms;
+  --motion-slow: 260ms;
+
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --ease-enter: cubic-bezier(0, 0, 0.2, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+}
+
+[data-theme="dark"] {
+  --background-primary: #0B0F14;
+  --background-secondary: #11171F;
+  --surface-primary: #18212B;
+  --surface-elevated: #222D39;
+
+  --logo-container: #1B232D;
+  --logo-front-card: #D6DBE1;
+  --logo-middle-card: #566170;
+  --logo-back-card: #323C48;
+  --logo-mountain: #252E39;
+  --logo-highlight: #EEF1F4;
+}
+
+[data-theme="light"] {
+  --background-primary: #E5E8EC;
+  --background-secondary: #EDF0F3;
+  --surface-primary: #F4F5F7;
+  --surface-elevated: #FAFAFB;
+
+  --logo-container: #D8DDE3;
+  --logo-front-card: #F1F3F5;
+  --logo-middle-card: #BAC2CC;
+  --logo-back-card: #9DA7B3;
+  --logo-mountain: #8D97A3;
+  --logo-outline: #C1C8D0;
+}
