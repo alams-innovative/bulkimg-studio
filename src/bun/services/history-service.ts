@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { createReadStream, copyFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { basename, extname, join, resolve } from "node:path";
 import type { AppDatabase, SessionPromptRecord } from "../database";
 import type { SanitizedProviderError } from "../../shared/contracts";
@@ -122,42 +123,95 @@ export class HistoryService {
     keyId: string | null,
     jsonl: string,
     usageCost: (inputTokens: number, outputTokens: number) => number,
+    onProgress?: (progress: BatchPersistResult) => void | Promise<void>,
+  ): Promise<BatchPersistResult> {
+    return this.persistBatchLines(sessionId, model, keyId, jsonl.split(/\r?\n/).filter(Boolean), usageCost, onProgress);
+  }
+
+  /** Stream JSONL line-by-line so multi-MB base64 rows never sit wholly in one string. */
+  async persistBatchOutputFromFile(
+    sessionId: string,
+    model: string,
+    keyId: string | null,
+    filePath: string,
+    usageCost: (inputTokens: number, outputTokens: number) => number,
+    onProgress?: (progress: BatchPersistResult) => void | Promise<void>,
+  ): Promise<BatchPersistResult> {
+    if (!existsSync(filePath)) throw new Error("Batch output file is missing.");
+    const result: BatchPersistResult = { saved: 0, failed: 0, malformed: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    const prompts = this.database.getSessionPrompts(sessionId);
+    const reader = createInterface({
+      input: createReadStream(filePath, { encoding: "utf8" }),
+      crlfDelay: Infinity,
+    });
+    try {
+      for await (const rawLine of reader) {
+        if (!rawLine.trim()) continue;
+        await this.persistBatchLine(sessionId, model, keyId, rawLine, prompts, usageCost, result);
+        await onProgress?.(result);
+      }
+    } finally {
+      reader.close();
+    }
+    return result;
+  }
+
+  private async persistBatchLines(
+    sessionId: string,
+    model: string,
+    keyId: string | null,
+    lines: string[],
+    usageCost: (inputTokens: number, outputTokens: number) => number,
+    onProgress?: (progress: BatchPersistResult) => void | Promise<void>,
   ): Promise<BatchPersistResult> {
     const prompts = this.database.getSessionPrompts(sessionId);
     const result: BatchPersistResult = { saved: 0, failed: 0, malformed: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 };
-    for (const rawLine of jsonl.split(/\r?\n/).filter(Boolean)) {
-      let line: BatchOutputLine;
-      try { line = JSON.parse(rawLine) as BatchOutputLine; } catch { result.malformed += 1; continue; }
-      const match = line.custom_id?.match(/^prompt-(\d+)$/);
-      const index = match?.[1] ? Number(match[1]) - 1 : -1;
-      const prompt = prompts[index];
-      if (!prompt) { result.malformed += 1; continue; }
-      const status = line.response?.status_code ?? 500;
-      const data = line.response?.body?.data?.[0];
-      if (status >= 400 || !data) {
-        const error: SanitizedProviderError = {
-          message: (line.response?.body?.error?.message || line.error?.message || "OpenAI did not return an image.").slice(0, 240),
-          category: status === 429 ? "rate_limit" : status >= 500 ? "provider" : "validation",
-          httpStatus: status,
-          requestId: line.response?.request_id ?? null,
-          retryAt: null,
-        };
-        this.database.failPrompt(prompt.prompt_id, error);
-        result.failed += 1;
-        continue;
-      }
-      const inputTokens = line.response?.body?.usage?.input_tokens ?? 0;
-      const outputTokens = line.response?.body?.usage?.output_tokens ?? 0;
-      const costUsd = usageCost(inputTokens, outputTokens);
-      if (await this.persistOne({
-        sessionId, model, keyId, prompt, sourceKey: `${sessionId}:${line.custom_id}`,
-        costUsd, result: { b64Json: data.b64_json ?? null, url: data.url ?? null, inputTokens, outputTokens },
-      })) result.saved += 1;
-      result.inputTokens += inputTokens;
-      result.outputTokens += outputTokens;
-      result.costUsd += costUsd;
+    for (const rawLine of lines) {
+      await this.persistBatchLine(sessionId, model, keyId, rawLine, prompts, usageCost, result);
+      await onProgress?.(result);
     }
     return result;
+  }
+
+  private async persistBatchLine(
+    sessionId: string,
+    model: string,
+    keyId: string | null,
+    rawLine: string,
+    prompts: SessionPromptRecord[],
+    usageCost: (inputTokens: number, outputTokens: number) => number,
+    result: BatchPersistResult,
+  ): Promise<void> {
+    let line: BatchOutputLine;
+    try { line = JSON.parse(rawLine) as BatchOutputLine; } catch { result.malformed += 1; return; }
+    const match = line.custom_id?.match(/^prompt-(\d+)$/);
+    const index = match?.[1] ? Number(match[1]) - 1 : -1;
+    const prompt = prompts[index];
+    if (!prompt) { result.malformed += 1; return; }
+    const status = line.response?.status_code ?? 500;
+    const data = line.response?.body?.data?.[0];
+    if (status >= 400 || !data) {
+      const error: SanitizedProviderError = {
+        message: (line.response?.body?.error?.message || line.error?.message || "OpenAI did not return an image.").slice(0, 240),
+        category: status === 429 ? "rate_limit" : status >= 500 ? "provider" : "validation",
+        httpStatus: status,
+        requestId: line.response?.request_id ?? null,
+        retryAt: null,
+      };
+      this.database.failPrompt(prompt.prompt_id, error);
+      result.failed += 1;
+      return;
+    }
+    const inputTokens = line.response?.body?.usage?.input_tokens ?? 0;
+    const outputTokens = line.response?.body?.usage?.output_tokens ?? 0;
+    const costUsd = usageCost(inputTokens, outputTokens);
+    if (await this.persistOne({
+      sessionId, model, keyId, prompt, sourceKey: `${sessionId}:${line.custom_id}`,
+      costUsd, result: { b64Json: data.b64_json ?? null, url: data.url ?? null, inputTokens, outputTokens },
+    })) result.saved += 1;
+    result.inputTokens += inputTokens;
+    result.outputTokens += outputTokens;
+    result.costUsd += costUsd;
   }
 
   list() {

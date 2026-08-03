@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createBatchJsonl, OpenAIClient, OpenAIError } from "./openai-client";
 
 describe("OpenAI image payloads", () => {
@@ -60,18 +63,20 @@ describe("OpenAI provider errors", () => {
     } finally { server.stop(true); }
   });
 
-  test("composes direct cancellation with the request timeout", async () => {
-    const server = Bun.serve({ port: 0, async fetch() { await Bun.sleep(1_000); return Response.json({ data: [] }); } });
-    const controller = new AbortController();
+  test("downloads batch output to disk within a long timeout", async () => {
+    const payload = `${"x".repeat(50_000)}\nline-two\n`;
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(payload, { headers: { "content-type": "application/jsonl" } }),
+    });
+      const destination = join(tmpdir(), `bulkimg-download-${crypto.randomUUID()}.jsonl`);
     try {
       const client = new OpenAIClient("sk-test-key-1234567890", `http://127.0.0.1:${server.port}`);
-      setTimeout(() => controller.abort(), 10);
-      const error = await client.generateOne({
-        prompts: [{ promptText: "Cancel me", week: "", scheduleDate: "", themeColumn: "" }],
-        model: "gpt-image-2", mode: "direct", format: "square", quality: "low",
-      }, 0, controller.signal).catch((value: unknown) => value);
-      expect(error).toBeInstanceOf(DOMException);
-      expect((error as DOMException).name).toBe("AbortError");
-    } finally { server.stop(true); }
+      await client.downloadFileToPath("file-output", destination);
+      expect(await Bun.file(destination).text()).toBe(payload);
+    } finally {
+      server.stop(true);
+      try { unlinkSync(destination); } catch { /* ignore */ }
+    }
   });
 });

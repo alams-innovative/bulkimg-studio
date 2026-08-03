@@ -5,6 +5,8 @@ const DEFAULT_API_BASE = Bun.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v
 const APP_VERSION = "1.0.0-beta";
 const SHORT_TIMEOUT_MS = 15_000;
 const IMAGE_TIMEOUT_MS = 180_000;
+/** Batch JSONL can be tens of MB of base64 PNGs; 15s is not enough. */
+const FILE_DOWNLOAD_TIMEOUT_MS = 600_000;
 
 export type BatchObject = {
   id: string;
@@ -187,12 +189,24 @@ export class OpenAIClient {
     return (await this.request<BatchObject>(`/batches/${encodeURIComponent(batchId)}/cancel`, { method: "POST" })).data;
   }
 
-  async getFileContent(fileId: string): Promise<string> {
+  /**
+   * Stream batch/file content to disk. Multi-image JSONL routinely exceeds
+   * tens of megabytes; keep the body out of a single bounded string download.
+   */
+  async downloadFileToPath(fileId: string, destinationPath: string): Promise<void> {
     const headers = { Authorization: `Bearer ${this.apiKey}` };
-    const response = await fetch(`${this.apiBase}/files/${encodeURIComponent(fileId)}/content`, {
-      headers,
-      signal: AbortSignal.timeout(SHORT_TIMEOUT_MS),
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.apiBase}/files/${encodeURIComponent(fileId)}/content`, {
+        headers,
+        signal: AbortSignal.timeout(FILE_DOWNLOAD_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "TimeoutError") {
+        throw new DOMException("OpenAI batch output download timed out.", "TimeoutError");
+      }
+      throw error;
+    }
     if (!response.ok) {
       throw new OpenAIError({
         message: "OpenAI batch output could not be downloaded.",
@@ -202,7 +216,16 @@ export class OpenAIClient {
         retryAt: retryAtFromHeader(response.headers.get("retry-after")),
       });
     }
-    return response.text();
+    const written = await Bun.write(destinationPath, response);
+    if (written < 1) {
+      throw new OpenAIError({
+        message: "OpenAI batch output file was empty.",
+        category: "provider",
+        httpStatus: response.status,
+        requestId: response.headers.get("x-request-id"),
+        retryAt: null,
+      });
+    }
   }
 
   async generateOne(input: SubmitRunInput, index: number, signal?: AbortSignal): Promise<DirectImageResult> {

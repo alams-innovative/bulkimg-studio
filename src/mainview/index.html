@@ -20,6 +20,7 @@
           <button id="nav-sessions" class="nav-item" data-view="sessions"><i data-lucide="clock-3"></i><span>Sessions</span></button>
           <button id="nav-history" class="nav-item" data-view="history"><i data-lucide="images"></i><span>History</span></button>
           <button id="nav-exports" class="nav-item" data-view="exports"><i data-lucide="archive"></i><span>Exports</span></button>
+          <button id="nav-logs" class="nav-item" data-view="logs"><i data-lucide="scroll-text"></i><span>Logs</span></button>
         </nav>
         <div class="sidebar-spacer"></div>
         <button id="manage-keys" class="nav-item"><i data-lucide="key-round"></i><span>API keys</span><b id="key-count">0</b></button>
@@ -103,6 +104,31 @@
         <section id="sessions-view" class="view-content management-view hidden"><div class="management-head"><p>Live and recovered generation work.</p><button id="refresh-sessions" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button></div><div id="session-list" class="data-list" aria-live="polite"></div></section>
         <section id="history-view" class="view-content management-view hidden"><div class="management-head"><p>Generated images stored on this device.</p><div class="button-row"><button id="refresh-history" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button><button id="clear-history" class="secondary-button danger-button" type="button"><i data-lucide="trash-2"></i>Clear</button></div></div><div class="history-toolbar"><label><span class="sr-only">Search history</span><span class="search-control"><i data-lucide="search"></i><input id="history-search" type="search" placeholder="Search history" /></span></label><strong id="history-count">0 items</strong></div><div id="history-list" class="history-grid" aria-live="polite"></div></section>
         <section id="exports-view" class="view-content management-view hidden"><div class="management-head"><p>ZIP archives created on this device.</p><div class="button-row"><button id="refresh-exports" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button><button id="open-exports-folder" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Open folder</button></div></div><div id="export-list" class="data-list" aria-live="polite"></div></section>
+        <section id="logs-view" class="view-content management-view hidden">
+          <div class="management-head">
+            <p>Local diagnostic events. Ready to copy — secrets and image payloads are redacted.</p>
+            <div class="button-row">
+              <button id="refresh-logs" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button>
+              <button id="copy-logs" class="secondary-button" type="button"><i data-lucide="copy"></i>Copy</button>
+              <button id="open-logs-folder" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Open folder</button>
+            </div>
+          </div>
+          <div class="logs-toolbar">
+            <label>
+              <span class="sr-only">Filter by event</span>
+              <select id="logs-event" aria-label="Filter by event">
+                <option value="">All events</option>
+              </select>
+            </label>
+            <label class="logs-search-label">
+              <span class="sr-only">Search logs</span>
+              <span class="search-control"><i data-lucide="search"></i><input id="logs-search" type="search" placeholder="Search logs" /></span>
+            </label>
+            <strong id="logs-count">0 lines</strong>
+          </div>
+          <pre id="logs-list" class="logs-list" aria-live="polite" tabindex="0"></pre>
+          <p id="logs-path" class="logs-path"></p>
+        </section>
       </main>
     </div>
 

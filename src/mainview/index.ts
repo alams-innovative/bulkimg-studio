@@ -9,6 +9,7 @@ import {
   Check,
   CircleAlert,
   Clock3,
+  Copy,
   createIcons,
   Database,
   Download,
@@ -25,6 +26,7 @@ import {
   PackageOpen,
   RefreshCw,
   Rows3,
+  ScrollText,
   Search,
   ShieldCheck,
   Sun,
@@ -79,6 +81,15 @@ const elements = {
   sessionsView: byId("sessions-view"),
   historyView: byId("history-view"),
   exportsView: byId("exports-view"),
+  logsView: byId("logs-view"),
+  refreshLogs: byId<HTMLButtonElement>("refresh-logs"),
+  copyLogs: byId<HTMLButtonElement>("copy-logs"),
+  openLogsFolder: byId<HTMLButtonElement>("open-logs-folder"),
+  logsEvent: byId<HTMLSelectElement>("logs-event"),
+  logsSearch: byId<HTMLInputElement>("logs-search"),
+  logsCount: byId("logs-count"),
+  logsList: byId("logs-list"),
+  logsPath: byId("logs-path"),
   selectedCount: byId("selected-count"),
   estimatedCost: byId("estimated-cost"),
   fxRate: byId("fx-rate"),
@@ -157,7 +168,11 @@ let matrix: PromptMatrix | null = null;
 let selected = new Set<string>();
 let session: SessionTelemetry | null = null;
 let pollTimer: number | null = null;
+let elapsedTimer: number | null = null;
+let elapsedAnchor: { wallMs: number; elapsedMs: number } | null = null;
 let toastTimer: number | null = null;
+let logsLines: string[] = [];
+let logsSearchTimer: number | null = null;
 let historyItems: HistoryItem[] = [];
 let historyImageObserver: IntersectionObserver | null = null;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
@@ -180,6 +195,7 @@ const slateStackIcons = {
   Check,
   CircleAlert,
   Clock3,
+  Copy,
   Database,
   Download,
   FileSpreadsheet,
@@ -195,6 +211,7 @@ const slateStackIcons = {
   PackageOpen,
   RefreshCw,
   Rows3,
+  ScrollText,
   Search,
   ShieldCheck,
   Sun,
@@ -316,7 +333,29 @@ function checkIconMarkup(): string {
   return elements.checkIconTemplate.innerHTML;
 }
 
-async function setView(view: "generator" | "sessions" | "history" | "exports"): Promise<void> {
+function formatElapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / 1000));
+  return `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function stopElapsedTicker(): void {
+  if (elapsedTimer !== null) {
+    window.clearInterval(elapsedTimer);
+    elapsedTimer = null;
+  }
+  elapsedAnchor = null;
+}
+
+function startElapsedTicker(elapsedMs: number): void {
+  elapsedAnchor = { wallMs: Date.now(), elapsedMs };
+  if (elapsedTimer !== null) return;
+  elapsedTimer = window.setInterval(() => {
+    if (!elapsedAnchor) return;
+    elements.elapsed.textContent = formatElapsed(elapsedAnchor.elapsedMs + (Date.now() - elapsedAnchor.wallMs));
+  }, 1_000);
+}
+
+async function setView(view: "generator" | "sessions" | "history" | "exports" | "logs"): Promise<void> {
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
     const active = button.dataset["view"] === view;
     button.classList.toggle("active", active);
@@ -326,17 +365,20 @@ async function setView(view: "generator" | "sessions" | "history" | "exports"): 
   elements.sessionsView.classList.toggle("hidden", view !== "sessions");
   elements.historyView.classList.toggle("hidden", view !== "history");
   elements.exportsView.classList.toggle("hidden", view !== "exports");
+  elements.logsView.classList.toggle("hidden", view !== "logs");
   elements.headerStats.classList.toggle("hidden", view !== "generator");
   const titles = {
     generator: "Generate images.",
     sessions: "Sessions",
     history: "History",
     exports: "Exports",
+    logs: "Logs",
   } as const;
   elements.pageTitle.textContent = titles[view];
   if (view === "sessions") await loadSessions();
   if (view === "history") await loadHistory();
   if (view === "exports") await loadExports();
+  if (view === "logs") await loadLogs();
   const target = document.querySelector<HTMLElement>(`#${view}-view`);
   if (target) enter(target);
 }
@@ -546,14 +588,19 @@ function renderTelemetry(next: SessionTelemetry): void {
   telemetry?.setAttribute("data-status", next.status);
   elements.sessionStatus.textContent = next.status.toUpperCase();
   elements.sessionMessage.textContent = next.message;
-  const seconds = Math.floor(next.elapsedMs / 1000);
-  elements.elapsed.textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
+  const active = next.status === "pending" || next.status === "processing";
+  if (active) {
+    startElapsedTicker(next.elapsedMs);
+    elements.elapsed.textContent = formatElapsed(next.elapsedMs);
+  } else {
+    stopElapsedTicker();
+    elements.elapsed.textContent = formatElapsed(next.elapsedMs);
+  }
   elements.progress.textContent = `${next.completedCount} / ${next.totalPrompts}`;
   elements.tokens.textContent = `${formatNumber(next.inputTokens)} in · ${formatNumber(next.outputTokens)} out`;
   elements.sessionCost.textContent = `$${next.costUsd.toFixed(3)} · PKR ${next.costPkr.toFixed(2)}`;
   elements.fxRate.textContent = `PKR ${next.fxRate.toFixed(2)}`;
   elements.exportButton.disabled = false;
-  const active = next.status === "pending" || next.status === "processing";
   elements.cancelButton.disabled = !active;
   const canRetry = next.retryableCount > 0 && ["partial", "failed"].includes(next.status);
   elements.retryButton.classList.toggle("hidden", !canRetry);
@@ -873,6 +920,50 @@ async function loadExports(): Promise<void> {
   }
 }
 
+function isErrorLogLine(line: string): boolean {
+  if (/_error"|"category":"(timeout|network|provider|auth)"|"level":"error"/i.test(line)) return true;
+  return /\berror\b/i.test(line) && /batch_|session_|download_|poll_|persist_/i.test(line);
+}
+
+function renderLogLines(lines: string[]): void {
+  logsLines = lines;
+  elements.logsCount.textContent = `${lines.length} line${lines.length === 1 ? "" : "s"}`;
+  elements.logsList.innerHTML = lines.map((line) => {
+    const error = isErrorLogLine(line);
+    return `<code class="log-line${error ? " error" : ""}">${escapeHtml(line)}</code>`;
+  }).join("");
+  elements.copyLogs.disabled = lines.length === 0;
+  elements.logsList.scrollTop = elements.logsList.scrollHeight;
+}
+
+async function loadLogs(): Promise<void> {
+  elements.refreshLogs.disabled = true;
+  elements.refreshLogs.setAttribute("aria-busy", "true");
+  try {
+    const result = await app.rpc!.request.getDiagnosticLogs({
+      limit: 400,
+      query: elements.logsSearch.value.trim() || undefined,
+      event: elements.logsEvent.value || undefined,
+    });
+    const selectedEvent = elements.logsEvent.value;
+    const options = ['<option value="">All events</option>']
+      .concat(result.events.map((event) => `<option value="${escapeHtml(event)}">${escapeHtml(event)}</option>`));
+    elements.logsEvent.innerHTML = options.join("");
+    if (selectedEvent && result.events.includes(selectedEvent)) elements.logsEvent.value = selectedEvent;
+    renderLogLines(result.lines);
+    elements.logsPath.textContent = result.path;
+    elements.logsPath.title = result.path;
+  } catch (error) {
+    elements.logsList.innerHTML = `<code class="log-line error">${escapeHtml(error instanceof Error ? error.message : "Could not load logs")}</code>`;
+    elements.logsCount.textContent = "0 lines";
+    showToast(error instanceof Error ? error.message : "Could not load logs", true);
+  } finally {
+    elements.refreshLogs.disabled = false;
+    elements.refreshLogs.removeAttribute("aria-busy");
+    refreshIcons();
+  }
+}
+
 function renderHistory(animateCards = false): void {
   historyImageObserver?.disconnect();
   const query = elements.historySearch.value.trim().toLowerCase();
@@ -1031,7 +1122,7 @@ elements.themeToggle.addEventListener("click", () => {
 });
 
 document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
-  button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "sessions" | "history" | "exports"));
+  button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "sessions" | "history" | "exports" | "logs"));
 });
 elements.csvTab.addEventListener("click", () => setTab("csv"));
 elements.manualTab.addEventListener("click", () => setTab("manual"));
@@ -1307,6 +1398,29 @@ elements.openExportsFolder.addEventListener("click", async () => {
     showToast(`Opened ${result.directory}`);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not open exports folder", true);
+  }
+});
+elements.refreshLogs.addEventListener("click", () => void loadLogs());
+elements.logsEvent.addEventListener("change", () => void loadLogs());
+elements.logsSearch.addEventListener("input", () => {
+  if (logsSearchTimer !== null) window.clearTimeout(logsSearchTimer);
+  logsSearchTimer = window.setTimeout(() => void loadLogs(), 250);
+});
+elements.copyLogs.addEventListener("click", async () => {
+  if (!logsLines.length) return;
+  try {
+    await navigator.clipboard.writeText(logsLines.join("\n"));
+    showToast("Logs copied.");
+  } catch {
+    showToast("Could not copy logs", true);
+  }
+});
+elements.openLogsFolder.addEventListener("click", async () => {
+  try {
+    const result = await app.rpc!.request.revealLogsFolder({});
+    showToast(`Opened ${result.directory}`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not open logs folder", true);
   }
 });
 

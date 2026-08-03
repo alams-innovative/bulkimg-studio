@@ -739,14 +739,28 @@ export class AppDatabase {
   }): boolean {
     const transaction = this.db.transaction(() => {
       if (this.isSessionCancelled(asset.sessionId)) return false;
+      // Partial unique index on source_key cannot be used with ON CONFLICT(column);
+      // update-or-insert keeps re-persists (batch download retries) idempotent.
+      const existing = this.db.query<{ asset_id: string }, [string]>(
+        "SELECT asset_id FROM generated_assets WHERE source_key = ?",
+      ).get(asset.sourceKey);
+      if (existing) {
+        this.db.query(`
+          UPDATE generated_assets SET
+            file_path = ?, input_tokens = ?, output_tokens = ?, cost_usd = ?, cost_pkr = ?,
+            image_filename = ?, key_used_id = COALESCE(?, key_used_id)
+          WHERE source_key = ?
+        `).run(
+          asset.filePath, asset.inputTokens ?? 0, asset.outputTokens ?? 0,
+          asset.costUsd ?? 0, asset.costPkr ?? 0, asset.imageFilename, asset.keyUsedId, asset.sourceKey,
+        );
+        return true;
+      }
       this.db.query(`
       INSERT INTO generated_assets
         (asset_id, prompt_id, session_id, image_filename, prompt_text, schedule_date, week,
          theme_column, key_used_id, file_path, model_used, input_tokens, output_tokens, cost_usd, cost_pkr, source_key)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(source_key) DO UPDATE SET
-        file_path = excluded.file_path, input_tokens = excluded.input_tokens,
-        output_tokens = excluded.output_tokens, cost_usd = excluded.cost_usd, cost_pkr = excluded.cost_pkr
       `).run(
         asset.assetId, asset.promptId, asset.sessionId, asset.imageFilename, asset.promptText,
         asset.scheduleDate, asset.week, asset.themeColumn, asset.keyUsedId, asset.filePath,

@@ -108,10 +108,12 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       addApiKey: ({ label, key }) => keyVault.add(label, key),
       setApiKeyActive: ({ id, isActive }) => {
         database.setKeyActive(id, isActive);
+        keyVault.invalidateKey(id);
         return { success: true };
       },
       deleteApiKey: ({ id }) => {
         database.deleteKey(id);
+        keyVault.invalidateKey(id);
         return { success: true };
       },
       listSessions: () => database.listSessions(),
@@ -128,6 +130,12 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       exportSessionZip: async ({ sessionId, pickPath }) => ({
         filePath: await exportService.export(sessionId, { pickPath: Boolean(pickPath) }),
       }),
+      getDiagnosticLogs: ({ limit, query, event }) => diagnosticLog.read({ limit, query, event }),
+      revealLogsFolder: () => {
+        const directory = diagnosticLog.logDirectory;
+        Bun.spawn(["explorer.exe", directory], { stdout: "ignore", stderr: "ignore" });
+        return { directory };
+      },
     },
     messages: {},
   },

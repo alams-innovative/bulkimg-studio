@@ -14,13 +14,15 @@ function asArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 export class KeyVault {
   private readonly legacyKeyPath: string;
   private readonly dpapiKeyPath: string;
+  private deviceKeyPromise: Promise<CryptoKey> | null = null;
+  private readonly decryptedKeyCache = new Map<string, string>();
 
   constructor(private readonly database: AppDatabase, dataDirectory: string) {
     this.legacyKeyPath = join(dataDirectory, ".key-vault.bin");
     this.dpapiKeyPath = join(dataDirectory, ".key-vault.dpapi");
   }
 
-  private async getDeviceKey(): Promise<CryptoKey> {
+  private async loadDeviceKey(): Promise<CryptoKey> {
     let material: Uint8Array;
     if (existsSync(this.dpapiKeyPath)) {
       const protectedBytes = new Uint8Array(await Bun.file(this.dpapiKeyPath).arrayBuffer());
@@ -36,6 +38,16 @@ export class KeyVault {
       await Bun.write(this.dpapiKeyPath, protectedBytes);
     }
     return crypto.subtle.importKey("raw", asArrayBuffer(material), "AES-GCM", false, ["encrypt", "decrypt"]);
+  }
+
+  private async getDeviceKey(): Promise<CryptoKey> {
+    if (!this.deviceKeyPromise) {
+      this.deviceKeyPromise = this.loadDeviceKey().catch((error) => {
+        this.deviceKeyPromise = null;
+        throw error;
+      });
+    }
+    return this.deviceKeyPromise;
   }
 
   private async encrypt(plainText: string): Promise<string> {
@@ -59,6 +71,14 @@ export class KeyVault {
     return decoder.decode(plain);
   }
 
+  invalidateKey(id: string): void {
+    this.decryptedKeyCache.delete(id);
+  }
+
+  clearDecryptedKeys(): void {
+    this.decryptedKeyCache.clear();
+  }
+
   async add(label: string, key: string): Promise<{ id: string; label: string; isActive: boolean }> {
     if (!key.startsWith("sk-") || key.length < 20) throw new Error("Enter a valid OpenAI API key");
     await new OpenAIClient(key).validateKey();
@@ -69,6 +89,7 @@ export class KeyVault {
       label: label.trim() || "OpenAI key",
       keyHint: `••••${key.slice(-4)}`,
     });
+    this.decryptedKeyCache.set(id, key);
     return { id, label: label.trim() || "OpenAI key", isActive: true };
   }
 
@@ -81,11 +102,23 @@ export class KeyVault {
     const active = this.database.listKeys().filter((record: ApiKeyRecord) => {
       return record.is_active === 1 && (!record.rate_limited_until || Date.parse(record.rate_limited_until) <= now);
     });
-    return Promise.all(active.map(async (record) => ({ id: record.id, key: await this.decrypt(record.key_value) })));
+    return Promise.all(active.map(async (record) => {
+      let key = this.decryptedKeyCache.get(record.id);
+      if (!key) {
+        key = await this.decrypt(record.key_value);
+        this.decryptedKeyCache.set(record.id, key);
+      }
+      return { id: record.id, key };
+    }));
   }
 
   async keyById(id: string): Promise<string | null> {
+    const cached = this.decryptedKeyCache.get(id);
+    if (cached) return cached;
     const record = this.database.listKeys().find((item) => item.id === id);
-    return record ? this.decrypt(record.key_value) : null;
+    if (!record) return null;
+    const key = await this.decrypt(record.key_value);
+    this.decryptedKeyCache.set(id, key);
+    return key;
   }
 }

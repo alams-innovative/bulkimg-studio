@@ -195,6 +195,13 @@ export type AppBootstrap = {
   fxRate: number;
 };
 
+export type DiagnosticLogView = {
+  lines: string[];
+  path: string;
+  events: string[];
+  total: number;
+};
+
 export type AppRPC = {
   bun: {
     requests: {
@@ -236,6 +243,11 @@ export type AppRPC = {
       listExports: { params: {}; response: ExportSummary[] };
       revealExportsFolder: { params: {}; response: { directory: string } };
       exportSessionZip: { params: { sessionId: string; pickPath?: boolean }; response: { filePath: string | null } };
+      getDiagnosticLogs: {
+        params: { limit?: number; query?: string; event?: string };
+        response: DiagnosticLogView;
+      };
+      revealLogsFolder: { params: {}; response: { directory: string } };
     };
     messages: {};
   };

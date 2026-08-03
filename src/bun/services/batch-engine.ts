@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import type { AppDatabase } from "../database";
 import type { KeyVault } from "./key-vault";
 import type { FxService } from "./fx-service";
-import { OpenAIClient, OpenAIError, sanitizedError } from "./openai-client";
+import { OpenAIClient, OpenAIError, sanitizedError, type BatchObject } from "./openai-client";
 import type { HistoryService } from "./history-service";
 import type { PricingService } from "./pricing-service";
 import type {
@@ -21,6 +21,8 @@ const REFERENCE_LIMIT = 4;
 const REFERENCE_LIMIT_BYTES = 20 * 1024 * 1024;
 const REFERENCE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const TERMINAL = new Set<SessionStatus>(["partial", "completed", "failed", "cancelled"]);
+const REMOTE_TERMINAL = new Set(["completed", "failed", "expired", "cancelled"]);
+const DOWNLOAD_RETRY_MS = 20_000;
 
 function validateInput(input: SubmitRunInput): SubmitRunInput {
   if (!input || typeof input !== "object" || !Array.isArray(input.prompts)) throw new Error("The generation request is invalid.");
@@ -65,9 +67,11 @@ export class BatchEngine {
   private nextKeyIndex = 0;
   private readonly abortControllers = new Map<string, AbortController>();
   private readonly polling = new Set<string>();
+  private readonly finalizing = new Set<string>();
   private readonly manualPollAt = new Map<string, number>();
   private progressSink: ((telemetry: SessionTelemetry) => void) | null = null;
   private readonly referenceDirectory: string;
+  private readonly batchesDirectory: string;
   private scheduler: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -80,7 +84,9 @@ export class BatchEngine {
     private readonly diagnostics?: DiagnosticLog,
   ) {
     this.referenceDirectory = join(dataDirectory, "references");
+    this.batchesDirectory = join(dataDirectory, "batches");
     mkdirSync(this.referenceDirectory, { recursive: true });
+    mkdirSync(this.batchesDirectory, { recursive: true });
   }
 
   setProgressSink(sink: (telemetry: SessionTelemetry) => void): void { this.progressSink = sink; }
@@ -119,6 +125,7 @@ export class BatchEngine {
         }
         if (error.category === "auth") {
           this.database.setKeyActive(candidate.id, false);
+          this.keyVault.invalidateKey(candidate.id);
           continue;
         }
         throw error;
@@ -129,6 +136,10 @@ export class BatchEngine {
 
   private usageCost(inputTokens: number, outputTokens: number, mode: RunMode): number {
     return this.pricing.costFromUsage({ model: "gpt-image-2", mode, inputTokens, outputTokens });
+  }
+
+  private outputPath(sessionId: string): string {
+    return join(this.batchesDirectory, `${sessionId}-output.jsonl`);
   }
 
   async uploadReference(bytes: Uint8Array, filename: string, mimeType: string): Promise<{ fileId: string }> {
@@ -266,9 +277,16 @@ export class BatchEngine {
     for (const sessionId of this.database.listActiveBatchSessionIds()) void this.poll(sessionId);
   }
 
+  private pollAttempt(sessionId: string): number {
+    return (this.database.db.query<{ poll_attempts: number }, [string]>(
+      "SELECT poll_attempts FROM batch_sessions WHERE session_id = ?",
+    ).get(sessionId)?.poll_attempts ?? 0) + 1;
+  }
+
   async poll(sessionId: string, force = false): Promise<SessionTelemetry> {
     const current = this.database.getTelemetry(sessionId);
     if (TERMINAL.has(current.status) || current.runMode !== "batch") return current;
+    if (this.finalizing.has(sessionId)) return this.database.getTelemetry(sessionId);
     if (force) {
       const last = this.manualPollAt.get(sessionId) ?? 0;
       if (Date.now() - last < 10_000) return current;
@@ -279,62 +297,56 @@ export class BatchEngine {
     if (!externalId) return current;
     this.polling.add(sessionId);
     try {
-      const selected = await this.withRotatingKey(async (client) => {
-        const batch = await client.getBatch(externalId);
-        const output = batch.output_file_id && ["completed", "failed", "expired", "cancelled"].includes(batch.status)
-          ? await client.getFileContent(batch.output_file_id) : null;
-        return { batch, output };
-      });
+      const selected = await this.withRotatingKey((client) => client.getBatch(externalId));
       if (this.database.isSessionCancelled(sessionId)) return this.emit(sessionId);
-      const ctx = this.database.getSessionRunContext(sessionId);
-      if (selected.result.output) {
-        await this.history.persistBatchOutput(sessionId, ctx.model, selected.keyId, selected.result.output,
-          (inputTokens, outputTokens) => this.usageCost(inputTokens, outputTokens, "batch"));
+      const batch = selected.result;
+      this.database.assignSessionKey(sessionId, selected.keyId);
+
+      if (!REMOTE_TERMINAL.has(batch.status)) {
+        const counts = batch.request_counts;
+        const completedRemote = counts?.completed ?? 0;
+        const totalRemote = counts?.total ?? current.totalPrompts;
+        const failedRemote = counts?.failed ?? 0;
+        const attempt = this.pollAttempt(sessionId);
+        const delay = Math.min(300_000, 15_000 * (2 ** Math.min(attempt, 4)));
+        const failedSuffix = failedRemote > 0 ? ` (${failedRemote} failed)` : "";
+        this.database.updateSession(sessionId, {
+          status: "processing",
+          message: `OpenAI batch ${batch.status.replaceAll("_", " ")} · ${completedRemote}/${totalRemote} requests finished${failedSuffix}.`,
+          completedCount: completedRemote,
+          nextPollAt: new Date(Date.now() + delay).toISOString(),
+          pollAttempts: attempt,
+          lastError: null,
+        });
+        return this.emit(sessionId);
       }
-      const aggregate = this.database.aggregatePromptUsage(sessionId);
-      this.database.recordKeyUsage(selected.keyId, {
-        inputTokens: Math.max(0, aggregate.inputTokens - current.inputTokens),
-        outputTokens: Math.max(0, aggregate.outputTokens - current.outputTokens),
-        costUsd: Math.max(0, aggregate.costUsd - current.costUsd),
-        costPkr: Math.max(0, aggregate.costUsd - current.costUsd) * current.fxRate,
-      });
-      if (["completed", "failed", "expired"].includes(selected.result.batch.status)) {
-        const missing = this.database.getSessionPrompts(sessionId).filter((item) => item.status !== "completed" && item.status !== "failed");
-        const safe = {
-          message: selected.result.batch.errors?.data?.[0]?.message?.slice(0, 240) || "OpenAI returned no result for this prompt.",
-          category: "provider" as const, httpStatus: null, requestId: null, retryAt: null,
-        };
-        for (const prompt of missing) this.database.failPrompt(prompt.prompt_id, safe);
-      }
-      const terminalAggregate = this.database.aggregatePromptUsage(sessionId);
-      const status = batchStatus(selected.result.batch.status, terminalAggregate.completed, terminalAggregate.failed, current.totalPrompts);
-      if (["failed", "expired"].includes(selected.result.batch.status)) {
-        const safe = sanitizedError(new Error(selected.result.batch.errors?.data?.[0]?.message || "The batch did not complete."));
-        for (const prompt of this.database.getSessionPrompts(sessionId).filter((item) => item.status !== "completed")) {
-          this.database.failPrompt(prompt.prompt_id, safe);
-        }
-      }
-      const nextAggregate = this.database.aggregatePromptUsage(sessionId);
-      const attempt = (this.database.db.query<{ poll_attempts: number }, [string]>(
-        "SELECT poll_attempts FROM batch_sessions WHERE session_id = ?",
-      ).get(sessionId)?.poll_attempts ?? 0) + 1;
-      const delay = Math.min(300_000, 15_000 * (2 ** Math.min(attempt, 4)));
+
+      // Remote batch is terminal — download/persist runs in the background so RPC polls stay short.
+      this.finalizing.add(sessionId);
       this.database.updateSession(sessionId, {
-        status,
-        message: status === "processing" ? `Batch ${selected.result.batch.status.replaceAll("_", " ")}; checking again automatically.` :
-          status === "completed" ? `Saved ${nextAggregate.completed} images.` :
-          status === "partial" ? `Saved ${nextAggregate.completed}; ${nextAggregate.failed} need retry.` :
-          status === "cancelled" ? "Batch cancelled." : "Batch failed.",
-        completedCount: nextAggregate.completed, inputTokens: nextAggregate.inputTokens,
-        outputTokens: nextAggregate.outputTokens, costUsd: nextAggregate.costUsd,
-        nextPollAt: status === "processing" ? new Date(Date.now() + delay).toISOString() : null,
-        pollAttempts: attempt, lastError: null,
+        status: "processing",
+        message: batch.output_file_id
+          ? "Batch completed; downloading results…"
+          : "Batch finished; finalizing…",
+        nextPollAt: new Date(Date.now() + DOWNLOAD_RETRY_MS).toISOString(),
+        lastError: null,
       });
-      if (TERMINAL.has(status)) {
-        void this.diagnostics?.write("batch_terminal", { sessionId, status, completed: nextAggregate.completed, failed: nextAggregate.failed, costUsd: nextAggregate.costUsd });
-        await this.cleanupRemoteReferences(sessionId);
-        void showNotification("BulkImg Studio", status === "completed" ? "Batch completed." : "Batch needs attention.");
-      }
+      this.emit(sessionId);
+      void this.finalizeRemoteBatch(sessionId, batch, selected.keyId)
+        .catch((error) => {
+          const safe = sanitizedError(error);
+          void this.diagnostics?.write("batch_finalize_error", { sessionId, ...safe });
+          if (!this.database.isSessionCancelled(sessionId) && !TERMINAL.has(this.database.getTelemetry(sessionId).status)) {
+            this.database.updateSession(sessionId, {
+              status: "processing",
+              message: "Batch finished; finalizing failed — retrying automatically.",
+              lastError: safe,
+              nextPollAt: new Date(Date.now() + DOWNLOAD_RETRY_MS).toISOString(),
+            });
+            this.emit(sessionId);
+          }
+        })
+        .finally(() => { this.finalizing.delete(sessionId); });
     } catch (error) {
       if (!this.database.isSessionCancelled(sessionId)) {
         const safe = sanitizedError(error);
@@ -349,6 +361,137 @@ export class BatchEngine {
       this.polling.delete(sessionId);
     }
     return this.emit(sessionId);
+  }
+
+  private async finalizeRemoteBatch(sessionId: string, batch: BatchObject, keyId: string): Promise<void> {
+    if (this.database.isSessionCancelled(sessionId)) return;
+    const current = this.database.getTelemetry(sessionId);
+    const outputPath = this.outputPath(sessionId);
+
+    if (batch.output_file_id) {
+      void this.diagnostics?.write("batch_download_start", {
+        sessionId, fileId: batch.output_file_id, remoteStatus: batch.status,
+      });
+      this.database.updateSession(sessionId, {
+        status: "processing",
+        message: "Batch completed; downloading results…",
+        nextPollAt: new Date(Date.now() + DOWNLOAD_RETRY_MS).toISOString(),
+      });
+      this.emit(sessionId);
+
+      try {
+        await this.withRotatingKey((client) => client.downloadFileToPath(batch.output_file_id!, outputPath));
+        void this.diagnostics?.write("batch_download_ok", {
+          sessionId, fileId: batch.output_file_id, bytes: existsSync(outputPath) ? statSync(outputPath).size : 0,
+        });
+      } catch (error) {
+        const safe = sanitizedError(error);
+        void this.diagnostics?.write("batch_download_error", { sessionId, fileId: batch.output_file_id, ...safe });
+        this.database.updateSession(sessionId, {
+          status: "processing",
+          message: "Batch finished; download failed — retrying automatically.",
+          lastError: safe,
+          nextPollAt: new Date(Date.now() + DOWNLOAD_RETRY_MS).toISOString(),
+        });
+        this.emit(sessionId);
+        return;
+      }
+
+      this.database.updateSession(sessionId, {
+        status: "processing",
+        message: "Saving images…",
+        nextPollAt: new Date(Date.now() + DOWNLOAD_RETRY_MS).toISOString(),
+        lastError: null,
+      });
+      this.emit(sessionId);
+
+      const ctx = this.database.getSessionRunContext(sessionId);
+      try {
+        await this.history.persistBatchOutputFromFile(
+          sessionId,
+          ctx.model,
+          keyId,
+          outputPath,
+          (inputTokens, outputTokens) => this.usageCost(inputTokens, outputTokens, "batch"),
+          (progress) => {
+            if (this.database.isSessionCancelled(sessionId)) return;
+            const aggregate = this.database.aggregatePromptUsage(sessionId);
+            this.database.updateSession(sessionId, {
+              status: "processing",
+              message: `Saving images… ${progress.saved + progress.failed} processed.`,
+              completedCount: aggregate.completed,
+              inputTokens: aggregate.inputTokens,
+              outputTokens: aggregate.outputTokens,
+              costUsd: aggregate.costUsd,
+            });
+            this.emit(sessionId);
+            void this.diagnostics?.write("batch_persist_progress", {
+              sessionId, saved: progress.saved, failed: progress.failed, malformed: progress.malformed,
+            });
+          },
+        );
+      } catch (error) {
+        const safe = sanitizedError(error);
+        void this.diagnostics?.write("batch_persist_error", { sessionId, ...safe });
+        this.database.updateSession(sessionId, {
+          status: "processing",
+          message: "Batch finished; saving images failed — retrying automatically.",
+          lastError: safe,
+          nextPollAt: new Date(Date.now() + DOWNLOAD_RETRY_MS).toISOString(),
+        });
+        this.emit(sessionId);
+        return;
+      } finally {
+        try { if (existsSync(outputPath)) unlinkSync(outputPath); } catch { /* keep for retry if delete races */ }
+      }
+    }
+
+    if (this.database.isSessionCancelled(sessionId)) return;
+
+    const aggregateAfter = this.database.aggregatePromptUsage(sessionId);
+    this.database.recordKeyUsage(keyId, {
+      inputTokens: Math.max(0, aggregateAfter.inputTokens - current.inputTokens),
+      outputTokens: Math.max(0, aggregateAfter.outputTokens - current.outputTokens),
+      costUsd: Math.max(0, aggregateAfter.costUsd - current.costUsd),
+      costPkr: Math.max(0, aggregateAfter.costUsd - current.costUsd) * current.fxRate,
+    });
+
+    if (["completed", "failed", "expired"].includes(batch.status)) {
+      const missing = this.database.getSessionPrompts(sessionId).filter((item) => item.status !== "completed" && item.status !== "failed");
+      const safe = {
+        message: batch.errors?.data?.[0]?.message?.slice(0, 240) || "OpenAI returned no result for this prompt.",
+        category: "provider" as const, httpStatus: null, requestId: null, retryAt: null,
+      };
+      for (const prompt of missing) this.database.failPrompt(prompt.prompt_id, safe);
+    }
+    if (["failed", "expired"].includes(batch.status)) {
+      const safe = sanitizedError(new Error(batch.errors?.data?.[0]?.message || "The batch did not complete."));
+      for (const prompt of this.database.getSessionPrompts(sessionId).filter((item) => item.status !== "completed")) {
+        this.database.failPrompt(prompt.prompt_id, safe);
+      }
+    }
+
+    const nextAggregate = this.database.aggregatePromptUsage(sessionId);
+    const status = batchStatus(batch.status, nextAggregate.completed, nextAggregate.failed, current.totalPrompts);
+    this.database.updateSession(sessionId, {
+      status,
+      message: status === "processing" ? `Batch ${batch.status.replaceAll("_", " ")}; checking again automatically.` :
+        status === "completed" ? `Saved ${nextAggregate.completed} images.` :
+        status === "partial" ? `Saved ${nextAggregate.completed}; ${nextAggregate.failed} need retry.` :
+        status === "cancelled" ? "Batch cancelled." : "Batch failed.",
+      completedCount: nextAggregate.completed, inputTokens: nextAggregate.inputTokens,
+      outputTokens: nextAggregate.outputTokens, costUsd: nextAggregate.costUsd,
+      nextPollAt: null, lastError: null,
+    });
+    this.emit(sessionId);
+
+    if (TERMINAL.has(status)) {
+      void this.diagnostics?.write("batch_terminal", {
+        sessionId, status, completed: nextAggregate.completed, failed: nextAggregate.failed, costUsd: nextAggregate.costUsd,
+      });
+      await this.cleanupRemoteReferences(sessionId);
+      void showNotification("BulkImg Studio", status === "completed" ? "Batch completed." : "Batch needs attention.");
+    }
   }
 
   getDetail(sessionId: string): SessionDetail {
