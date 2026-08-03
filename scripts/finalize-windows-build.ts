@@ -69,9 +69,9 @@ for (const required of [buildDir, iconPath, zstdPath, rceditPath]) {
   if (!existsSync(required)) throw new Error(`Required path is missing: ${required}`);
 }
 
-const setupExe = findOne(buildDir, (name) => name.endsWith("-Setup.exe"));
-const setupMetadata = findOne(buildDir, (name) => name.endsWith("-Setup.metadata.json"));
-const setupArchive = findOne(buildDir, (name) => name.endsWith("-Setup.tar.zst"));
+const setupExe = findOne(buildDir, (name) => name.includes("-Setup") && name.endsWith(".exe"));
+const setupMetadata = findOne(buildDir, (name) => name.includes("-Setup") && name.endsWith(".metadata.json"));
+const setupArchive = findOne(buildDir, (name) => name.includes("-Setup") && name.endsWith(".tar.zst"));
 const bundleDir = readdirSync(buildDir)
   .map((name) => join(buildDir, name))
   .find((path) => existsSync(join(path, "Resources")) && existsSync(join(path, "bin")));

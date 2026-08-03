@@ -1,29 +1,29 @@
 import { join } from "node:path";
+import type { OutputFormatId, QualityTier, RunMode } from "../../shared/contracts";
 
-export type QualityTier = "low" | "medium" | "high";
+type FormatRates = Record<OutputFormatId, Record<QualityTier, number>>;
 
 type PricingConfig = {
+  version: string;
   batchDiscount: number;
-  defaults: {
-    perImageUsd: Record<QualityTier, number>;
-    inputTokenUsd: number;
-    outputTokenUsd: number;
-  };
-  models: Record<string, {
-    perImageUsd?: Partial<Record<QualityTier, number>>;
-    inputTokenUsd?: number;
-    outputTokenUsd?: number;
-  }>;
+  imageEstimatesUsd: FormatRates;
+  referenceInputEstimateUsd: number;
+  inputTokenUsd: number;
+  outputTokenUsd: number;
 };
 
 const FALLBACK: PricingConfig = {
+  version: "gpt-image-2-2026-08-03",
   batchDiscount: 0.5,
-  defaults: {
-    perImageUsd: { low: 0.01, medium: 0.04, high: 0.17 },
-    inputTokenUsd: 0.00001,
-    outputTokenUsd: 0.00004,
+  imageEstimatesUsd: {
+    square: { low: 0.006, medium: 0.053, high: 0.211 },
+    portrait: { low: 0.005, medium: 0.041, high: 0.165 },
+    landscape: { low: 0.005, medium: 0.041, high: 0.165 },
+    story: { low: 0.005, medium: 0.041, high: 0.165 },
   },
-  models: {},
+  referenceInputEstimateUsd: 0.002,
+  inputTokenUsd: 0.00001,
+  outputTokenUsd: 0.00004,
 };
 
 export class PricingService {
@@ -34,53 +34,42 @@ export class PricingService {
   async load(): Promise<void> {
     for (const root of this.assetRoots) {
       try {
-        this.config = await Bun.file(join(root, "config", "pricing.json")).json() as PricingConfig;
-        return;
+        const candidate = await Bun.file(join(root, "config", "pricing.json")).json() as Partial<PricingConfig>;
+        if (candidate.version && candidate.imageEstimatesUsd) {
+          this.config = { ...FALLBACK, ...candidate } as PricingConfig;
+          return;
+        }
       } catch {
-        // Try next asset root.
+        // Try the packaged asset root, then use the reviewed fallback table.
       }
     }
   }
 
-  private modelRates(model: string) {
-    const entry = this.config.models[model] ?? {};
-    return {
-      perImageUsd: {
-        low: entry.perImageUsd?.low ?? this.config.defaults.perImageUsd.low,
-        medium: entry.perImageUsd?.medium ?? this.config.defaults.perImageUsd.medium,
-        high: entry.perImageUsd?.high ?? this.config.defaults.perImageUsd.high,
-      },
-      inputTokenUsd: entry.inputTokenUsd ?? this.config.defaults.inputTokenUsd,
-      outputTokenUsd: entry.outputTokenUsd ?? this.config.defaults.outputTokenUsd,
-    };
-  }
+  get version(): string { return this.config.version; }
 
   estimateUsd(params: {
     model: string;
     promptCount: number;
-    mode: "batch" | "direct";
+    mode: RunMode;
     quality: QualityTier;
+    format: OutputFormatId;
+    referenceCount: number;
   }): number {
-    const rates = this.modelRates(params.model);
-    const perImage = rates.perImageUsd[params.quality];
-    const subtotal = perImage * params.promptCount;
+    if (params.model !== "gpt-image-2") throw new Error("Only GPT Image 2 is supported.");
+    const image = this.config.imageEstimatesUsd[params.format][params.quality];
+    const reference = this.config.referenceInputEstimateUsd * Math.max(0, params.referenceCount);
+    const subtotal = (image + reference) * params.promptCount;
     return params.mode === "batch" ? subtotal * this.config.batchDiscount : subtotal;
   }
 
   costFromUsage(params: {
     model: string;
-    mode: "batch" | "direct";
-    quality: QualityTier;
-    imageCount: number;
+    mode: RunMode;
     inputTokens: number;
     outputTokens: number;
   }): number {
-    const rates = this.modelRates(params.model);
-    const imageCost = rates.perImageUsd[params.quality] * params.imageCount;
-    const tokenCost =
-      params.inputTokens * rates.inputTokenUsd +
-      params.outputTokens * rates.outputTokenUsd;
-    const subtotal = imageCost + tokenCost;
+    if (params.model !== "gpt-image-2") throw new Error("Only GPT Image 2 is supported.");
+    const subtotal = params.inputTokens * this.config.inputTokenUsd + params.outputTokens * this.config.outputTokenUsd;
     return params.mode === "batch" ? subtotal * this.config.batchDiscount : subtotal;
   }
 }

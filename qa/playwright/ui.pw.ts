@@ -1,0 +1,133 @@
+import { expect, test } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+
+test.beforeEach(async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Generate images." })).toBeVisible();
+});
+
+test("generator remains accessible and keyboard operable", async ({ page }) => {
+  const results = await new AxeBuilder({ page }).analyze();
+  expect(results.violations).toEqual([]);
+  await page.keyboard.press("Tab");
+  await expect(page.locator(":focus")).toBeVisible();
+});
+
+test("renders at most 100 rows and selects across 1,000 prompts", async ({ page }) => {
+  await page.getByRole("tab", { name: "Manual" }).click();
+  await page.getByLabel("Manual prompts").fill(Array.from({ length: 1_000 }, (_, index) => `Prompt ${index + 1}`).join("\n"));
+  await page.getByRole("button", { name: "Add prompts" }).click();
+  await expect(page.locator(".prompt-card")).toHaveCount(100);
+  const duration = await page.evaluate(() => {
+    const started = performance.now();
+    (document.querySelector('[data-pick="all"]') as HTMLButtonElement).click();
+    return performance.now() - started;
+  });
+  expect(duration).toBeLessThan(100);
+  await expect(page.locator("#selected-count")).toHaveText("1000");
+  await expect(page.locator(".prompt-card").last()).toHaveAttribute("aria-pressed", "true");
+});
+
+test("row selection preserves the imported-list viewport", async ({ page }) => {
+  await page.getByRole("tab", { name: "Manual" }).click();
+  await page.getByLabel("Manual prompts").fill(Array.from({ length: 160 }, (_, index) => `Prompt ${index + 1}`).join("\n"));
+  await page.getByRole("button", { name: "Add prompts" }).click();
+  await expect(page.locator(".prompt-card")).toHaveCount(100);
+  const result = await page.evaluate(() => {
+    const matrix = document.querySelector<HTMLElement>("#prompt-matrix")!;
+    matrix.scrollTop = 360;
+    const before = matrix.scrollTop;
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(matrix, { childList: true });
+    matrix.querySelectorAll<HTMLButtonElement>(".prompt-card")[15]!.click();
+    const directChildMutations = observer.takeRecords().length;
+    observer.disconnect();
+    return { before, after: matrix.scrollTop, directChildMutations };
+  });
+  expect(result.after).toBe(result.before);
+  expect(result.directChildMutations).toBe(0);
+  await expect(page.locator("#selected-count")).toHaveText("1");
+  await page.getByRole("button", { name: "Card view" }).click();
+  await expect(page.locator("#prompt-matrix")).toHaveClass(/view-cards/);
+});
+
+test("weekly CSV rows can be selected as groups or as individual prompts", async ({ page }) => {
+  const csv = [
+    "Week #,Week Start Date,Wednesday | Technology,Thursday | Teams",
+    'Week 1,05 Aug 2026,"05 AUG 2026 — First prompt","06 AUG 2026 — Second prompt"',
+    'Week 2,12 Aug 2026,"12 AUG 2026 — Third prompt","NO IMAGE — Outside the approved planning period"',
+  ].join("\n");
+  await page.locator("#csv-file").setInputFiles({
+    name: "weekly-calendar.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(csv),
+  });
+
+  await expect(page.locator(".prompt-group-header")).toHaveCount(2);
+  await expect(page.locator("#source-summary")).toHaveText("3 prompts · 2 weeks · 1 unavailable");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  const firstWeek = page.locator('.prompt-group[data-group-id="week-1"]');
+  const firstWeekSelect = firstWeek.locator(".week-select");
+  await expect(firstWeekSelect).toContainText("Select week");
+  await expect(firstWeekSelect).toContainText("0/2");
+
+  await firstWeekSelect.click();
+  await expect(page.locator("#selected-count")).toHaveText("2");
+  await expect(firstWeekSelect).toHaveAttribute("aria-pressed", "true");
+  await expect(firstWeek.locator(".prompt-card")).toHaveCount(2);
+  expect(await firstWeek.locator(".prompt-card").evaluateAll((cards) => cards.every((card) => card.getAttribute("aria-pressed") === "true"))).toBe(true);
+
+  await firstWeek.locator(".prompt-card").first().click();
+  await expect(page.locator("#selected-count")).toHaveText("1");
+  await expect(firstWeekSelect).toHaveAttribute("aria-pressed", "mixed");
+  await expect(firstWeekSelect).toContainText("Select week");
+
+  await firstWeekSelect.click();
+  await expect(page.locator("#selected-count")).toHaveText("2");
+  await firstWeekSelect.click();
+  await expect(page.locator("#selected-count")).toHaveText("0");
+});
+
+test("attaches multiple reference images from files and the clipboard", async ({ page }) => {
+  const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  await page.locator("#reference-file").setInputFiles([
+    { name: "brand portrait.png", mimeType: "image/png", buffer: pixel },
+    { name: "product.png", mimeType: "image/png", buffer: pixel },
+  ]);
+  await expect(page.locator(".reference-item")).toHaveCount(2);
+  await expect(page.locator("#reference-badge")).toHaveText("2/4");
+
+  await page.evaluate((base64) => {
+    const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], "clipboard-one.png", { type: "image/png" }));
+    transfer.items.add(new File([bytes], "clipboard-two.png", { type: "image/png" }));
+    window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true }));
+  }, pixel.toString("base64"));
+
+  await expect(page.locator(".reference-item")).toHaveCount(4);
+  await expect(page.locator("#reference-badge")).toHaveText("4/4");
+  await expect(page.locator("#reference-dock")).toBeDisabled();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await page.getByRole("button", { name: "Remove brand portrait.png" }).click();
+  await expect(page.locator(".reference-item")).toHaveCount(3);
+  await expect(page.locator("#reference-badge")).toHaveText("3/4");
+  await expect(page.locator("#reference-dock")).toBeEnabled();
+});
+
+for (const viewport of [{ width: 1440, height: 840 }, { width: 900, height: 640 }]) {
+  test(`layout ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await expect(page.locator("body")).toHaveScreenshot(`generator-${viewport.width}x${viewport.height}.png`, { animations: "disabled" });
+    const layout = await page.evaluate(() => ({
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      offenders: [...document.querySelectorAll<HTMLElement>("body *")].map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { tag: element.tagName, id: element.id, className: element.className, left: rect.left, right: rect.right };
+      }).filter((item) => item.left < -0.5 || item.right > document.documentElement.clientWidth + 0.5).slice(0, 10),
+    }));
+    expect(layout.scrollWidth, JSON.stringify(layout)).toBe(layout.clientWidth);
+  });
+}

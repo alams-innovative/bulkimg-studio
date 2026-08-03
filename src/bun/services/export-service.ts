@@ -11,8 +11,9 @@ function csvValue(value: string | number): string {
 
 function rowsToCsv(rows: Array<Record<string, string | number>>): string {
   const headers = [
-    "Image_Filename", "Week", "Schedule_Date", "Theme_Column", "Prompt_Text",
+    "Ordinal", "Image_Filename", "Week", "Schedule_Date", "Theme_Column", "Prompt_Text",
     "Model_Used", "Seed", "Input_Tokens", "Output_Tokens", "Cost_USD", "Cost_PKR",
+    "Key_Used",
   ];
   return [
     headers.join(","),
@@ -23,7 +24,7 @@ function rowsToCsv(rows: Array<Record<string, string | number>>): string {
 export class ExportService {
   constructor(private readonly database: AppDatabase, private readonly dataDirectory: string) {}
 
-  async export(sessionId: string, options?: { pickPath?: boolean }): Promise<string> {
+  async export(sessionId: string, options?: { pickPath?: boolean }): Promise<string | null> {
     const telemetry = this.database.getTelemetry(sessionId);
     const rows = this.database.getExportRows(sessionId);
     const assets = this.database.listSessionAssets(sessionId);
@@ -40,13 +41,15 @@ export class ExportService {
       `Key: ${row["Key_Used"]}`,
       `Prompt: ${row["Prompt_Text"]}`,
     ].join("\r\n")).join("\r\n\r\n");
+    const missing = assets.filter((asset) => !existsSync(asset.file_path));
     const readme = `# BulkImg Studio export\r\n\r\n` +
       `- Session: ${sessionId}\r\n` +
       `- Exported: ${new Date().toISOString()}\r\n` +
       `- Prompt count: ${rows.length}\r\n` +
       `- Image count: ${assets.length}\r\n` +
       `- Status: ${telemetry.status}\r\n` +
-      `- Cost: $${telemetry.costUsd.toFixed(4)} / Rs. ${telemetry.costPkr.toFixed(2)}\r\n\r\n` +
+      `- Cost: $${telemetry.costUsd.toFixed(4)} / PKR ${telemetry.costPkr.toFixed(2)}\r\n` +
+      `- Missing local files skipped: ${missing.length}\r\n\r\n` +
       `See images/ for generated PNG files, metadata.csv for structured rows, and prompt_mapping.txt for the human-readable manifest.\r\n`;
 
     const files: Record<string, Uint8Array> = {
@@ -77,7 +80,8 @@ export class ExportService {
         filter: "*.zip",
         filterLabel: "ZIP archive",
       });
-      if (chosen) filePath = chosen;
+      if (!chosen) return null;
+      filePath = chosen;
     }
 
     await Bun.write(filePath, archive);

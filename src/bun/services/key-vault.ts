@@ -2,6 +2,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { AppDatabase, ApiKeyRecord } from "../database";
 import { protectWithDpapi, unprotectWithDpapi } from "./windows-native";
+import { OpenAIClient } from "./openai-client";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -60,6 +61,7 @@ export class KeyVault {
 
   async add(label: string, key: string): Promise<{ id: string; label: string; isActive: boolean }> {
     if (!key.startsWith("sk-") || key.length < 20) throw new Error("Enter a valid OpenAI API key");
+    await new OpenAIClient(key).validateKey();
     const id = crypto.randomUUID();
     this.database.insertKey({
       id,
@@ -80,5 +82,10 @@ export class KeyVault {
       return record.is_active === 1 && (!record.rate_limited_until || Date.parse(record.rate_limited_until) <= now);
     });
     return Promise.all(active.map(async (record) => ({ id: record.id, key: await this.decrypt(record.key_value) })));
+  }
+
+  async keyById(id: string): Promise<string | null> {
+    const record = this.database.listKeys().find((item) => item.id === id);
+    return record ? this.decrypt(record.key_value) : null;
   }
 }

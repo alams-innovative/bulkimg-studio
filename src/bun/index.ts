@@ -10,6 +10,7 @@ import { KeyVault } from "./services/key-vault";
 import { PricingService } from "./services/pricing-service";
 import { parseCSV, parseManualPrompts } from "./services/prompt-parser";
 import { pickOpenFile } from "./services/windows-native";
+import { cleanupStaleTemporaryFiles, DiagnosticLog } from "./services/diagnostics";
 
 if (process.platform !== "win32") {
   throw new Error("BulkImg Studio 1.0.0-beta supports Windows 10 and Windows 11 only.");
@@ -42,13 +43,16 @@ const assetRoots = [
 ];
 
 const dataDirectory = Utils.paths.userData;
+const diagnosticLog = new DiagnosticLog(dataDirectory);
+const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
+void diagnosticLog.write("startup", { cleanedFiles, version: "1.0.0-beta" });
 const database = new AppDatabase(dataDirectory);
 const keyVault = new KeyVault(database, dataDirectory);
 const fxService = new FxService(database);
 const historyService = new HistoryService(database, dataDirectory, Utils.paths.downloads);
 const pricingService = new PricingService(assetRoots);
 await pricingService.load();
-const batchEngine = new BatchEngine(database, keyVault, fxService, historyService, pricingService, dataDirectory);
+const batchEngine = new BatchEngine(database, keyVault, fxService, historyService, pricingService, dataDirectory, diagnosticLog);
 const exportService = new ExportService(database, dataDirectory);
 const recovered = batchEngine.recoverOnStartup();
 if (recovered > 0) console.log(`Recovered ${recovered} session(s) after restart.`);
@@ -88,6 +92,10 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
       submitBatchRun: (input) => batchEngine.submit(input),
       pollBatchStatus: ({ sessionId }) => batchEngine.poll(sessionId),
+      getSessionDetail: async ({ sessionId, refresh }) => {
+        if (refresh) await batchEngine.poll(sessionId, true);
+        return batchEngine.getDetail(sessionId);
+      },
       cancelBatchRun: ({ sessionId }) => batchEngine.cancel(sessionId),
       retryFailedPrompts: ({ sessionId }) => batchEngine.retryFailed(sessionId),
       estimateRunCost: async (input) => batchEngine.estimate(input, await fxService.getUsdPkrRate()),
@@ -95,6 +103,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         const bytes = Buffer.from(dataBase64, "base64");
         return batchEngine.uploadReference(new Uint8Array(bytes), filename, mimeType);
       },
+      removeReferenceImage: ({ fileId }) => batchEngine.removeReference(fileId),
       listApiKeys: () => keyVault.listSafe(),
       addApiKey: ({ label, key }) => keyVault.add(label, key),
       setApiKeyActive: ({ id, isActive }) => {
@@ -148,6 +157,7 @@ const mainWindow = new BrowserWindow({
     y: 16,
   },
 });
+batchEngine.startScheduler();
 
 setTimeout(() => mainWindow.setSize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT), 1_500);
 

@@ -1,3 +1,7 @@
+import type { OutputFormatId } from "./output-formats";
+
+export type { OutputFormatId } from "./output-formats";
+
 export type BrandTheme = {
   appName: string;
   version: string;
@@ -11,6 +15,8 @@ export type BrandTheme = {
 export type PromptCell = {
   id: string;
   week: string;
+  weekStartDate: string;
+  dayLabel: string;
   scheduleDate: string;
   themeColumn: string;
   promptText: string;
@@ -18,15 +24,35 @@ export type PromptCell = {
   disabledReason?: string;
 };
 
+export type PromptGroup = {
+  id: string;
+  label: string;
+  startDate: string;
+  cellIds: string[];
+};
+
 export type PromptMatrix = {
   sourceName: string;
   columns: string[];
   cells: PromptCell[];
+  groups: PromptGroup[];
   warnings: string[];
 };
 
 export type RunMode = "batch" | "direct";
-export type SessionStatus = "pending" | "processing" | "completed" | "failed";
+export type QualityTier = "low" | "medium" | "high";
+export type SessionStatus = "pending" | "processing" | "partial" | "completed" | "failed" | "cancelled";
+export type PromptStatus = "pending" | "processing" | "completed" | "failed" | "cancelled";
+
+export type FailureCategory = "auth" | "rate_limit" | "validation" | "timeout" | "cancelled" | "provider" | "network" | "unknown";
+
+export type SanitizedProviderError = {
+  message: string;
+  category: FailureCategory;
+  httpStatus: number | null;
+  requestId: string | null;
+  retryAt: string | null;
+};
 
 export type BatchPrompt = Pick<PromptCell, "promptText" | "week" | "scheduleDate" | "themeColumn">;
 
@@ -34,9 +60,9 @@ export type SubmitRunInput = {
   prompts: BatchPrompt[];
   model: string;
   mode: RunMode;
-  size: string;
-  quality: "low" | "medium" | "high";
-  referenceImageFileId?: string;
+  format: OutputFormatId;
+  quality: QualityTier;
+  referenceImageFileIds?: string[];
 };
 
 export type SessionTelemetry = {
@@ -51,12 +77,21 @@ export type SessionTelemetry = {
   costPkr: number;
   fxRate: number;
   message: string;
+  runMode: RunMode;
+  format: OutputFormatId;
+  quality: QualityTier;
+  retryableCount: number;
+  diagnosticId: string;
+  lastError: SanitizedProviderError | null;
+  nextPollAt: string | null;
 };
 
 export type CostEstimate = {
   costUsd: number;
   costPkr: number;
   fxRate: number;
+  pricingVersion: string;
+  isEstimate: true;
 };
 
 export type ApiKeyStats = {
@@ -94,6 +129,26 @@ export type SessionSummary = {
   startTime: string;
   endTime: string | null;
   keyLabel: string | null;
+  format: OutputFormatId;
+  quality: QualityTier;
+  retryableCount: number;
+  diagnosticId: string;
+  lastError: SanitizedProviderError | null;
+};
+
+export type SessionPromptOutcome = {
+  promptId: string;
+  ordinal: number;
+  promptText: string;
+  status: PromptStatus;
+  error: SanitizedProviderError | null;
+  attempts: number;
+  hasImage: boolean;
+};
+
+export type SessionDetail = {
+  telemetry: SessionTelemetry;
+  prompts: SessionPromptOutcome[];
 };
 
 export type ExportSummary = {
@@ -149,6 +204,7 @@ export type AppRPC = {
       pickCsvFile: { params: {}; response: { csvText: string; sourceName: string } | null };
       submitBatchRun: { params: SubmitRunInput; response: SessionTelemetry };
       pollBatchStatus: { params: { sessionId: string }; response: SessionTelemetry };
+      getSessionDetail: { params: { sessionId: string; refresh?: boolean }; response: SessionDetail };
       cancelBatchRun: { params: { sessionId: string }; response: SessionTelemetry };
       retryFailedPrompts: { params: { sessionId: string }; response: SessionTelemetry };
       estimateRunCost: {
@@ -156,7 +212,9 @@ export type AppRPC = {
           model: string;
           promptCount: number;
           mode: RunMode;
-          quality: "low" | "medium" | "high";
+          quality: QualityTier;
+          format: OutputFormatId;
+          referenceCount: number;
         };
         response: CostEstimate;
       };
@@ -164,6 +222,7 @@ export type AppRPC = {
         params: { dataBase64: string; filename: string; mimeType: string };
         response: { fileId: string };
       };
+      removeReferenceImage: { params: { fileId: string }; response: { success: boolean } };
       listApiKeys: { params: {}; response: ApiKeyStats[] };
       addApiKey: { params: { label: string; key: string }; response: { id: string; label: string; isActive: boolean } };
       setApiKeyActive: { params: { id: string; isActive: boolean }; response: { success: boolean } };
@@ -176,7 +235,7 @@ export type AppRPC = {
       clearHistory: { params: {}; response: { deletedPrompts: number; deletedAssets: number } };
       listExports: { params: {}; response: ExportSummary[] };
       revealExportsFolder: { params: {}; response: { directory: string } };
-      exportSessionZip: { params: { sessionId: string; pickPath?: boolean }; response: { filePath: string } };
+      exportSessionZip: { params: { sessionId: string; pickPath?: boolean }; response: { filePath: string | null } };
     };
     messages: {};
   };

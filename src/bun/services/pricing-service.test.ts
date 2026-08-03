@@ -2,33 +2,33 @@ import { describe, expect, test } from "bun:test";
 import { PricingService } from "./pricing-service";
 
 describe("pricing service", () => {
-  test("applies the batch discount to image and token costs", () => {
+  test("uses format estimates and applies the batch discount", () => {
     const pricing = new PricingService([]);
-
     expect(pricing.estimateUsd({
-      model: "gpt-image-2",
-      promptCount: 2,
-      mode: "batch",
-      quality: "high",
-    })).toBeCloseTo(0.17);
-
-    expect(pricing.costFromUsage({
-      model: "gpt-image-2",
-      mode: "batch",
-      quality: "medium",
-      imageCount: 3,
-      inputTokens: 1_000,
-      outputTokens: 500,
-    })).toBeCloseTo(0.075);
+      model: "gpt-image-2", promptCount: 2, mode: "batch", quality: "high",
+      format: "square", referenceCount: 0,
+    })).toBeCloseTo(0.211);
   });
 
-  test("keeps direct estimates undiscounted", () => {
+  test("calculates actual cost from usage without a second flat image charge", () => {
+    const pricing = new PricingService([]);
+    expect(pricing.costFromUsage({
+      model: "gpt-image-2", mode: "batch", inputTokens: 1_000, outputTokens: 500,
+    })).toBeCloseTo(0.015);
+  });
+
+  test("adds the compact reference allowance to pre-run estimates", () => {
     const pricing = new PricingService([]);
     expect(pricing.estimateUsd({
-      model: "gpt-image-2",
-      promptCount: 3,
-      mode: "direct",
-      quality: "medium",
-    })).toBeCloseTo(0.12);
+      model: "gpt-image-2", promptCount: 3, mode: "direct", quality: "medium",
+      format: "square", referenceCount: 1,
+    })).toBeCloseTo(0.165);
+  });
+
+  test("scales the reference allowance by image count", () => {
+    const pricing = new PricingService([]);
+    const one = pricing.estimateUsd({ model: "gpt-image-2", promptCount: 1, mode: "direct", quality: "medium", format: "square", referenceCount: 1 });
+    const four = pricing.estimateUsd({ model: "gpt-image-2", promptCount: 1, mode: "direct", quality: "medium", format: "square", referenceCount: 4 });
+    expect(four - one).toBeCloseTo(0.006, 6);
   });
 });

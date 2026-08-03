@@ -1,42 +1,13 @@
 {
-  "currency": "USD",
+  "version": "gpt-image-2-2026-08-03",
   "batchDiscount": 0.5,
-  "defaults": {
-    "perImageUsd": {
-      "low": 0.01,
-      "medium": 0.04,
-      "high": 0.17
-    },
-    "inputTokenUsd": 0.00001,
-    "outputTokenUsd": 0.00004
+  "imageEstimatesUsd": {
+    "square": { "low": 0.006, "medium": 0.053, "high": 0.211 },
+    "portrait": { "low": 0.005, "medium": 0.041, "high": 0.165 },
+    "landscape": { "low": 0.005, "medium": 0.041, "high": 0.165 },
+    "story": { "low": 0.005, "medium": 0.041, "high": 0.165 }
   },
-  "models": {
-    "gpt-image-2": {
-      "perImageUsd": {
-        "low": 0.01,
-        "medium": 0.04,
-        "high": 0.17
-      },
-      "inputTokenUsd": 0.00001,
-      "outputTokenUsd": 0.00004
-    },
-    "dall-e-3": {
-      "perImageUsd": {
-        "low": 0.04,
-        "medium": 0.04,
-        "high": 0.08
-      },
-      "inputTokenUsd": 0,
-      "outputTokenUsd": 0
-    },
-    "dall-e-2": {
-      "perImageUsd": {
-        "low": 0.016,
-        "medium": 0.018,
-        "high": 0.02
-      },
-      "inputTokenUsd": 0,
-      "outputTokenUsd": 0
-    }
-  }
+  "referenceInputEstimateUsd": 0.002,
+  "inputTokenUsd": 0.00001,
+  "outputTokenUsd": 0.00004
 }
