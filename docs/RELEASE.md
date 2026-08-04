@@ -1,11 +1,11 @@
-# BulkImg Studio 1.0.0-beta — Release Notes
+# BulkImg Studio 1.0.1-beta — Release Notes
 
 ## Versioning
 
 | Surface | Value |
 | --- | --- |
-| Package / Electrobun build | `1.0.0-beta` |
-| UI / brand display | `1.0.0-beta` |
+| Package / Electrobun build | `1.0.1-beta` |
+| UI / brand display | `1.0.1-beta` |
 
 ## Build
 
@@ -34,7 +34,7 @@ signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a .\path\
 
 ## Smoke checklist
 
-- [ ] App launches and shows **BulkImg Studio 1.0.0-beta**
+- [ ] App launches and shows **BulkImg Studio 1.0.1-beta**
 - [ ] CSV import (dropzone + Windows dialog) builds a matrix
 - [ ] Manual prompts parse into cards
 - [ ] API key add/pause/remove works (DPAPI-wrapped vault key)

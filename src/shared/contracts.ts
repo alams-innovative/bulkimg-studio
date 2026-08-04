@@ -43,6 +43,7 @@ export type RunMode = "batch" | "direct";
 export type QualityTier = "low" | "medium" | "high";
 export type SessionStatus = "pending" | "processing" | "partial" | "completed" | "failed" | "cancelled";
 export type PromptStatus = "pending" | "processing" | "completed" | "failed" | "cancelled";
+export type RunPhase = "queued" | "generating" | "waiting_batch" | "downloading" | "saving" | "done" | "error";
 
 export type FailureCategory = "auth" | "rate_limit" | "validation" | "timeout" | "cancelled" | "provider" | "network" | "unknown";
 
@@ -63,6 +64,34 @@ export type SubmitRunInput = {
   format: OutputFormatId;
   quality: QualityTier;
   referenceImageFileIds?: string[];
+  /** 0 = no split (single batch). Default from settings when omitted. */
+  waveSize?: number;
+  parentRunId?: string;
+  waveIndex?: number;
+  waveCount?: number;
+};
+
+export type AppSettings = {
+  waveSize: number;
+};
+
+export type RateLimitSnapshot = {
+  model: string;
+  maxImagesPerMinute: number | null;
+  maxTokensPerMinute: number | null;
+  maxRequestsPerMinute: number | null;
+  batchDayMaxInputTokens: number | null;
+  fetchedAt: string;
+};
+
+export type RateLimitHeaderProbe = {
+  limitRequests: number | null;
+  remainingRequests: number | null;
+  limitTokens: number | null;
+  remainingTokens: number | null;
+  limitImages: number | null;
+  remainingImages: number | null;
+  capturedAt: string;
 };
 
 export type SessionTelemetry = {
@@ -84,6 +113,18 @@ export type SessionTelemetry = {
   diagnosticId: string;
   lastError: SanitizedProviderError | null;
   nextPollAt: string | null;
+  parentRunId: string | null;
+  waveIndex: number | null;
+  waveCount: number | null;
+  estimateUsd: number;
+  etaMs: number | null;
+  phase: RunPhase;
+  durationMs?: {
+    submit?: number | null;
+    remote?: number | null;
+    download?: number | null;
+    persist?: number | null;
+  };
 };
 
 export type CostEstimate = {
@@ -134,6 +175,30 @@ export type SessionSummary = {
   retryableCount: number;
   diagnosticId: string;
   lastError: SanitizedProviderError | null;
+  parentRunId: string | null;
+  waveIndex: number | null;
+  estimateUsd: number;
+  elapsedMs: number;
+};
+
+export type RunSummary = {
+  runId: string;
+  status: SessionStatus;
+  model: string;
+  runMode: RunMode;
+  totalPrompts: number;
+  completedCount: number;
+  costUsd: number;
+  costPkr: number;
+  estimateUsd: number;
+  waveSize: number;
+  waveCount: number;
+  startTime: string;
+  message: string;
+  format: OutputFormatId;
+  quality: QualityTier;
+  diagnosticId: string;
+  sessions: SessionSummary[];
 };
 
 export type SessionPromptOutcome = {
@@ -144,6 +209,8 @@ export type SessionPromptOutcome = {
   error: SanitizedProviderError | null;
   attempts: number;
   hasImage: boolean;
+  durationMs: number | null;
+  costUsd: number;
 };
 
 export type SessionDetail = {
@@ -162,6 +229,8 @@ export type HistoryItem = {
   promptId: string;
   assetId: string | null;
   sessionId: string;
+  parentRunId: string | null;
+  waveIndex: number | null;
   promptText: string;
   week: string;
   scheduleDate: string;
@@ -175,6 +244,15 @@ export type HistoryItem = {
   outputTokens: number;
   costUsd: number;
   costPkr: number;
+  runMode: RunMode;
+};
+
+export type AdminConfigView = {
+  configured: boolean;
+  projectId: string | null;
+  keyHint: string | null;
+  rateLimits: RateLimitSnapshot | null;
+  lastError: string | null;
 };
 
 export type AppBootstrap = {
@@ -193,6 +271,17 @@ export type AppBootstrap = {
   keyCount: number;
   platform: string;
   fxRate: number;
+  settings: AppSettings;
+  admin: AdminConfigView;
+  adminWarning: string | null;
+  rateHeaderProbe: RateLimitHeaderProbe | null;
+  limits: {
+    maxReferences: number;
+    maxReferenceBytes: number;
+    maxPromptChars: number;
+    directPromptLimit: number;
+    batchPromptLimit: number;
+  };
 };
 
 export type DiagnosticLogView = {
@@ -206,6 +295,8 @@ export type AppRPC = {
   bun: {
     requests: {
       getBootstrap: { params: {}; response: AppBootstrap };
+      getSettings: { params: {}; response: AppSettings };
+      setSettings: { params: Partial<AppSettings>; response: AppSettings };
       importCSV: { params: { csvText: string; sourceName: string }; response: PromptMatrix };
       parseManualPrompts: { params: { text: string }; response: PromptMatrix };
       pickCsvFile: { params: {}; response: { csvText: string; sourceName: string } | null };
@@ -214,6 +305,7 @@ export type AppRPC = {
       getSessionDetail: { params: { sessionId: string; refresh?: boolean }; response: SessionDetail };
       cancelBatchRun: { params: { sessionId: string }; response: SessionTelemetry };
       retryFailedPrompts: { params: { sessionId: string }; response: SessionTelemetry };
+      resumeRun: { params: { runId?: string; sessionId?: string }; response: SessionTelemetry };
       estimateRunCost: {
         params: {
           model: string;
@@ -234,15 +326,25 @@ export type AppRPC = {
       addApiKey: { params: { label: string; key: string }; response: { id: string; label: string; isActive: boolean } };
       setApiKeyActive: { params: { id: string; isActive: boolean }; response: { success: boolean } };
       deleteApiKey: { params: { id: string }; response: { success: boolean } };
+      setAdminKey: { params: { key: string; projectId?: string }; response: AdminConfigView };
+      clearAdminKey: { params: {}; response: AdminConfigView };
+      setAdminProjectId: { params: { projectId: string }; response: AdminConfigView };
+      refreshRateLimits: { params: {}; response: AdminConfigView };
+      listAdminProjects: { params: {}; response: Array<{ id: string; name: string }> };
       listSessions: { params: {}; response: SessionSummary[] };
+      listRuns: { params: {}; response: RunSummary[] };
+      getRunDetail: { params: { runId: string }; response: RunSummary };
       listHistory: { params: {}; response: HistoryItem[] };
       getHistoryImage: { params: { assetId: string }; response: { dataUrl: string } };
       downloadHistoryAsset: { params: { assetId: string }; response: { filePath: string } };
+      revealHistoryAsset: { params: { assetId: string }; response: { filePath: string } };
+      revealHistorySessionFolder: { params: { sessionId: string }; response: { directory: string } };
       deleteHistoryItem: { params: { promptId: string }; response: { success: boolean } };
       clearHistory: { params: {}; response: { deletedPrompts: number; deletedAssets: number } };
       listExports: { params: {}; response: ExportSummary[] };
       revealExportsFolder: { params: {}; response: { directory: string } };
       exportSessionZip: { params: { sessionId: string; pickPath?: boolean }; response: { filePath: string | null } };
+      exportRunZip: { params: { runId: string; pickPath?: boolean }; response: { filePath: string | null } };
       getDiagnosticLogs: {
         params: { limit?: number; query?: string; event?: string };
         response: DiagnosticLogView;
@@ -258,3 +360,12 @@ export type AppRPC = {
     };
   };
 };
+
+export const APP_LIMITS = {
+  maxReferences: 16,
+  maxReferenceBytes: 50 * 1024 * 1024,
+  maxPromptChars: 32_000,
+  directPromptLimit: 4,
+  batchPromptLimit: 1_000,
+  defaultWaveSize: 100,
+} as const;

@@ -31,4 +31,13 @@ describe("pricing service", () => {
     const four = pricing.estimateUsd({ model: "gpt-image-2", promptCount: 1, mode: "direct", quality: "medium", format: "square", referenceCount: 4 });
     expect(four - one).toBeCloseTo(0.006, 6);
   });
+
+  test("supports up to 16 reference images in estimates", () => {
+    const pricing = new PricingService([]);
+    const zero = pricing.estimateUsd({ model: "gpt-image-2", promptCount: 1, mode: "batch", quality: "medium", format: "square", referenceCount: 0 });
+    const sixteen = pricing.estimateUsd({ model: "gpt-image-2", promptCount: 1, mode: "batch", quality: "medium", format: "square", referenceCount: 16 });
+    expect(sixteen).toBeGreaterThan(zero);
+    const fifteen = pricing.estimateUsd({ model: "gpt-image-2", promptCount: 1, mode: "batch", quality: "medium", format: "square", referenceCount: 15 });
+    expect(sixteen - fifteen).toBeCloseTo(fifteen - zero > 0 ? (fifteen - zero) / 15 : 0, 6);
+  });
 });

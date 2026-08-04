@@ -84,3 +84,44 @@ describe("DiagnosticLog.read", () => {
     expect(query.lines).toHaveLength(1);
   });
 });
+
+describe("History reveal helpers", () => {
+  test("reveals managed assets and rejects session folder path escape", () => {
+    const root = mkdtempSync(join(tmpdir(), "bulkimg-reveal-"));
+    const database = new AppDatabase(root);
+    const history = new HistoryService(database, root, join(root, "downloads"));
+    database.createSession("session-reveal", {
+      prompts: [{ promptText: "reveal me", week: "1", scheduleDate: "Mon", themeColumn: "A" }],
+      model: "gpt-image-2",
+      mode: "direct",
+      format: "square",
+      quality: "low",
+    }, 280);
+
+    const prompt = database.getSessionPrompts("session-reveal")[0]!;
+    const sessionDir = join(root, "history", "session-reveal");
+    mkdirSync(sessionDir, { recursive: true });
+    const filePath = join(sessionDir, "image.png");
+    writeFileSync(filePath, Buffer.from(tinyPngBase64(), "base64"));
+    const assetId = crypto.randomUUID();
+    database.insertGeneratedAsset({
+      assetId,
+      promptId: prompt.prompt_id,
+      sessionId: "session-reveal",
+      imageFilename: "image.png",
+      promptText: prompt.prompt_text,
+      scheduleDate: prompt.schedule_date,
+      week: prompt.week,
+      themeColumn: prompt.theme_column,
+      keyUsedId: null,
+      filePath,
+      model: "gpt-image-2",
+      sourceKey: "source-reveal-1",
+    });
+
+    const revealed = history.revealAsset(assetId);
+    expect(revealed.toLowerCase()).toContain("history");
+    expect(history.revealSessionFolder("session-reveal").toLowerCase()).toContain("session-reveal");
+    expect(() => history.revealSessionFolder("..\\windows")).toThrow(/managed history/i);
+  });
+});

@@ -89,6 +89,46 @@ export class ExportService {
     return filePath;
   }
 
+  async exportRun(runId: string, options?: { pickPath?: boolean }): Promise<string | null> {
+    const sessionIds = this.database.listSessionIdsForRun(runId);
+    if (!sessionIds.length) throw new Error("That run has no sessions to export.");
+    const timestamp = new Date().toISOString().replaceAll(":", "-").replace("T", "_").slice(0, 19);
+    const root = `BulkImg_Run_${timestamp}`;
+    const files: Record<string, Uint8Array> = {};
+    let imageCount = 0;
+    for (const sessionId of sessionIds) {
+      const rows = this.database.getExportRows(sessionId);
+      const assets = this.database.listSessionAssets(sessionId);
+      files[`${root}/${sessionId}/metadata.csv`] = strToU8(rowsToCsv(rows));
+      for (const asset of assets) {
+        if (!existsSync(asset.file_path)) continue;
+        const bytes = new Uint8Array(await Bun.file(asset.file_path).arrayBuffer());
+        files[`${root}/${sessionId}/images/${asset.image_filename}`] = bytes;
+        imageCount += 1;
+      }
+    }
+    files[`${root}/README.md`] = strToU8(
+      `# BulkImg Studio run export\r\n\r\n- Run: ${runId}\r\n- Sessions: ${sessionIds.length}\r\n- Images: ${imageCount}\r\n`,
+    );
+    const archive = zipSync(files, { level: 6 });
+    const exportsDirectory = join(this.dataDirectory, "exports");
+    mkdirSync(exportsDirectory, { recursive: true });
+    let filePath = join(exportsDirectory, `${root}.zip`);
+    if (options?.pickPath) {
+      const chosen = await pickSaveFile({
+        title: "Export run ZIP",
+        defaultName: `${root}.zip`,
+        filter: "*.zip",
+        filterLabel: "ZIP archive",
+      });
+      if (!chosen) return null;
+      filePath = chosen;
+    }
+    await Bun.write(filePath, archive);
+    void showNotification("BulkImg Studio", `Exported run (${imageCount} image(s)).`);
+    return filePath;
+  }
+
   list() {
     const exportsDirectory = join(this.dataDirectory, "exports");
     mkdirSync(exportsDirectory, { recursive: true });

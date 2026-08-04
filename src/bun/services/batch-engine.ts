@@ -10,19 +10,27 @@ import type {
   CostEstimate, OutputFormatId, QualityTier, RunMode, SessionDetail, SessionStatus,
   SessionTelemetry, SubmitRunInput,
 } from "../../shared/contracts";
+import { APP_LIMITS } from "../../shared/contracts";
 import { isOutputFormatId } from "../../shared/output-formats";
 import { showNotification } from "./windows-native";
 import type { DiagnosticLog } from "./diagnostics";
 
-const DIRECT_LIMIT = 4;
-const BATCH_LIMIT = 1_000;
+const DIRECT_LIMIT = APP_LIMITS.directPromptLimit;
+const BATCH_LIMIT = APP_LIMITS.batchPromptLimit;
 const DIRECT_CONCURRENCY = 2;
-const REFERENCE_LIMIT = 4;
-const REFERENCE_LIMIT_BYTES = 20 * 1024 * 1024;
+const REFERENCE_LIMIT = APP_LIMITS.maxReferences;
+const REFERENCE_LIMIT_BYTES = APP_LIMITS.maxReferenceBytes;
 const REFERENCE_MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const TERMINAL = new Set<SessionStatus>(["partial", "completed", "failed", "cancelled"]);
 const REMOTE_TERMINAL = new Set(["completed", "failed", "expired", "cancelled"]);
 const DOWNLOAD_RETRY_MS = 20_000;
+
+export function chunkPrompts<T>(items: T[], waveSize: number): T[][] {
+  if (!Number.isInteger(waveSize) || waveSize <= 0 || items.length <= waveSize) return items.length ? [items] : [];
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += waveSize) chunks.push(items.slice(i, i + waveSize));
+  return chunks;
+}
 
 function validateInput(input: SubmitRunInput): SubmitRunInput {
   if (!input || typeof input !== "object" || !Array.isArray(input.prompts)) throw new Error("The generation request is invalid.");
@@ -32,11 +40,14 @@ function validateInput(input: SubmitRunInput): SubmitRunInput {
   if (!["low", "medium", "high"].includes(input.quality)) throw new Error("Choose Low, Medium, or High quality.");
   const limit = input.mode === "direct" ? DIRECT_LIMIT : BATCH_LIMIT;
   if (input.prompts.length < 1 || input.prompts.length > limit) {
-    throw new Error(input.mode === "direct" ? "Direct supports 1–4 prompts." : "Batch supports 1–1,000 prompts.");
+    throw new Error(input.mode === "direct" ? "Direct mode only allows 4 prompts. Use Batch for more." : "Batch supports 1–1,000 prompts per wave.");
   }
   for (const prompt of input.prompts) {
-    if (!prompt || typeof prompt.promptText !== "string" || !prompt.promptText.trim() || prompt.promptText.length > 32_000) {
-      throw new Error("Every prompt must contain 1–32,000 characters.");
+    if (!prompt || typeof prompt.promptText !== "string" || !prompt.promptText.trim()) {
+      throw new Error("Every prompt must contain text.");
+    }
+    if (prompt.promptText.length > APP_LIMITS.maxPromptChars) {
+      throw new Error(`This prompt is too long (${APP_LIMITS.maxPromptChars.toLocaleString()} character max).`);
     }
     for (const value of [prompt.week, prompt.scheduleDate, prompt.themeColumn]) {
       if (typeof value !== "string" || value.length > 500) throw new Error("Prompt metadata is invalid.");
@@ -44,7 +55,7 @@ function validateInput(input: SubmitRunInput): SubmitRunInput {
   }
   if (input.referenceImageFileIds !== undefined) {
     if (!Array.isArray(input.referenceImageFileIds) || input.referenceImageFileIds.length > REFERENCE_LIMIT) {
-      throw new Error(`Add no more than ${REFERENCE_LIMIT} reference images.`);
+      throw new Error(`You can attach at most ${REFERENCE_LIMIT} reference images.`);
     }
     if (input.referenceImageFileIds.some((fileId) => typeof fileId !== "string" || !fileId.trim() || fileId.length > 200)) {
       throw new Error("One of the reference images is invalid.");
@@ -52,6 +63,9 @@ function validateInput(input: SubmitRunInput): SubmitRunInput {
     if (new Set(input.referenceImageFileIds).size !== input.referenceImageFileIds.length) {
       throw new Error("Remove duplicate reference images before generating.");
     }
+  }
+  if (input.waveSize !== undefined && (!Number.isInteger(input.waveSize) || input.waveSize < 0 || input.waveSize > BATCH_LIMIT)) {
+    throw new Error(`Wave size must be 0 (no split) or 1–${BATCH_LIMIT}.`);
   }
   return input;
 }
@@ -73,6 +87,10 @@ export class BatchEngine {
   private readonly referenceDirectory: string;
   private readonly batchesDirectory: string;
   private scheduler: ReturnType<typeof setInterval> | null = null;
+  private readonly cancelledRuns = new Set<string>();
+  private readonly activeRunWave = new Map<string, number>();
+  private readonly terminalWaiters = new Map<string, Array<(status: SessionStatus) => void>>();
+  private readonly runningWaveChains = new Set<string>();
 
   constructor(
     private readonly database: AppDatabase,
@@ -96,12 +114,84 @@ export class BatchEngine {
     this.scheduler = setInterval(() => void this.pollDueBatches(), 15_000);
     (this.scheduler as unknown as { unref?: () => void }).unref?.();
     void this.pollDueBatches();
+    void this.recoverPendingWaveChains();
+  }
+
+  private noteRateHeaders(headers: { rateHeaders?: import("../../shared/contracts").RateLimitHeaderProbe | null } | null | undefined): void {
+    if (headers?.rateHeaders) this.database.setHeaderProbe(headers.rateHeaders);
   }
 
   private emit(sessionId: string): SessionTelemetry {
     const telemetry = this.database.getTelemetry(sessionId);
+    if (TERMINAL.has(telemetry.status)) this.resolveTerminalWaiters(sessionId, telemetry.status);
     try { this.progressSink?.(telemetry); } catch { /* webview may not be ready */ }
     return telemetry;
+  }
+
+  private resolveTerminalWaiters(sessionId: string, status: SessionStatus): void {
+    const waiters = this.terminalWaiters.get(sessionId);
+    if (!waiters?.length) return;
+    this.terminalWaiters.delete(sessionId);
+    for (const resolve of waiters) resolve(status);
+  }
+
+  /** Resolves when session reaches a terminal status, or run is cancelled. Safety net polls every 1s. */
+  private waitForSessionTerminal(sessionId: string, runId: string): Promise<SessionStatus> {
+    const current = this.database.getTelemetry(sessionId).status;
+    if (TERMINAL.has(current)) return Promise.resolve(current);
+    if (this.cancelledRuns.has(runId) || this.database.isRunCancelled(runId)) return Promise.resolve("cancelled");
+
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (status: SessionStatus) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearInterval(timer);
+        const list = this.terminalWaiters.get(sessionId);
+        if (list) {
+          const next = list.filter((fn) => fn !== onTerminal);
+          if (next.length) this.terminalWaiters.set(sessionId, next);
+          else this.terminalWaiters.delete(sessionId);
+        }
+        resolve(status);
+      };
+      const onTerminal = (status: SessionStatus) => finish(status);
+      const bucket = this.terminalWaiters.get(sessionId) ?? [];
+      bucket.push(onTerminal);
+      this.terminalWaiters.set(sessionId, bucket);
+
+      const timer = setInterval(() => {
+        if (this.cancelledRuns.has(runId) || this.database.isRunCancelled(runId)) {
+          finish("cancelled");
+          return;
+        }
+        const status = this.database.getTelemetry(sessionId).status;
+        if (TERMINAL.has(status)) finish(status);
+      }, 1_000);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    });
+  }
+
+  private sessionInputFromDb(sessionId: string): SubmitRunInput {
+    const ctx = this.database.getSessionRunContext(sessionId);
+    const prompts = this.database.getSessionPrompts(sessionId).map((prompt) => ({
+      promptText: prompt.prompt_text,
+      week: prompt.week,
+      scheduleDate: prompt.schedule_date,
+      themeColumn: prompt.theme_column,
+    }));
+    const tele = this.database.getTelemetry(sessionId);
+    return {
+      prompts,
+      model: ctx.model,
+      mode: ctx.runMode,
+      format: ctx.format,
+      quality: ctx.quality,
+      ...(ctx.referenceFileIds.length ? { referenceImageFileIds: ctx.referenceFileIds } : {}),
+      parentRunId: tele.parentRunId ?? undefined,
+      waveIndex: tele.waveIndex ?? undefined,
+      waveCount: tele.waveCount ?? undefined,
+    };
   }
 
   private async withRotatingKey<T>(operation: (client: OpenAIClient, keyId: string) => Promise<T>): Promise<{ result: T; keyId: string }> {
@@ -113,7 +203,9 @@ export class BatchEngine {
       const candidate = keys[index];
       if (!candidate) continue;
       try {
-        const result = await operation(new OpenAIClient(candidate.key), candidate.id);
+        const client = new OpenAIClient(candidate.key);
+        const result = await operation(client, candidate.id);
+        if (client.lastRateHeaders) this.database.setHeaderProbe(client.lastRateHeaders);
         this.nextKeyIndex = (index + 1) % keys.length;
         return { result, keyId: candidate.id };
       } catch (error) {
@@ -145,8 +237,10 @@ export class BatchEngine {
   async uploadReference(bytes: Uint8Array, filename: string, mimeType: string): Promise<{ fileId: string }> {
     const cleanName = basename(filename).replace(/[^a-zA-Z0-9._-]/g, "_");
     if (!cleanName || cleanName.length > 180) throw new Error("Choose a reference image with a valid filename.");
-    if (!REFERENCE_MIME_TYPES.has(mimeType)) throw new Error("Reference images must be PNG, JPEG, or WebP.");
-    if (bytes.byteLength < 1 || bytes.byteLength > REFERENCE_LIMIT_BYTES) throw new Error("Reference images must be 20 MB or smaller.");
+    if (!REFERENCE_MIME_TYPES.has(mimeType)) throw new Error("Use PNG, JPEG, or WebP.");
+    if (bytes.byteLength < 1 || bytes.byteLength > REFERENCE_LIMIT_BYTES) {
+      throw new Error("Each reference can be up to 50 MB.");
+    }
     const selected = await this.withRotatingKey((client) => client.uploadReferenceImage(bytes, cleanName, mimeType));
     const localPath = join(this.referenceDirectory, `${selected.result}-${cleanName}`);
     await Bun.write(localPath, bytes);
@@ -168,26 +262,178 @@ export class BatchEngine {
   }
 
   async submit(rawInput: SubmitRunInput): Promise<SessionTelemetry> {
-    const input = validateInput(rawInput);
-    for (const fileId of input.referenceImageFileIds ?? []) {
+    const base = validateInput(rawInput);
+    for (const fileId of base.referenceImageFileIds ?? []) {
       if (!this.database.getReferenceFile(fileId)) throw new Error("Upload the missing reference image again before generating.");
     }
     const fxRate = await this.fx.getUsdPkrRate();
+    const settingsWave = this.database.getAppSettings().waveSize;
+    const waveSize = base.mode === "batch"
+      ? (base.waveSize !== undefined ? base.waveSize : settingsWave)
+      : 0;
+    const waves = base.mode === "batch" ? chunkPrompts(base.prompts, waveSize) : [base.prompts];
     const estimate = this.estimate({
-      model: input.model, promptCount: input.prompts.length, mode: input.mode,
-      quality: input.quality, format: input.format, referenceCount: input.referenceImageFileIds?.length ?? 0,
+      model: base.model, promptCount: base.prompts.length, mode: base.mode,
+      quality: base.quality, format: base.format, referenceCount: base.referenceImageFileIds?.length ?? 0,
     }, fxRate);
+
+    if (base.mode === "batch" && waves.length > 1) {
+      const runId = base.parentRunId ?? crypto.randomUUID();
+      if (!base.parentRunId) {
+        this.database.createBatchRun({
+          runId, model: base.model, mode: base.mode, format: base.format, quality: base.quality,
+          waveSize, waveCount: waves.length, totalPrompts: base.prompts.length,
+          estimateUsd: estimate.costUsd, fxRate,
+        });
+      }
+      this.cancelledRuns.delete(runId);
+      const sessionIds: string[] = [];
+      const waveInputs: SubmitRunInput[] = [];
+      for (let index = 0; index < waves.length; index += 1) {
+        const chunk = waves[index]!;
+        const sessionId = crypto.randomUUID();
+        const waveInput: SubmitRunInput = {
+          ...base,
+          prompts: chunk,
+          parentRunId: runId,
+          waveIndex: index,
+          waveCount: waves.length,
+          waveSize,
+        };
+        this.database.createSession(sessionId, waveInput, fxRate, {
+          costUsd: this.pricing.estimateUsd({
+            model: base.model, promptCount: chunk.length, mode: base.mode,
+            quality: base.quality, format: base.format, referenceCount: base.referenceImageFileIds?.length ?? 0,
+          }),
+          pricingVersion: estimate.pricingVersion,
+        }, { parentRunId: runId, waveIndex: index, waveCount: waves.length });
+        if (index > 0) {
+          this.database.updateSession(sessionId, {
+            status: "pending",
+            message: `Queued as wave ${index + 1} of ${waves.length}.`,
+          });
+        }
+        sessionIds.push(sessionId);
+        waveInputs.push(waveInput);
+        void this.diagnostics?.write("session_created", {
+          sessionId, parentRunId: runId, waveIndex: index, waveCount: waves.length,
+          mode: base.mode, promptCount: chunk.length, referenceCount: base.referenceImageFileIds?.length ?? 0,
+        });
+      }
+      this.activeRunWave.set(runId, 0);
+      this.database.updateBatchRun(runId, { status: "processing", message: `Wave 1 of ${waves.length}` });
+      queueMicrotask(() => void this.runWaveChain(runId, sessionIds, waveInputs));
+      return this.emit(sessionIds[0]!);
+    }
+
     const sessionId = crypto.randomUUID();
-    this.database.createSession(sessionId, input, fxRate, { costUsd: estimate.costUsd, pricingVersion: estimate.pricingVersion });
-    void this.diagnostics?.write("session_created", { sessionId, diagnosticId: this.database.getTelemetry(sessionId).diagnosticId, mode: input.mode, format: input.format, quality: input.quality, promptCount: input.prompts.length, referenceCount: input.referenceImageFileIds?.length ?? 0 });
-    queueMicrotask(() => void (input.mode === "direct" ? this.runDirect(sessionId, input) : this.submitRemoteBatch(sessionId, input)));
+    const parentRunId = base.parentRunId ?? (base.mode === "batch" ? crypto.randomUUID() : undefined);
+    if (parentRunId && !base.parentRunId && base.mode === "batch") {
+      this.database.createBatchRun({
+        runId: parentRunId, model: base.model, mode: base.mode, format: base.format, quality: base.quality,
+        waveSize: 0, waveCount: 1, totalPrompts: base.prompts.length, estimateUsd: estimate.costUsd, fxRate,
+      });
+    }
+    this.database.createSession(sessionId, base, fxRate, { costUsd: estimate.costUsd, pricingVersion: estimate.pricingVersion }, {
+      parentRunId: parentRunId ?? null,
+      waveIndex: base.waveIndex ?? (parentRunId ? 0 : null),
+      waveCount: base.waveCount ?? (parentRunId ? 1 : null),
+    });
+    void this.diagnostics?.write("session_created", {
+      sessionId, diagnosticId: this.database.getTelemetry(sessionId).diagnosticId,
+      mode: base.mode, format: base.format, quality: base.quality,
+      promptCount: base.prompts.length, referenceCount: base.referenceImageFileIds?.length ?? 0,
+      parentRunId: parentRunId ?? null,
+    });
+    queueMicrotask(() => void (base.mode === "direct" ? this.runDirect(sessionId, base) : this.submitRemoteBatch(sessionId, base)));
     return this.emit(sessionId);
+  }
+
+  private async runWaveChain(runId: string, sessionIds: string[], waveInputs: SubmitRunInput[]): Promise<void> {
+    if (this.runningWaveChains.has(runId)) return;
+    this.runningWaveChains.add(runId);
+    try {
+      for (let index = 0; index < sessionIds.length; index += 1) {
+        if (this.cancelledRuns.has(runId) || this.database.isRunCancelled(runId)) break;
+        const sessionId = sessionIds[index]!;
+        const tele = this.database.getTelemetry(sessionId);
+        this.activeRunWave.set(runId, index);
+        const rolling = this.database.aggregateRunUsage(runId);
+        this.database.updateBatchRun(runId, {
+          status: "processing",
+          message: `Wave ${index + 1} of ${sessionIds.length}`,
+          completedCount: rolling.completed,
+          costUsd: rolling.costUsd,
+        });
+
+        if (!TERMINAL.has(tele.status)) {
+          if (!this.database.getExternalBatchId(sessionId)) {
+            const input = waveInputs[index] ?? this.sessionInputFromDb(sessionId);
+            await this.submitRemoteBatch(sessionId, input);
+          }
+          await this.waitForSessionTerminal(sessionId, runId);
+        }
+
+        if (this.cancelledRuns.has(runId) || this.database.isRunCancelled(runId)) break;
+      }
+
+      if (this.cancelledRuns.has(runId) || this.database.isRunCancelled(runId)) {
+        for (const sessionId of sessionIds) {
+          const status = this.database.getTelemetry(sessionId).status;
+          if (status === "pending") {
+            this.database.cancelOpenPrompts(sessionId);
+            this.database.updateSession(sessionId, { status: "cancelled", message: "Cancelled before wave started." });
+            this.emit(sessionId);
+          }
+        }
+        const agg = this.database.aggregateRunUsage(runId);
+        this.database.updateBatchRun(runId, {
+          status: "cancelled", message: "Cancelled. Saved waves are kept.",
+          completedCount: agg.completed, costUsd: agg.costUsd,
+        });
+        return;
+      }
+
+      const agg = this.database.aggregateRunUsage(runId);
+      const status: SessionStatus = agg.failed > 0 ? "partial" : "completed";
+      this.database.updateBatchRun(runId, {
+        status,
+        message: status === "completed" ? `Saved ${agg.completed} images.` : `Saved ${agg.completed}; some need retry.`,
+        completedCount: agg.completed,
+        costUsd: agg.costUsd,
+      });
+    } finally {
+      this.runningWaveChains.delete(runId);
+      this.activeRunWave.delete(runId);
+    }
+  }
+
+  /** Restart wave submission after app restart when later waves were only queued. */
+  private async recoverPendingWaveChains(): Promise<void> {
+    try {
+      const runs = this.database.listRuns().filter((run) => run.status === "processing" || run.status === "pending");
+      for (const run of runs) {
+        if (this.runningWaveChains.has(run.runId) || run.waveCount <= 1) continue;
+        const sessionIds = this.database.listSessionIdsForRun(run.runId);
+        if (sessionIds.length < 2) continue;
+        const needsWork = sessionIds.some((id) => {
+          const status = this.database.getTelemetry(id).status;
+          return !TERMINAL.has(status);
+        });
+        if (!needsWork) continue;
+        void this.diagnostics?.write("wave_chain_recover", { runId: run.runId, sessions: sessionIds.length });
+        void this.runWaveChain(run.runId, sessionIds, sessionIds.map((id) => this.sessionInputFromDb(id)));
+      }
+    } catch {
+      // Recovery is best-effort; normal poll still advances active remote batches.
+    }
   }
 
   private async runDirect(sessionId: string, input: SubmitRunInput): Promise<void> {
     if (this.database.isSessionCancelled(sessionId)) return;
     const controller = new AbortController();
     this.abortControllers.set(sessionId, controller);
+    this.database.setSessionPhase(sessionId, "generating", { submitted: true });
     this.database.updateSession(sessionId, { status: "processing", message: "Generating 0 of " + input.prompts.length + "." });
     this.emit(sessionId);
     const prompts = this.database.getSessionPrompts(sessionId);
@@ -200,6 +446,7 @@ export class BatchEngine {
         if (!this.database.markPromptProcessing(prompt.prompt_id)) continue;
         try {
           const selected = await this.withRotatingKey((client) => client.generateOne(input, index, controller.signal));
+          this.noteRateHeaders(selected.result);
           if (controller.signal.aborted || this.database.isSessionCancelled(sessionId)) return;
           this.database.assignSessionKey(sessionId, selected.keyId);
           const costUsd = this.usageCost(selected.result.inputTokens, selected.result.outputTokens, "direct");
@@ -234,6 +481,7 @@ export class BatchEngine {
       if (this.database.isSessionCancelled(sessionId)) return;
       const aggregate = this.database.aggregatePromptUsage(sessionId);
       const status: SessionStatus = aggregate.completed === input.prompts.length ? "completed" : aggregate.completed > 0 ? "partial" : "failed";
+      this.database.setSessionPhase(sessionId, status === "completed" ? "done" : "error", { persistFinished: true });
       this.database.updateSession(sessionId, {
         status, message: status === "completed" ? `Saved ${aggregate.completed} images.` :
           status === "partial" ? `Saved ${aggregate.completed}; ${aggregate.failed} need retry.` : "No images were generated.",
@@ -252,6 +500,7 @@ export class BatchEngine {
   private async submitRemoteBatch(sessionId: string, input: SubmitRunInput): Promise<void> {
     if (this.database.isSessionCancelled(sessionId)) return;
     try {
+      this.database.setSessionPhase(sessionId, "waiting_batch", { submitted: true });
       const selected = await this.withRotatingKey((client) => client.submitBatch(input));
       if (this.database.isSessionCancelled(sessionId)) {
         void new OpenAIClient((await this.keyVault.keyById(selected.keyId)) ?? "").cancelBatch(selected.result.id).catch(() => undefined);
@@ -267,6 +516,7 @@ export class BatchEngine {
       const safe = sanitizedError(error);
       void this.diagnostics?.write("batch_submit_error", { sessionId, ...safe });
       for (const prompt of this.database.getSessionPrompts(sessionId)) this.database.failPrompt(prompt.prompt_id, safe);
+      this.database.setSessionPhase(sessionId, "error");
       this.database.updateSession(sessionId, { status: "failed", message: safe.message, lastError: safe });
       await this.cleanupRemoteReferences(sessionId);
     }
@@ -310,6 +560,7 @@ export class BatchEngine {
         const attempt = this.pollAttempt(sessionId);
         const delay = Math.min(300_000, 15_000 * (2 ** Math.min(attempt, 4)));
         const failedSuffix = failedRemote > 0 ? ` (${failedRemote} failed)` : "";
+        this.database.setSessionPhase(sessionId, "waiting_batch");
         this.database.updateSession(sessionId, {
           status: "processing",
           message: `OpenAI batch ${batch.status.replaceAll("_", " ")} · ${completedRemote}/${totalRemote} requests finished${failedSuffix}.`,
@@ -372,6 +623,7 @@ export class BatchEngine {
       void this.diagnostics?.write("batch_download_start", {
         sessionId, fileId: batch.output_file_id, remoteStatus: batch.status,
       });
+      this.database.setSessionPhase(sessionId, "downloading", { remoteCompleted: true, downloadStarted: true });
       this.database.updateSession(sessionId, {
         status: "processing",
         message: "Batch completed; downloading results…",
@@ -381,6 +633,7 @@ export class BatchEngine {
 
       try {
         await this.withRotatingKey((client) => client.downloadFileToPath(batch.output_file_id!, outputPath));
+        this.database.setSessionPhase(sessionId, "saving", { downloadFinished: true });
         void this.diagnostics?.write("batch_download_ok", {
           sessionId, fileId: batch.output_file_id, bytes: existsSync(outputPath) ? statSync(outputPath).size : 0,
         });
@@ -473,6 +726,9 @@ export class BatchEngine {
 
     const nextAggregate = this.database.aggregatePromptUsage(sessionId);
     const status = batchStatus(batch.status, nextAggregate.completed, nextAggregate.failed, current.totalPrompts);
+    this.database.setSessionPhase(sessionId, TERMINAL.has(status) ? (status === "completed" ? "done" : "error") : "waiting_batch", {
+      persistFinished: true, remoteCompleted: true,
+    });
     this.database.updateSession(sessionId, {
       status,
       message: status === "processing" ? `Batch ${batch.status.replaceAll("_", " ")}; checking again automatically.` :
@@ -484,6 +740,14 @@ export class BatchEngine {
       nextPollAt: null, lastError: null,
     });
     this.emit(sessionId);
+    const parentRunId = this.database.getTelemetry(sessionId).parentRunId;
+    if (parentRunId && TERMINAL.has(status)) {
+      const agg = this.database.aggregateRunUsage(parentRunId);
+      this.database.updateBatchRun(parentRunId, {
+        completedCount: agg.completed,
+        costUsd: agg.costUsd,
+      });
+    }
 
     if (TERMINAL.has(status)) {
       void this.diagnostics?.write("batch_terminal", {
@@ -501,9 +765,31 @@ export class BatchEngine {
   async cancel(sessionId: string): Promise<SessionTelemetry> {
     const current = this.database.getTelemetry(sessionId);
     if (TERMINAL.has(current.status)) return current;
+    if (current.parentRunId) {
+      this.cancelledRuns.add(current.parentRunId);
+      this.database.updateBatchRun(current.parentRunId, {
+        status: "cancelled",
+        message: "Cancelled. Saved waves are kept.",
+        ...(() => {
+          const agg = this.database.aggregateRunUsage(current.parentRunId!);
+          return { completedCount: agg.completed, costUsd: agg.costUsd };
+        })(),
+      });
+      for (const siblingId of this.database.listSessionIdsForRun(current.parentRunId)) {
+        const sibling = this.database.getTelemetry(siblingId);
+        if (sibling.status === "pending" || siblingId === sessionId) {
+          this.database.cancelOpenPrompts(siblingId);
+          if (sibling.status === "pending") {
+            this.database.updateSession(siblingId, { status: "cancelled", message: "Cancelled before wave started.", nextPollAt: null });
+            this.emit(siblingId);
+          }
+        }
+      }
+    }
     this.database.cancelOpenPrompts(sessionId);
+    this.database.setSessionPhase(sessionId, "done");
     this.database.updateSession(sessionId, { status: "cancelled", message: "Cancelled.", nextPollAt: null });
-    void this.diagnostics?.write("session_cancelled", { sessionId, diagnosticId: current.diagnosticId });
+    void this.diagnostics?.write("session_cancelled", { sessionId, diagnosticId: current.diagnosticId, parentRunId: current.parentRunId });
     this.abortControllers.get(sessionId)?.abort();
     this.emit(sessionId);
     const externalId = this.database.getExternalBatchId(sessionId);
@@ -514,16 +800,48 @@ export class BatchEngine {
     return this.emit(sessionId);
   }
 
-  async retryFailed(sessionId: string): Promise<SessionTelemetry> {
-    const prompts = this.database.listRetryablePrompts(sessionId);
-    if (prompts.length === 0) throw new Error("This session has no missing prompts to retry.");
-    const ctx = this.database.getSessionRunContext(sessionId);
+  async resumeRun(params: { runId?: string; sessionId?: string }): Promise<SessionTelemetry> {
+    let prompts: Array<{ promptText: string; week: string; scheduleDate: string; themeColumn: string }> = [];
+    let ctx: ReturnType<AppDatabase["getSessionRunContext"]> | null = null;
+    let parentRunId: string | undefined;
+    if (params.runId) {
+      const run = this.database.getBatchRun(params.runId);
+      if (!run) throw new Error("That run was not found.");
+      prompts = this.database.listIncompletePromptsForRun(params.runId);
+      parentRunId = params.runId;
+      const sampleSession = this.database.listSessionIdsForRun(params.runId)[0];
+      if (!sampleSession) throw new Error("That run has no sessions to resume from.");
+      ctx = this.database.getSessionRunContext(sampleSession);
+    } else if (params.sessionId) {
+      prompts = this.database.listIncompletePromptsForSession(params.sessionId);
+      ctx = this.database.getSessionRunContext(params.sessionId);
+      parentRunId = this.database.getTelemetry(params.sessionId).parentRunId ?? undefined;
+    } else {
+      throw new Error("Choose a run or session to resume.");
+    }
+    if (prompts.length === 0) throw new Error("Nothing left to resume. All prompts already have images or were completed.");
+    if (parentRunId) {
+      this.cancelledRuns.delete(parentRunId);
+      this.database.updateBatchRun(parentRunId, {
+        status: "processing",
+        message: `Resuming ${prompts.length} remaining prompt${prompts.length === 1 ? "" : "s"}.`,
+      });
+    }
     const referenceImageFileIds: string[] = [];
     for (const fileId of ctx.referenceFileIds) referenceImageFileIds.push(await this.reuploadReference(fileId));
+    void this.diagnostics?.write("resume_new_batch", {
+      parentRunId: parentRunId ?? null, remaining: prompts.length, sessionId: params.sessionId ?? null,
+    });
     return this.submit({
       prompts, model: ctx.model, mode: ctx.runMode, format: ctx.format, quality: ctx.quality,
+      waveSize: parentRunId ? this.database.getBatchRun(parentRunId)?.wave_size : this.database.getAppSettings().waveSize,
+      parentRunId,
       ...(referenceImageFileIds.length ? { referenceImageFileIds } : {}),
     });
+  }
+
+  async retryFailed(sessionId: string): Promise<SessionTelemetry> {
+    return this.resumeRun({ sessionId });
   }
 
   private async reuploadReference(fileId: string): Promise<string> {

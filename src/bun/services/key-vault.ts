@@ -93,6 +93,66 @@ export class KeyVault {
     return { id, label: label.trim() || "OpenAI key", isActive: true };
   }
 
+  async setAdminKey(key: string, projectId?: string): Promise<void> {
+    if (!key.trim() || key.length < 20) throw new Error("Enter a valid OpenAI Admin API key.");
+    const client = new OpenAIClient(key.trim());
+    try {
+      await client.validateAdminKey();
+    } catch {
+      throw new Error("That Admin API key could not access organization projects. Create an Admin key in the OpenAI dashboard.");
+    }
+    this.database.setAdminEncryptedKey(await this.encrypt(key.trim()), `••••${key.trim().slice(-4)}`);
+    if (projectId?.trim()) this.database.setAdminProjectId(projectId.trim());
+    this.decryptedKeyCache.set("admin", key.trim());
+  }
+
+  clearAdminKey(): void {
+    this.database.setAdminEncryptedKey(null, null);
+    this.database.setAdminProjectId(null);
+    this.database.setAdminRateLimits(null, null);
+    this.decryptedKeyCache.delete("admin");
+  }
+
+  async getAdminKey(): Promise<string | null> {
+    const cached = this.decryptedKeyCache.get("admin");
+    if (cached) return cached;
+    const row = this.database.getAdminConfigRow();
+    if (!row.encrypted_key) return null;
+    const key = await this.decrypt(row.encrypted_key);
+    this.decryptedKeyCache.set("admin", key);
+    return key;
+  }
+
+  async refreshAdminRateLimits(): Promise<void> {
+    const key = await this.getAdminKey();
+    if (!key) {
+      this.database.setAdminRateLimits(null, "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works.");
+      return;
+    }
+    const projectId = this.database.getAdminConfigRow().project_id;
+    if (!projectId) {
+      this.database.setAdminRateLimits(null, "Add a Project ID so rate limits can be loaded.");
+      return;
+    }
+    try {
+      const snapshot = await new OpenAIClient(key).listProjectRateLimits(projectId);
+      if (!snapshot) {
+        this.database.setAdminRateLimits(null, "No gpt-image rate limits found for this project.");
+        return;
+      }
+      this.database.setAdminRateLimits(snapshot, null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 200) : "Could not load rate limits.";
+      this.database.setAdminRateLimits(null, message);
+    }
+  }
+
+  async listAdminProjects(): Promise<Array<{ id: string; name: string }>> {
+    const key = await this.getAdminKey();
+    if (!key) throw new Error("Add an Admin API key first.");
+    return new OpenAIClient(key).listProjects();
+  }
+
   listSafe() {
     return this.database.listKeyStats();
   }

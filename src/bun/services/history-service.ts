@@ -245,6 +245,27 @@ export class HistoryService {
     return destination;
   }
 
+  revealAsset(assetId: string): string {
+    const asset = this.database.getAsset(assetId);
+    if (!asset) throw new Error("History image was not found.");
+    const source = this.assertManagedPath(asset.file_path);
+    if (!existsSync(source)) throw new Error("The stored image file is missing.");
+    Bun.spawn(["explorer.exe", `/select,${source}`], { stdout: "ignore", stderr: "ignore" });
+    return source;
+  }
+
+  revealSessionFolder(sessionId: string): string {
+    if (typeof sessionId !== "string" || !sessionId.trim()) throw new Error("Session was not found.");
+    const directory = resolve(join(this.historyDirectory, sessionId));
+    const root = resolve(this.historyDirectory).toLowerCase();
+    if (directory.toLowerCase() !== root && !directory.toLowerCase().startsWith(`${root}\\`)) {
+      throw new Error("Session folder is outside the managed history directory.");
+    }
+    mkdirSync(directory, { recursive: true });
+    Bun.spawn(["explorer.exe", directory], { stdout: "ignore", stderr: "ignore" });
+    return directory;
+  }
+
   deletePrompt(promptId: string): { deletedAssets: number } {
     const result = this.database.deleteHistoryPrompt(promptId);
     for (const filePath of result.filePaths) {

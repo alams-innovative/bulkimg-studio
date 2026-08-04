@@ -1,6 +1,7 @@
 import { BrowserView, BrowserWindow, Utils } from "electrobun/bun";
 import { join } from "node:path";
-import type { AppRPC, BrandTheme } from "../shared/contracts";
+import type { AdminConfigView, AppRPC, BrandTheme, RateLimitHeaderProbe, RateLimitSnapshot } from "../shared/contracts";
+import { APP_LIMITS } from "../shared/contracts";
 import { AppDatabase } from "./database";
 import { BatchEngine } from "./services/batch-engine";
 import { ExportService } from "./services/export-service";
@@ -13,12 +14,12 @@ import { pickOpenFile } from "./services/windows-native";
 import { cleanupStaleTemporaryFiles, DiagnosticLog } from "./services/diagnostics";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.0-beta supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.0.1-beta supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.0-beta",
+  version: "1.0.1-beta",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -37,6 +38,27 @@ async function readJson<T>(paths: string[], fallback: T): Promise<T> {
   return fallback;
 }
 
+function adminView(database: AppDatabase): AdminConfigView {
+  const row = database.getAdminConfigRow();
+  let rateLimits: RateLimitSnapshot | null = null;
+  if (row.rate_limits_json) {
+    try { rateLimits = JSON.parse(row.rate_limits_json) as RateLimitSnapshot; } catch { rateLimits = null; }
+  }
+  return {
+    configured: Boolean(row.encrypted_key),
+    projectId: row.project_id,
+    keyHint: row.key_hint,
+    rateLimits,
+    lastError: row.last_error,
+  };
+}
+
+function headerProbe(database: AppDatabase): RateLimitHeaderProbe | null {
+  const row = database.getAdminConfigRow();
+  if (!row.header_probe_json) return null;
+  try { return JSON.parse(row.header_probe_json) as RateLimitHeaderProbe; } catch { return null; }
+}
+
 const assetRoots = [
   join(process.cwd(), "assets"),
   join(process.cwd(), "..", "Resources", "app", "views", "assets"),
@@ -45,7 +67,7 @@ const assetRoots = [
 const dataDirectory = Utils.paths.userData;
 const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
-void diagnosticLog.write("startup", { cleanedFiles, version: "1.0.0-beta" });
+void diagnosticLog.write("startup", { cleanedFiles, version: "1.0.1-beta" });
 const database = new AppDatabase(dataDirectory);
 const keyVault = new KeyVault(database, dataDirectory);
 const fxService = new FxService(database);
@@ -66,17 +88,35 @@ const models = await readJson(assetRoots.map((root) => join(root, "config", "mod
   }],
 });
 
+const ADMIN_WARNING = "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works with your normal API keys.";
+
 const rpc = BrowserView.defineRPC<AppRPC>({
   maxRequestTime: 120_000,
   handlers: {
     requests: {
-      getBootstrap: async () => ({
-        brand,
-        models,
-        keyCount: keyVault.listSafe().filter((key) => key.isActive).length,
-        platform: `${process.platform}-${process.arch}`,
-        fxRate: await fxService.getUsdPkrRate(),
-      }),
+      getBootstrap: async () => {
+        const admin = adminView(database);
+        return {
+          brand,
+          models,
+          keyCount: keyVault.listSafe().filter((key) => key.isActive).length,
+          platform: `${process.platform}-${process.arch}`,
+          fxRate: await fxService.getUsdPkrRate(),
+          settings: database.getAppSettings(),
+          admin,
+          adminWarning: admin.configured ? null : ADMIN_WARNING,
+          rateHeaderProbe: headerProbe(database),
+          limits: {
+            maxReferences: APP_LIMITS.maxReferences,
+            maxReferenceBytes: APP_LIMITS.maxReferenceBytes,
+            maxPromptChars: APP_LIMITS.maxPromptChars,
+            directPromptLimit: APP_LIMITS.directPromptLimit,
+            batchPromptLimit: APP_LIMITS.batchPromptLimit,
+          },
+        };
+      },
+      getSettings: () => database.getAppSettings(),
+      setSettings: (partial) => database.setAppSettings(partial),
       importCSV: ({ csvText, sourceName }) => parseCSV(csvText, sourceName),
       parseManualPrompts: ({ text }) => parseManualPrompts(text),
       pickCsvFile: async () => {
@@ -98,6 +138,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
       cancelBatchRun: ({ sessionId }) => batchEngine.cancel(sessionId),
       retryFailedPrompts: ({ sessionId }) => batchEngine.retryFailed(sessionId),
+      resumeRun: (params) => batchEngine.resumeRun(params),
       estimateRunCost: async (input) => batchEngine.estimate(input, await fxService.getUsdPkrRate()),
       uploadReferenceImage: async ({ dataBase64, filename, mimeType }) => {
         const bytes = Buffer.from(dataBase64, "base64");
@@ -116,10 +157,37 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         keyVault.invalidateKey(id);
         return { success: true };
       },
+      setAdminKey: async ({ key, projectId }) => {
+        await keyVault.setAdminKey(key, projectId);
+        if (projectId || database.getAdminConfigRow().project_id) await keyVault.refreshAdminRateLimits();
+        return adminView(database);
+      },
+      clearAdminKey: () => {
+        keyVault.clearAdminKey();
+        return adminView(database);
+      },
+      setAdminProjectId: async ({ projectId }) => {
+        database.setAdminProjectId(projectId.trim());
+        await keyVault.refreshAdminRateLimits();
+        return adminView(database);
+      },
+      refreshRateLimits: async () => {
+        await keyVault.refreshAdminRateLimits();
+        return adminView(database);
+      },
+      listAdminProjects: () => keyVault.listAdminProjects(),
       listSessions: () => database.listSessions(),
+      listRuns: () => database.listRuns(),
+      getRunDetail: ({ runId }) => {
+        const detail = database.getRunDetail(runId);
+        if (!detail) throw new Error("Run was not found.");
+        return detail;
+      },
       listHistory: () => historyService.list(),
       getHistoryImage: async ({ assetId }) => ({ dataUrl: await historyService.imageDataUrl(assetId) }),
       downloadHistoryAsset: ({ assetId }) => ({ filePath: historyService.download(assetId) }),
+      revealHistoryAsset: ({ assetId }) => ({ filePath: historyService.revealAsset(assetId) }),
+      revealHistorySessionFolder: ({ sessionId }) => ({ directory: historyService.revealSessionFolder(sessionId) }),
       deleteHistoryItem: ({ promptId }) => {
         historyService.deletePrompt(promptId);
         return { success: true };
@@ -129,6 +197,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       revealExportsFolder: () => ({ directory: exportService.revealFolder() }),
       exportSessionZip: async ({ sessionId, pickPath }) => ({
         filePath: await exportService.export(sessionId, { pickPath: Boolean(pickPath) }),
+      }),
+      exportRunZip: async ({ runId, pickPath }) => ({
+        filePath: await exportService.exportRun(runId, { pickPath: Boolean(pickPath) }),
       }),
       getDiagnosticLogs: ({ limit, query, event }) => diagnosticLog.read({ limit, query, event }),
       revealLogsFolder: () => {
@@ -158,8 +229,6 @@ const mainWindow = new BrowserWindow({
   rpc,
   frame: {
     width: DEFAULT_WINDOW_WIDTH,
-    // A one-pixel follow-up resize below makes Electrobun sync the webview to
-    // the Windows client area instead of treating the outer frame as content.
     height: DEFAULT_WINDOW_HEIGHT - 1,
     x: 40,
     y: 16,
@@ -169,8 +238,6 @@ batchEngine.startScheduler();
 
 setTimeout(() => mainWindow.setSize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT), 1_500);
 
-// Electrobun's native webview can become partially uncovered at very small
-// Windows sizes. Keep the responsive utility inside its tested desktop range.
 mainWindow.on("resize", (event: unknown) => {
   const size = (event as { data?: { width?: number; height?: number } }).data;
   if (typeof size?.width !== "number" || typeof size.height !== "number") return;

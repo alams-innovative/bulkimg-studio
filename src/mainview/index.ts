@@ -35,6 +35,7 @@ import {
   X,
 } from "lucide";
 import type {
+  AdminConfigView,
   ApiKeyStats,
   AppBootstrap,
   AppRPC,
@@ -44,9 +45,13 @@ import type {
   PromptGroup,
   PromptMatrix,
   RunMode,
+  RunSummary,
+  SessionDetail,
+  SessionPromptOutcome,
   SessionSummary,
   SessionTelemetry,
 } from "../shared/contracts";
+import { APP_LIMITS } from "../shared/contracts";
 import type { OutputFormatId } from "../shared/output-formats";
 
 const rpc = Electroview.defineRPC<AppRPC>({
@@ -118,6 +123,7 @@ const elements = {
   referenceStatus: byId("reference-status"),
   runButton: byId<HTMLButtonElement>("run-button"),
   cancelButton: byId<HTMLButtonElement>("cancel-button"),
+  resumeButton: byId<HTMLButtonElement>("resume-button"),
   manageKeys: byId<HTMLButtonElement>("manage-keys"),
   keysDialog: byId<HTMLDialogElement>("keys-dialog"),
   refreshKeys: byId<HTMLButtonElement>("refresh-keys"),
@@ -130,11 +136,18 @@ const elements = {
   keyLabel: byId<HTMLInputElement>("key-label"),
   apiKey: byId<HTMLInputElement>("api-key"),
   keyError: byId("key-error"),
+  adminForm: byId<HTMLFormElement>("admin-form"),
+  adminKey: byId<HTMLInputElement>("admin-key"),
+  adminProject: byId<HTMLInputElement>("admin-project"),
+  adminStatus: byId("admin-status"),
+  refreshLimits: byId<HTMLButtonElement>("refresh-limits"),
+  clearAdmin: byId<HTMLButtonElement>("clear-admin"),
   sessionStatus: byId("session-status"),
   sessionMessage: byId("session-message"),
   elapsed: byId("elapsed"),
+  eta: byId("eta"),
   progress: byId("progress"),
-  tokens: byId("tokens"),
+  progressBar: byId("progress-bar"),
   sessionCost: byId("session-cost"),
   exportButton: byId<HTMLButtonElement>("export-button"),
   retryButton: byId<HTMLButtonElement>("retry-button"),
@@ -143,8 +156,15 @@ const elements = {
   refreshHistory: byId<HTMLButtonElement>("refresh-history"),
   clearHistory: byId<HTMLButtonElement>("clear-history"),
   historySearch: byId<HTMLInputElement>("history-search"),
+  historyFilter: byId<HTMLSelectElement>("history-filter"),
   historyCount: byId("history-count"),
   historyList: byId("history-list"),
+  lightbox: byId("lightbox"),
+  lightboxImage: byId<HTMLImageElement>("lightbox-image"),
+  lightboxCaption: byId("lightbox-caption"),
+  lightboxClose: byId<HTMLButtonElement>("lightbox-close"),
+  lightboxPrev: byId<HTMLButtonElement>("lightbox-prev"),
+  lightboxNext: byId<HTMLButtonElement>("lightbox-next"),
   refreshExports: byId<HTMLButtonElement>("refresh-exports"),
   openExportsFolder: byId<HTMLButtonElement>("open-exports-folder"),
   exportList: byId("export-list"),
@@ -158,6 +178,11 @@ const elements = {
   matrixPage: byId("matrix-page"),
   railEstimate: byId("rail-estimate"),
   railPkr: byId("rail-pkr"),
+  waveControls: byId("wave-controls"),
+  waveSplit: byId<HTMLInputElement>("wave-split"),
+  waveSize: byId<HTMLInputElement>("wave-size"),
+  waveMath: byId("wave-math"),
+  rateLimitsLine: byId("rate-limits-line"),
   keySummary: byId("key-summary"),
   toast: byId("toast"),
   checkIconTemplate: byId("check-icon-template"),
@@ -175,6 +200,8 @@ let logsLines: string[] = [];
 let logsSearchTimer: number | null = null;
 let historyItems: HistoryItem[] = [];
 let historyImageObserver: IntersectionObserver | null = null;
+let lightboxItems: HistoryItem[] = [];
+let lightboxIndex = 0;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
 let referenceImages: ReferenceImage[] = [];
 let estimateTimer: number | null = null;
@@ -183,8 +210,111 @@ let activeKeyCount = 0;
 let matrixView: "list" | "cards" = localStorage.getItem("bulkimg-prompt-view") === "cards" ? "cards" : "list";
 let lastTelemetryStatus: SessionTelemetry["status"] | null = null;
 let selectionSyncToken = 0;
+let appLimits: {
+  maxReferences: number;
+  maxReferenceBytes: number;
+  maxPromptChars: number;
+  directPromptLimit: number;
+  batchPromptLimit: number;
+  defaultWaveSize: number;
+} = {
+  maxReferences: APP_LIMITS.maxReferences,
+  maxReferenceBytes: APP_LIMITS.maxReferenceBytes,
+  maxPromptChars: APP_LIMITS.maxPromptChars,
+  directPromptLimit: APP_LIMITS.directPromptLimit,
+  batchPromptLimit: APP_LIMITS.batchPromptLimit,
+  defaultWaveSize: APP_LIMITS.defaultWaveSize,
+};
 const PAGE_SIZE = 100;
-const REFERENCE_LIMIT = 4;
+
+function referenceLimit(): number {
+  return appLimits.maxReferences;
+}
+
+function referenceLimitBytes(): number {
+  return appLimits.maxReferenceBytes;
+}
+
+function directPromptLimit(): number {
+  return appLimits.directPromptLimit;
+}
+
+function effectiveWaveSize(): number {
+  if (currentMode() !== "batch" || !elements.waveSplit.checked) return 0;
+  const raw = Number(elements.waveSize.value);
+  if (!Number.isFinite(raw) || raw < 0) return 0;
+  return Math.min(appLimits.batchPromptLimit, Math.floor(raw));
+}
+
+function describeWaveMath(promptCount: number): string {
+  const size = effectiveWaveSize();
+  if (size <= 0 || promptCount <= 0) return promptCount ? `${promptCount} prompt${promptCount === 1 ? "" : "s"} → 1 batch` : "No prompts selected";
+  const full = Math.floor(promptCount / size);
+  const rem = promptCount % size;
+  const waves = full + (rem ? 1 : 0);
+  if (rem === 0) return `${promptCount} prompts → ${waves} wave${waves === 1 ? "" : "s"} of ${size}`;
+  if (full === 0) return `${promptCount} prompts → 1 wave of ${promptCount}`;
+  return `${promptCount} prompts → ${full} wave${full === 1 ? "" : "s"} of ${size} + 1 of ${rem}`;
+}
+
+function updateWaveUi(): void {
+  const batch = currentMode() === "batch";
+  elements.waveControls.classList.toggle("hidden", !batch);
+  elements.waveSize.disabled = !batch || !elements.waveSplit.checked;
+  elements.waveMath.textContent = batch ? describeWaveMath(selected.size) : "Direct mode does not use waves";
+}
+
+function formatEta(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 60_000) return `~${Math.max(1, Math.ceil(ms / 1000))}s`;
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `~${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `~${hours}h ${rest}m` : `~${hours}h`;
+}
+
+function formatRateLimits(admin: AdminConfigView | null): string {
+  if (!admin?.configured) {
+    return admin?.lastError
+      ? `Admin key error: ${admin.lastError}`
+      : "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works.";
+  }
+  const limits = admin.rateLimits;
+  if (!limits) {
+    return admin.projectId
+      ? `Admin key saved · project ${admin.projectId}. Limits not loaded yet — refresh limits.`
+      : "Admin key saved. Set a project ID and refresh limits.";
+  }
+  const ipm = limits.maxImagesPerMinute != null ? `${formatNumber(limits.maxImagesPerMinute)} images/min` : "images/min —";
+  const tpm = limits.maxTokensPerMinute != null ? `${formatNumber(limits.maxTokensPerMinute)} TPM` : "TPM —";
+  return `${limits.model}: ${ipm} · ${tpm}`;
+}
+
+function applyAdminView(admin: AdminConfigView): void {
+  elements.adminStatus.textContent = admin.configured
+    ? `Admin key ${admin.keyHint ?? "saved"}${admin.projectId ? ` · ${admin.projectId}` : ""}`
+    : "No Admin key — limits won’t show.";
+  if (admin.projectId && !elements.adminProject.value) elements.adminProject.value = admin.projectId;
+  elements.rateLimitsLine.textContent = formatRateLimits(admin);
+}
+
+function resumeConfirmMessage(): string {
+  return "Resume starts a new OpenAI batch for remaining prompts. Saved images stay. You do not need to re-import the CSV.";
+}
+
+async function startSessionPolling(sessionId: string): Promise<void> {
+  if (pollTimer !== null) window.clearInterval(pollTimer);
+  pollTimer = window.setInterval(async () => {
+    if (!session || session.sessionId !== sessionId) return;
+    try {
+      renderTelemetry(await app.rpc!.request.pollBatchStatus({ sessionId }));
+      await loadKeys();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "Could not refresh the run", true);
+    }
+  }, 10_000);
+}
 
 const slateStackIcons = {
   Archive,
@@ -396,9 +526,12 @@ function updateSelection(): void {
   const previousCount = elements.selectedCount.textContent;
   elements.selectedCount.textContent = String(count);
   if (previousCount !== String(count)) animateState(elements.selectedCount);
-  const overDirectLimit = currentMode() === "direct" && count > 4;
+  const overDirectLimit = currentMode() === "direct" && count > directPromptLimit();
   elements.runButton.disabled = count === 0 || overDirectLimit;
-  elements.runButton.querySelector("span")!.textContent = overDirectLimit ? "Choose up to 4" : count ? `Generate ${count}` : "Generate";
+  elements.runButton.querySelector("span")!.textContent = overDirectLimit
+    ? `Choose up to ${directPromptLimit()}`
+    : count ? `Generate ${count}` : "Generate";
+  updateWaveUi();
   if (estimateTimer !== null) window.clearTimeout(estimateTimer);
   if (count === 0) {
     elements.estimatedCost.textContent = "$0.00";
@@ -587,7 +720,11 @@ function renderTelemetry(next: SessionTelemetry): void {
   telemetry?.classList.remove("hidden");
   telemetry?.setAttribute("data-status", next.status);
   elements.sessionStatus.textContent = next.status.toUpperCase();
-  elements.sessionMessage.textContent = next.message;
+  const waveLabel = next.waveCount != null && next.waveIndex != null && next.waveCount > 1
+    ? ` · wave ${next.waveIndex + 1}/${next.waveCount}`
+    : "";
+  const phaseLabel = next.phase && next.phase !== "done" ? ` · ${next.phase.replaceAll("_", " ")}` : "";
+  elements.sessionMessage.textContent = `${next.message}${waveLabel}${phaseLabel}`;
   const active = next.status === "pending" || next.status === "processing";
   if (active) {
     startElapsedTicker(next.elapsedMs);
@@ -596,15 +733,20 @@ function renderTelemetry(next: SessionTelemetry): void {
     stopElapsedTicker();
     elements.elapsed.textContent = formatElapsed(next.elapsedMs);
   }
+  const pct = next.totalPrompts > 0 ? Math.min(100, Math.round((next.completedCount / next.totalPrompts) * 100)) : 0;
   elements.progress.textContent = `${next.completedCount} / ${next.totalPrompts}`;
-  elements.tokens.textContent = `${formatNumber(next.inputTokens)} in · ${formatNumber(next.outputTokens)} out`;
-  elements.sessionCost.textContent = `$${next.costUsd.toFixed(3)} · PKR ${next.costPkr.toFixed(2)}`;
+  elements.progressBar.style.width = `${pct}%`;
+  elements.eta.textContent = active ? formatEta(next.etaMs) : "—";
+  const estimate = Number.isFinite(next.estimateUsd) ? next.estimateUsd : 0;
+  elements.sessionCost.textContent = `$${next.costUsd.toFixed(3)} · est $${estimate.toFixed(3)} · PKR ${next.costPkr.toFixed(2)}`;
   elements.fxRate.textContent = `PKR ${next.fxRate.toFixed(2)}`;
   elements.exportButton.disabled = false;
   elements.cancelButton.disabled = !active;
-  const canRetry = next.retryableCount > 0 && ["partial", "failed"].includes(next.status);
-  elements.retryButton.classList.toggle("hidden", !canRetry);
-  elements.retryButton.disabled = !canRetry;
+  const canResume = next.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(next.status);
+  elements.retryButton.classList.toggle("hidden", !canResume);
+  elements.retryButton.disabled = !canResume;
+  elements.resumeButton.classList.toggle("hidden", !canResume);
+  elements.resumeButton.disabled = !canResume;
   if (pollTimer !== null && ["partial", "completed", "failed", "cancelled"].includes(next.status)) {
     window.clearInterval(pollTimer);
     pollTimer = null;
@@ -668,7 +810,7 @@ function referenceFileError(file: File): string | null {
   const mimeType = file.type || fallbackMimeType;
   if (!supportedTypes.has(mimeType)) return "Choose PNG, JPEG, or WebP reference images.";
   if (file.size === 0) return `${file.name || "That image"} is empty.`;
-  if (file.size > 20 * 1024 * 1024) return `${file.name || "That image"} is larger than 20 MB.`;
+  if (file.size > referenceLimitBytes()) return "Each reference can be up to 50 MB.";
   return null;
 }
 
@@ -682,13 +824,14 @@ function referenceMimeType(file: File): string {
 
 function renderReferenceImages(announcement?: string): void {
   const count = referenceImages.length;
+  const limit = referenceLimit();
   elements.referenceDock.classList.toggle("has-image", count > 0);
-  elements.referenceDock.disabled = count >= REFERENCE_LIMIT;
-  elements.referenceTitle.textContent = count === 0 ? "Add reference images" : count >= REFERENCE_LIMIT ? "References ready" : "Add another reference";
+  elements.referenceDock.disabled = count >= limit;
+  elements.referenceTitle.textContent = count === 0 ? "Add reference images" : count >= limit ? "References ready" : "Add another reference";
   elements.referenceHint.textContent = count === 0
-    ? "Choose, drop, or paste up to 4 images"
-    : count >= REFERENCE_LIMIT ? "Remove an image to add another" : "Click, drop, or press Ctrl+V to add more";
-  elements.referenceBadge.textContent = `${count}/${REFERENCE_LIMIT}`;
+    ? `Choose, drop, or paste up to ${limit} images · 50 MB each`
+    : count >= limit ? "Remove an image to add another" : "Click, drop, or press Ctrl+V to add more";
+  elements.referenceBadge.textContent = `${count}/${limit}`;
   elements.referenceList.classList.toggle("hidden", count === 0);
   elements.referenceList.innerHTML = referenceImages.map((reference, index) => `
     <div class="reference-item" role="listitem">
@@ -721,13 +864,14 @@ function renderReferenceImages(announcement?: string): void {
 }
 
 async function attachReferenceFiles(files: File[]): Promise<void> {
-  const remaining = REFERENCE_LIMIT - referenceImages.length;
+  const limit = referenceLimit();
+  const remaining = limit - referenceImages.length;
   if (remaining <= 0) {
-    showToast("Remove a reference image before adding another.", true);
+    showToast("You can attach at most 16 reference images.", true);
     return;
   }
   const accepted = files.slice(0, remaining);
-  if (files.length > accepted.length) showToast(`Only ${REFERENCE_LIMIT} reference images can be attached.`, true);
+  if (files.length > accepted.length) showToast("You can attach at most 16 reference images.", true);
   elements.referenceBadge.textContent = "Uploading";
   elements.referenceDock.setAttribute("aria-busy", "true");
   elements.referenceDock.disabled = true;
@@ -841,48 +985,76 @@ async function loadSessions(): Promise<void> {
   elements.sessionList.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="loader-circle"></i></span><strong>Loading sessions…</strong><small>Reading local run history.</small></div>';
   refreshIcons();
   try {
-    const sessions: SessionSummary[] = await app.rpc!.request.listSessions({});
-    elements.sessionList.innerHTML = sessions.length ? sessions.map((item) => `
-      <article class="data-row" data-session-id="${item.sessionId}">
-        <div><strong>${escapeHtml(item.sessionId.slice(0, 8))}</strong><span>${formatDate(item.startTime)}</span></div>
-        <div><span>Status</span><strong class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</strong></div>
-        <div><span>Output</span><strong>${escapeHtml(item.format)} · ${escapeHtml(item.quality)}</strong></div>
-        <div><span>Progress</span><strong>${item.completedCount} / ${item.totalPrompts}</strong></div>
-        <div class="session-actions">
-          <button class="secondary-button session-open" data-session-id="${item.sessionId}">Open</button>
-          ${item.runMode === "batch" && ["pending", "processing"].includes(item.status) ? `<button class="secondary-button session-check" data-session-id="${item.sessionId}">Check now</button>` : ""}
-          ${["pending", "processing"].includes(item.status) ? `<button class="secondary-button session-cancel" data-session-id="${item.sessionId}">Cancel</button>` : ""}
-          ${item.retryableCount > 0 && ["partial", "failed"].includes(item.status) ? `<button class="secondary-button session-retry" data-session-id="${item.sessionId}">Retry</button>` : ""}
-          ${["partial", "failed"].includes(item.status) ? `<button class="secondary-button session-diagnostic" data-diagnostic-id="${item.diagnosticId}">Copy ID</button>` : ""}
-          <button class="secondary-button session-export" data-session-id="${item.sessionId}">Export</button>
+    const [runs, sessions] = await Promise.all([
+      app.rpc!.request.listRuns({}).catch(() => [] as RunSummary[]),
+      app.rpc!.request.listSessions({}).catch(() => [] as SessionSummary[]),
+    ]);
+    const covered = new Set(runs.flatMap((run) => run.sessions.map((wave) => wave.sessionId)));
+    const orphans = sessions.filter((session) => !session.parentRunId || !covered.has(session.sessionId));
+    if (!runs.length && !orphans.length) {
+      elements.sessionList.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="clock-3"></i></span><strong>No sessions yet</strong><small>Completed and active runs will appear here.</small></div>';
+    } else {
+      const runHtml = runs.map((run) => {
+        const phaseBits = run.sessions.map((wave) => {
+          const label = wave.waveIndex != null ? `Wave ${wave.waveIndex + 1}` : wave.sessionId.slice(0, 8);
+          return `<article class="data-row wave-row session-row" data-session-id="${wave.sessionId}">
+            <div class="session-row-main">
+              <div><strong>${escapeHtml(label)}</strong><span>${formatDate(wave.startTime)}</span></div>
+              <div><span>Status</span><strong class="status-badge status-${escapeHtml(wave.status)}">${escapeHtml(wave.status)}</strong></div>
+              <div><span>Progress</span><strong>${wave.completedCount} / ${wave.totalPrompts}</strong></div>
+              <div><span>Cost</span><strong>$${wave.costUsd.toFixed(3)}</strong></div>
+              <div class="session-actions">
+                <button class="secondary-button session-detail" data-session-id="${wave.sessionId}">Details</button>
+                <button class="secondary-button session-live" data-session-id="${wave.sessionId}">Live</button>
+                ${wave.runMode === "batch" && ["pending", "processing"].includes(wave.status) ? `<button class="secondary-button session-check" data-session-id="${wave.sessionId}">Check now</button>` : ""}
+                ${["pending", "processing"].includes(wave.status) ? `<button class="secondary-button session-cancel" data-session-id="${wave.sessionId}">Cancel</button>` : ""}
+                ${wave.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(wave.status) ? `<button class="secondary-button session-resume" data-session-id="${wave.sessionId}">Resume</button>` : ""}
+                <button class="secondary-button session-export" data-session-id="${wave.sessionId}">Export</button>
+              </div>
+            </div>
+            <div class="session-detail-panel hidden" data-detail-for="${wave.sessionId}" hidden></div>
+          </article>`;
+        }).join("");
+        const canResumeRun = run.sessions.some((wave) => wave.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(wave.status));
+        return `<section class="run-group" data-run-id="${run.runId}">
+          <header class="run-group-head">
+            <div><strong>Run ${escapeHtml(run.runId.slice(0, 8))}</strong><span>${formatDate(run.startTime)} · ${escapeHtml(run.runMode)} · ${run.waveCount || 1} wave(s)</span></div>
+            <div class="run-group-stats">
+              <strong class="status-badge status-${escapeHtml(run.status)}">${escapeHtml(run.status)}</strong>
+              <span>${run.completedCount}/${run.totalPrompts}</span>
+              <span>$${run.costUsd.toFixed(3)} / est $${run.estimateUsd.toFixed(3)}</span>
+            </div>
+            <div class="session-actions">
+              ${canResumeRun ? `<button class="secondary-button run-resume" data-run-id="${run.runId}">Resume leftovers</button>` : ""}
+              <button class="secondary-button run-export" data-run-id="${run.runId}">Export run</button>
+            </div>
+          </header>
+          ${phaseBits || '<p class="empty-inline">No wave sessions yet.</p>'}
+        </section>`;
+      }).join("");
+      const orphanHtml = orphans.map((item) => `
+      <article class="data-row session-row" data-session-id="${item.sessionId}">
+        <div class="session-row-main">
+          <div><strong>${escapeHtml(item.sessionId.slice(0, 8))}</strong><span>${formatDate(item.startTime)}</span></div>
+          <div><span>Status</span><strong class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</strong></div>
+          <div><span>Output</span><strong>${escapeHtml(item.format)} · ${escapeHtml(item.quality)}</strong></div>
+          <div><span>Progress</span><strong>${item.completedCount} / ${item.totalPrompts}</strong></div>
+          <div class="session-actions">
+            <button class="secondary-button session-detail" data-session-id="${item.sessionId}">Details</button>
+            <button class="secondary-button session-live" data-session-id="${item.sessionId}">Live</button>
+            ${item.runMode === "batch" && ["pending", "processing"].includes(item.status) ? `<button class="secondary-button session-check" data-session-id="${item.sessionId}">Check now</button>` : ""}
+            ${["pending", "processing"].includes(item.status) ? `<button class="secondary-button session-cancel" data-session-id="${item.sessionId}">Cancel</button>` : ""}
+            ${item.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(item.status) ? `<button class="secondary-button session-resume" data-session-id="${item.sessionId}">Resume</button>` : ""}
+            ${["partial", "failed"].includes(item.status) ? `<button class="secondary-button session-diagnostic" data-diagnostic-id="${item.diagnosticId}">Copy ID</button>` : ""}
+            <button class="secondary-button session-export" data-session-id="${item.sessionId}">Export</button>
+          </div>
         </div>
-      </article>`).join("") : '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="clock-3"></i></span><strong>No sessions yet</strong><small>Completed and active runs will appear here.</small></div>';
-    enterVisibleItems(elements.sessionList, ".data-row");
-    elements.sessionList.querySelectorAll<HTMLButtonElement>(".session-open").forEach((button) => button.addEventListener("click", async () => {
-      const detail = await app.rpc!.request.getSessionDetail({ sessionId: button.dataset["sessionId"]!, refresh: true });
-      renderTelemetry(detail.telemetry);
-      await setView("generator");
-    }));
-    elements.sessionList.querySelectorAll<HTMLButtonElement>(".session-cancel").forEach((button) => button.addEventListener("click", async () => {
-      await app.rpc!.request.cancelBatchRun({ sessionId: button.dataset["sessionId"]! });
-      await loadSessions();
-    }));
-    elements.sessionList.querySelectorAll<HTMLButtonElement>(".session-check").forEach((button) => button.addEventListener("click", async () => {
-      await app.rpc!.request.getSessionDetail({ sessionId: button.dataset["sessionId"]!, refresh: true });
-      await loadSessions();
-    }));
-    elements.sessionList.querySelectorAll<HTMLButtonElement>(".session-retry").forEach((button) => button.addEventListener("click", async () => {
-      renderTelemetry(await app.rpc!.request.retryFailedPrompts({ sessionId: button.dataset["sessionId"]! }));
-      await setView("generator");
-    }));
-    elements.sessionList.querySelectorAll<HTMLButtonElement>(".session-export").forEach((button) => button.addEventListener("click", async () => {
-      const result = await app.rpc!.request.exportSessionZip({ sessionId: button.dataset["sessionId"]!, pickPath: true });
-      if (result.filePath) showToast("Session ZIP exported.");
-    }));
-    elements.sessionList.querySelectorAll<HTMLButtonElement>(".session-diagnostic").forEach((button) => button.addEventListener("click", async () => {
-      await navigator.clipboard.writeText(button.dataset["diagnosticId"]!);
-      showToast("Diagnostic ID copied.");
-    }));
+        <div class="session-detail-panel hidden" data-detail-for="${item.sessionId}" hidden></div>
+      </article>`).join("");
+      elements.sessionList.innerHTML = `${runHtml}${orphanHtml}`;
+    }
+    enterVisibleItems(elements.sessionList, ".data-row, .run-group");
+    bindSessionListHandlers();
   } catch (error) {
     elements.sessionList.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load sessions")}</div>`;
   } finally {
@@ -891,6 +1063,139 @@ async function loadSessions(): Promise<void> {
     elements.refreshSessions.removeAttribute("aria-busy");
     refreshIcons();
   }
+}
+
+function formatPhaseGrid(t: SessionTelemetry): string {
+  const d = t.durationMs ?? {};
+  const rows = [
+    ["Submit / remote", d.remote ?? d.submit],
+    ["Download", d.download],
+    ["Save", d.persist],
+  ];
+  return rows.map(([label, ms]) => `<div><span>${label}</span><strong>${formatDurationMs(ms as number | null)}</strong></div>`).join("");
+}
+
+function formatPromptRows(prompts: SessionPromptOutcome[]): string {
+  if (!prompts.length) return "<p class=\"empty-inline\">No prompts recorded.</p>";
+  return `<table class="prompt-outcome-table">
+    <thead><tr><th>#</th><th>Prompt</th><th>Status</th><th>Duration</th><th>Cost</th><th>Image</th></tr></thead>
+    <tbody>${prompts.map((prompt) => `
+      <tr>
+        <td>${prompt.ordinal}</td>
+        <td title="${escapeHtml(prompt.promptText)}">${escapeHtml(prompt.promptText.length > 96 ? `${prompt.promptText.slice(0, 96)}…` : prompt.promptText)}</td>
+        <td><span class="status-badge status-${escapeHtml(prompt.status)}">${escapeHtml(prompt.status)}</span></td>
+        <td>${formatDurationMs(prompt.durationMs)}</td>
+        <td>$${prompt.costUsd.toFixed(3)}</td>
+        <td>${prompt.hasImage ? "Yes" : "—"}</td>
+      </tr>`).join("")}</tbody>
+  </table>`;
+}
+
+function renderSessionDetailHtml(detail: SessionDetail): string {
+  const t = detail.telemetry;
+  const wave = t.waveCount != null && t.waveIndex != null ? `Wave ${t.waveIndex + 1}/${t.waveCount}` : "Single session";
+  const canResume = t.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(t.status);
+  return `<div class="session-detail-inner">
+    <div class="session-detail-meta">
+      <div><span>Status</span><strong class="status-badge status-${escapeHtml(t.status)}">${escapeHtml(t.status)}</strong></div>
+      <div><span>Phase</span><strong>${escapeHtml(t.phase.replaceAll("_", " "))}</strong></div>
+      <div><span>Mode</span><strong>${escapeHtml(t.runMode)} · ${escapeHtml(t.format)} · ${escapeHtml(t.quality)}</strong></div>
+      <div><span>Scope</span><strong>${escapeHtml(wave)}</strong></div>
+      <div><span>Progress</span><strong>${t.completedCount} / ${t.totalPrompts}</strong></div>
+      <div><span>Spent / est</span><strong>$${t.costUsd.toFixed(3)} / $${t.estimateUsd.toFixed(3)}</strong></div>
+      <div><span>Elapsed / ETA</span><strong>${formatElapsed(t.elapsedMs)} / ${formatEta(t.etaMs)}</strong></div>
+      <div><span>Diagnostic</span><strong title="${escapeHtml(t.diagnosticId)}">${escapeHtml(t.diagnosticId)}</strong></div>
+    </div>
+    <p class="session-detail-message">${escapeHtml(t.message)}</p>
+    <div class="session-phase-grid">${formatPhaseGrid(t)}</div>
+    <div class="session-detail-actions">
+      <button type="button" class="secondary-button session-live" data-session-id="${t.sessionId}">View live strip</button>
+      ${canResume ? `<button type="button" class="secondary-button session-resume" data-session-id="${t.sessionId}">Resume leftovers</button>` : ""}
+      ${["pending", "processing"].includes(t.status) ? `<button type="button" class="secondary-button session-cancel" data-session-id="${t.sessionId}">Cancel</button>` : ""}
+      <button type="button" class="secondary-button session-export" data-session-id="${t.sessionId}">Export ZIP</button>
+      <button type="button" class="secondary-button session-diagnostic" data-diagnostic-id="${escapeHtml(t.diagnosticId)}">Copy diagnostic ID</button>
+    </div>
+    <h4 class="session-prompts-heading">Prompts</h4>
+    ${formatPromptRows(detail.prompts)}
+  </div>`;
+}
+
+async function toggleSessionDetail(sessionId: string): Promise<void> {
+  const panel = elements.sessionList.querySelector<HTMLElement>(`.session-detail-panel[data-detail-for="${sessionId}"]`);
+  if (!panel) return;
+  const isOpen = !panel.classList.contains("hidden") && !panel.hidden;
+  elements.sessionList.querySelectorAll<HTMLElement>(".session-detail-panel").forEach((node) => {
+    node.classList.add("hidden");
+    node.hidden = true;
+    node.innerHTML = "";
+  });
+  if (isOpen) return;
+  panel.classList.remove("hidden");
+  panel.hidden = false;
+  panel.innerHTML = '<div class="empty-inline">Loading session detail…</div>';
+  try {
+    const detail = await app.rpc!.request.getSessionDetail({ sessionId, refresh: false });
+    panel.innerHTML = renderSessionDetailHtml(detail);
+    refreshIcons();
+    bindSessionListHandlers(panel);
+    enter(panel, 0, 4);
+  } catch (error) {
+    panel.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load detail")}</div>`;
+  }
+}
+
+function bindSessionListHandlers(root: ParentNode = elements.sessionList): void {
+  root.querySelectorAll<HTMLButtonElement>(".session-detail").forEach((button) => {
+    button.onclick = () => void toggleSessionDetail(button.dataset["sessionId"]!);
+  });
+  root.querySelectorAll<HTMLButtonElement>(".session-live, .session-open").forEach((button) => {
+    button.onclick = async () => {
+      const detail = await app.rpc!.request.getSessionDetail({ sessionId: button.dataset["sessionId"]!, refresh: true });
+      renderTelemetry(detail.telemetry);
+      await setView("generator");
+    };
+  });
+  root.querySelectorAll<HTMLButtonElement>(".session-cancel").forEach((button) => {
+    button.onclick = async () => {
+      await app.rpc!.request.cancelBatchRun({ sessionId: button.dataset["sessionId"]! });
+      await loadSessions();
+    };
+  });
+  root.querySelectorAll<HTMLButtonElement>(".session-check").forEach((button) => {
+    button.onclick = async () => {
+      await app.rpc!.request.getSessionDetail({ sessionId: button.dataset["sessionId"]!, refresh: true });
+      await loadSessions();
+    };
+  });
+  root.querySelectorAll<HTMLButtonElement>(".session-resume, .run-resume").forEach((button) => {
+    button.onclick = async () => {
+      if (!window.confirm(resumeConfirmMessage())) return;
+      const runId = button.dataset["runId"];
+      const sessionId = button.dataset["sessionId"];
+      const next = await app.rpc!.request.resumeRun(runId ? { runId } : { sessionId: sessionId! });
+      renderTelemetry(next);
+      await startSessionPolling(next.sessionId);
+      await setView("generator");
+    };
+  });
+  root.querySelectorAll<HTMLButtonElement>(".session-export").forEach((button) => {
+    button.onclick = async () => {
+      const result = await app.rpc!.request.exportSessionZip({ sessionId: button.dataset["sessionId"]!, pickPath: true });
+      if (result.filePath) showToast("Session ZIP exported.");
+    };
+  });
+  root.querySelectorAll<HTMLButtonElement>(".run-export").forEach((button) => {
+    button.onclick = async () => {
+      const result = await app.rpc!.request.exportRunZip({ runId: button.dataset["runId"]!, pickPath: true });
+      if (result.filePath) showToast("Run ZIP exported.");
+    };
+  });
+  root.querySelectorAll<HTMLButtonElement>(".session-diagnostic").forEach((button) => {
+    button.onclick = async () => {
+      await navigator.clipboard.writeText(button.dataset["diagnosticId"]!);
+      showToast("Diagnostic ID copied.");
+    };
+  });
 }
 
 async function loadExports(): Promise<void> {
@@ -964,19 +1269,77 @@ async function loadLogs(): Promise<void> {
   }
 }
 
-function renderHistory(animateCards = false): void {
-  historyImageObserver?.disconnect();
+function formatDurationMs(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1_000) return `${Math.round(ms)}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (minutes < 60) return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const minRest = minutes % 60;
+  return minRest ? `${hours}h ${minRest}m` : `${hours}h`;
+}
+
+function filteredHistoryItems(): HistoryItem[] {
   const query = elements.historySearch.value.trim().toLowerCase();
-  const visible = query ? historyItems.filter((item) => [
-    item.promptText, item.model, item.themeColumn, item.week, item.scheduleDate, item.status,
-  ].some((value) => value.toLowerCase().includes(query))) : historyItems;
-  elements.clearHistory.disabled = historyItems.length === 0;
-  elements.historyCount.textContent = `${visible.length} item${visible.length === 1 ? "" : "s"}`;
-  elements.historyList.innerHTML = visible.length ? visible.map((item) => `
-    <article class="history-card" data-prompt-id="${item.promptId}">
-      <div class="history-image" ${item.assetId ? `data-asset-id="${escapeHtml(item.assetId)}" data-prompt-id="${escapeHtml(item.promptId)}"` : ""}>
+  const filter = elements.historyFilter.value;
+  return historyItems.filter((item) => {
+    if (filter === "has-image" && !item.hasImage) return false;
+    if (filter === "no-image" && item.hasImage) return false;
+    if (filter === "completed" && item.status !== "completed") return false;
+    if (filter === "failed" && item.status !== "failed") return false;
+    if (filter === "partial" && item.status !== "partial") return false;
+    if (filter === "cancelled" && item.status !== "cancelled") return false;
+    if (filter === "batch" && item.runMode !== "batch") return false;
+    if (filter === "direct" && item.runMode !== "direct") return false;
+    if (!query) return true;
+    return [item.promptText, item.model, item.themeColumn, item.week, item.scheduleDate, item.status, item.sessionId, item.parentRunId ?? ""]
+      .some((value) => value.toLowerCase().includes(query));
+  });
+}
+
+function closeLightbox(): void {
+  elements.lightbox.classList.add("hidden");
+  elements.lightbox.hidden = true;
+  elements.lightboxImage.removeAttribute("src");
+  elements.lightboxCaption.textContent = "";
+}
+
+async function openLightbox(items: HistoryItem[], index: number): Promise<void> {
+  const previewable = items.filter((item) => item.assetId && item.hasImage);
+  if (!previewable.length) return;
+  const current = items[index];
+  const previewIndex = Math.max(0, previewable.findIndex((item) => item.promptId === current?.promptId));
+  lightboxItems = previewable;
+  lightboxIndex = previewIndex >= 0 ? previewIndex : 0;
+  await showLightboxAt(lightboxIndex);
+}
+
+async function showLightboxAt(index: number): Promise<void> {
+  if (!lightboxItems.length) return;
+  lightboxIndex = ((index % lightboxItems.length) + lightboxItems.length) % lightboxItems.length;
+  const item = lightboxItems[lightboxIndex]!;
+  elements.lightbox.classList.remove("hidden");
+  elements.lightbox.hidden = false;
+  elements.lightboxCaption.textContent = item.promptText;
+  elements.lightboxImage.alt = item.promptText;
+  try {
+    const { dataUrl } = await app.rpc!.request.getHistoryImage({ assetId: item.assetId! });
+    elements.lightboxImage.src = dataUrl;
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not open preview", true);
+    closeLightbox();
+  }
+  refreshIcons();
+}
+
+function renderHistoryCard(item: HistoryItem): string {
+  return `<article class="history-card" data-prompt-id="${item.promptId}">
+      <button type="button" class="history-image preview-history" ${item.assetId ? `data-asset-id="${escapeHtml(item.assetId)}" data-prompt-id="${escapeHtml(item.promptId)}"` : "disabled"} aria-label="Preview image">
         <div class="image-placeholder"><i data-lucide="${item.hasImage ? "loader-circle" : "image-off"}" aria-hidden="true"></i><strong>${item.hasImage ? "Loading preview" : "No image saved"}</strong><small>${item.hasImage ? "Stored locally" : "Prompt retained from this session"}</small></div>
-      </div>
+      </button>
       <div class="history-card-body">
         <div class="history-card-meta"><span>${formatDate(item.createdAt)}</span><span class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div>
         <p class="history-prompt">${escapeHtml(item.promptText)}</p>
@@ -986,9 +1349,49 @@ function renderHistory(animateCards = false): void {
           <div><span>Tokens</span><strong>${formatNumber(item.inputTokens + item.outputTokens)}</strong></div>
           <div><span>Tracked cost</span><strong>$${item.costUsd.toFixed(3)}</strong></div>
         </div>
-        <div class="history-actions"><button class="secondary-button download-history" data-asset-id="${item.assetId ?? ""}" ${item.assetId ? "" : "disabled"}>Download</button><button class="secondary-button danger-button delete-history" data-prompt-id="${item.promptId}">Delete</button></div>
+        <div class="history-actions">
+          <button class="secondary-button preview-history" data-prompt-id="${item.promptId}" ${item.hasImage && item.assetId ? "" : "disabled"}>Preview</button>
+          <button class="secondary-button reveal-history" data-asset-id="${item.assetId ?? ""}" ${item.assetId ? "" : "disabled"}>Show file</button>
+          <button class="secondary-button reveal-session" data-session-id="${item.sessionId}">Open session folder</button>
+          <button class="secondary-button danger-button delete-history" data-prompt-id="${item.promptId}">Delete</button>
+        </div>
       </div>
-    </article>`).join("") : `<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="${query ? "search" : "images"}"></i></span><strong>${query ? "No matching history" : "History is empty"}</strong><small>${query ? "Try a broader search." : "Submitted prompts and generated images will appear here."}</small></div>`;
+    </article>`;
+}
+
+function renderHistory(animateCards = false): void {
+  historyImageObserver?.disconnect();
+  const visible = filteredHistoryItems();
+  elements.clearHistory.disabled = historyItems.length === 0;
+  elements.historyCount.textContent = `${visible.length} item${visible.length === 1 ? "" : "s"}`;
+  if (!visible.length) {
+    const query = elements.historySearch.value.trim();
+    elements.historyList.innerHTML = `<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="${query ? "search" : "images"}"></i></span><strong>${query ? "No matching history" : "History is empty"}</strong><small>${query ? "Try a broader search." : "Submitted prompts and generated images will appear here."}</small></div>`;
+    refreshIcons();
+    return;
+  }
+
+  const groups = new Map<string, { title: string; subtitle: string; items: HistoryItem[] }>();
+  for (const item of visible) {
+    const key = item.parentRunId ?? item.sessionId;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(item);
+      continue;
+    }
+    const wave = item.waveIndex != null ? ` · wave ${item.waveIndex + 1}` : "";
+    groups.set(key, {
+      title: item.parentRunId ? `Run ${item.parentRunId.slice(0, 8)}` : `Session ${item.sessionId.slice(0, 8)}`,
+      subtitle: `${item.runMode}${wave}`,
+      items: [item],
+    });
+  }
+
+  elements.historyList.innerHTML = [...groups.values()].map((group) => `
+    <section class="history-group">
+      <header class="history-group-head"><strong>${escapeHtml(group.title)}</strong><span>${escapeHtml(group.subtitle)} · ${group.items.length} item${group.items.length === 1 ? "" : "s"}</span></header>
+      <div class="history-grid-inner">${group.items.map(renderHistoryCard).join("")}</div>
+    </section>`).join("");
   refreshIcons();
   if (animateCards) enterVisibleItems(elements.historyList, ".history-card");
 
@@ -1021,16 +1424,40 @@ function renderHistory(animateCards = false): void {
   }, { rootMargin: "160px" });
   elements.historyList.querySelectorAll<HTMLElement>(".history-image[data-asset-id]").forEach((imageContainer) => historyImageObserver?.observe(imageContainer));
 
-  elements.historyList.querySelectorAll<HTMLButtonElement>(".download-history").forEach((button) => {
+  elements.historyList.querySelectorAll<HTMLButtonElement>(".preview-history").forEach((button) => {
+    button.addEventListener("click", () => {
+      const promptId = button.dataset["promptId"] ?? button.closest<HTMLElement>(".history-card")?.dataset["promptId"];
+      if (!promptId) return;
+      const items = filteredHistoryItems();
+      const index = items.findIndex((item) => item.promptId === promptId);
+      if (index >= 0) void openLightbox(items, index);
+    });
+  });
+  elements.historyList.querySelectorAll<HTMLButtonElement>(".reveal-history").forEach((button) => {
     button.addEventListener("click", async () => {
       const assetId = button.dataset["assetId"];
       if (!assetId) return;
       button.disabled = true;
       try {
-        const result = await app.rpc!.request.downloadHistoryAsset({ assetId });
-        showToast(`Downloaded to ${result.filePath}`);
+        await app.rpc!.request.revealHistoryAsset({ assetId });
+        showToast("Opened file in Explorer.");
       } catch (error) {
-        showToast(error instanceof Error ? error.message : "Could not download image", true);
+        showToast(error instanceof Error ? error.message : "Could not show file", true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+  elements.historyList.querySelectorAll<HTMLButtonElement>(".reveal-session").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const sessionId = button.dataset["sessionId"];
+      if (!sessionId) return;
+      button.disabled = true;
+      try {
+        await app.rpc!.request.revealHistorySessionFolder({ sessionId });
+        showToast("Opened session folder.");
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Could not open session folder", true);
       } finally {
         button.disabled = false;
       }
@@ -1111,6 +1538,25 @@ async function bootstrap(): Promise<void> {
     `<option value="${escapeHtml(model.id)}" ${model.enabled ? "" : "disabled"}>${escapeHtml(model.label)}</option>`,
   ).join("");
   elements.model.value = data.models.defaultModel;
+  if (data.limits) {
+    appLimits = {
+      maxReferences: data.limits.maxReferences,
+      maxReferenceBytes: data.limits.maxReferenceBytes,
+      maxPromptChars: data.limits.maxPromptChars,
+      directPromptLimit: data.limits.directPromptLimit,
+      batchPromptLimit: data.limits.batchPromptLimit,
+      defaultWaveSize: data.settings?.waveSize ?? APP_LIMITS.defaultWaveSize,
+    };
+  }
+  if (data.settings) {
+    const waveSize = data.settings.waveSize;
+    elements.waveSize.value = String(waveSize);
+    elements.waveSplit.checked = waveSize > 0;
+  }
+  if (data.admin) applyAdminView(data.admin);
+  else if (data.adminWarning) elements.rateLimitsLine.textContent = data.adminWarning;
+  renderReferenceImages();
+  updateWaveUi();
 }
 
 applyTheme(getInitialTheme());
@@ -1210,8 +1656,21 @@ document.querySelectorAll<HTMLInputElement>('input[name="run-mode"]').forEach((r
     document.querySelectorAll(".mode-option").forEach((label) => label.classList.remove("selected"));
     radio.closest(".mode-option")?.classList.add("selected");
     updateSelection();
+    updateWaveUi();
     void refreshEstimate();
   });
+});
+elements.waveSplit.addEventListener("change", () => {
+  if (!elements.waveSplit.checked) elements.waveSize.value = "0";
+  else if (Number(elements.waveSize.value) <= 0) elements.waveSize.value = String(appLimits.defaultWaveSize || APP_LIMITS.defaultWaveSize);
+  updateWaveUi();
+  void app.rpc!.request.setSettings({ waveSize: effectiveWaveSize() }).catch(() => undefined);
+});
+elements.waveSize.addEventListener("change", () => {
+  if (Number(elements.waveSize.value) <= 0) elements.waveSplit.checked = false;
+  else elements.waveSplit.checked = true;
+  updateWaveUi();
+  void app.rpc!.request.setSettings({ waveSize: effectiveWaveSize() }).catch(() => undefined);
 });
 elements.model.addEventListener("change", () => void refreshEstimate());
 elements.quality.addEventListener("change", () => void refreshEstimate());
@@ -1257,8 +1716,8 @@ elements.runButton.addEventListener("click", async () => {
     showToast("Add API key to generate.", true);
     return;
   }
-  if (currentMode() === "direct" && selected.size > 4) {
-    showToast("Direct supports up to 4 prompts.", true);
+  if (currentMode() === "direct" && selected.size > directPromptLimit()) {
+    showToast(`Direct mode only allows ${directPromptLimit()} prompts. Use Batch for more.`, true);
     return;
   }
   if (currentMode() === "batch" && selected.size > 100 && !window.confirm(`Submit ${selected.size} prompts as a paid Batch run?`)) return;
@@ -1273,23 +1732,14 @@ elements.runButton.addEventListener("click", async () => {
       mode: currentMode(),
       format: elements.size.value as OutputFormatId,
       quality: elements.quality.value as "low" | "medium" | "high",
+      waveSize: effectiveWaveSize(),
       ...(referenceImages.length ? { referenceImageFileIds: referenceImages.map((reference) => reference.fileId) } : {}),
     });
     releaseReferencesToSession();
     renderTelemetry(next);
     await loadKeys();
     if (next.status === "failed") showToast(next.message, true);
-    if (next.status === "pending" || next.status === "processing") {
-      pollTimer = window.setInterval(async () => {
-        if (!session) return;
-        try {
-          renderTelemetry(await app.rpc!.request.pollBatchStatus({ sessionId: session.sessionId }));
-          await loadKeys();
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : "Could not refresh the run", true);
-        }
-      }, 10_000);
-    }
+    if (next.status === "pending" || next.status === "processing") await startSessionPolling(next.sessionId);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not start generation", true);
   } finally {
@@ -1303,38 +1753,43 @@ elements.cancelButton.addEventListener("click", async () => {
   elements.cancelButton.disabled = true;
   try {
     renderTelemetry(await app.rpc!.request.cancelBatchRun({ sessionId: session.sessionId }));
-    showToast("Run cancelled.");
+    showToast("Run cancelled. Saved images stay.");
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not cancel run", true);
   }
 });
 
-elements.retryButton.addEventListener("click", async () => {
+async function resumeLeftovers(): Promise<void> {
   if (!session) return;
+  if (!window.confirm(resumeConfirmMessage())) return;
+  elements.resumeButton.disabled = true;
   elements.retryButton.disabled = true;
   try {
-    const next = await app.rpc!.request.retryFailedPrompts({ sessionId: session.sessionId });
+    const next = await app.rpc!.request.resumeRun({
+      ...(session.parentRunId ? { runId: session.parentRunId } : { sessionId: session.sessionId }),
+    });
     renderTelemetry(next);
-    showToast("Retry run submitted.");
-    if (next.status === "processing") {
-      pollTimer = window.setInterval(async () => {
-        if (!session) return;
-        try {
-          renderTelemetry(await app.rpc!.request.pollBatchStatus({ sessionId: session.sessionId }));
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : "Could not refresh the run", true);
-        }
-      }, 10_000);
-    }
+    showToast("Resume batch submitted for remaining prompts.");
+    if (next.status === "pending" || next.status === "processing") await startSessionPolling(next.sessionId);
   } catch (error) {
-    showToast(error instanceof Error ? error.message : "Could not retry prompts", true);
+    showToast(error instanceof Error ? error.message : "Could not resume prompts", true);
+    elements.resumeButton.disabled = false;
     elements.retryButton.disabled = false;
   }
-});
+}
+
+elements.resumeButton.addEventListener("click", () => void resumeLeftovers());
+elements.retryButton.addEventListener("click", () => void resumeLeftovers());
 
 elements.manageKeys.addEventListener("click", async () => {
   try {
     await loadKeys();
+    try {
+      const data = await app.rpc!.request.getBootstrap({});
+      if (data.admin) applyAdminView(data.admin);
+    } catch {
+      // Keys dialog still works if bootstrap refresh fails.
+    }
     openKeysDialog(byId<HTMLElement>("keys-title"));
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not load API keys", true);
@@ -1359,14 +1814,52 @@ elements.keyForm.addEventListener("submit", async (event) => {
     if (submit) submit.disabled = false;
   }
 });
+elements.adminForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  elements.keyError.classList.add("hidden");
+  try {
+    const admin = await app.rpc!.request.setAdminKey({
+      key: elements.adminKey.value,
+      ...(elements.adminProject.value.trim() ? { projectId: elements.adminProject.value.trim() } : {}),
+    });
+    elements.adminKey.value = "";
+    applyAdminView(admin);
+    showToast(admin.configured ? "Admin key saved." : "Admin key updated.");
+  } catch (error) {
+    elements.keyError.textContent = error instanceof Error ? error.message : "Could not save Admin key";
+    elements.keyError.classList.remove("hidden");
+  }
+});
+elements.refreshLimits.addEventListener("click", async () => {
+  try {
+    if (elements.adminProject.value.trim()) {
+      await app.rpc!.request.setAdminProjectId({ projectId: elements.adminProject.value.trim() });
+    }
+    applyAdminView(await app.rpc!.request.refreshRateLimits({}));
+    showToast("Rate limits refreshed.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not refresh rate limits", true);
+  }
+});
+elements.clearAdmin.addEventListener("click", async () => {
+  try {
+    applyAdminView(await app.rpc!.request.clearAdminKey({}));
+    elements.adminProject.value = "";
+    showToast("Admin key cleared.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not clear Admin key", true);
+  }
+});
 elements.exportButton.addEventListener("click", async () => {
   if (!session) return;
   elements.exportButton.disabled = true;
   try {
-    const result = await app.rpc!.request.exportSessionZip({ sessionId: session.sessionId, pickPath: true });
+    const result = session.parentRunId
+      ? await app.rpc!.request.exportRunZip({ runId: session.parentRunId, pickPath: true })
+      : await app.rpc!.request.exportSessionZip({ sessionId: session.sessionId, pickPath: true });
     if (result.filePath) {
       elements.sessionMessage.textContent = `Exported to ${result.filePath}`;
-      showToast("Session ZIP exported.");
+      showToast("ZIP exported.");
       await loadExports();
     }
   } catch (error) {
@@ -1378,6 +1871,19 @@ elements.exportButton.addEventListener("click", async () => {
 elements.refreshSessions.addEventListener("click", () => void loadSessions());
 elements.refreshHistory.addEventListener("click", () => void loadHistory());
 elements.historySearch.addEventListener("input", () => renderHistory(false));
+elements.historyFilter.addEventListener("change", () => renderHistory(false));
+elements.lightboxClose.addEventListener("click", () => closeLightbox());
+elements.lightboxPrev.addEventListener("click", () => void showLightboxAt(lightboxIndex - 1));
+elements.lightboxNext.addEventListener("click", () => void showLightboxAt(lightboxIndex + 1));
+elements.lightbox.addEventListener("click", (event) => {
+  if (event.target === elements.lightbox) closeLightbox();
+});
+window.addEventListener("keydown", (event) => {
+  if (elements.lightbox.hidden) return;
+  if (event.key === "Escape") closeLightbox();
+  if (event.key === "ArrowLeft") void showLightboxAt(lightboxIndex - 1);
+  if (event.key === "ArrowRight") void showLightboxAt(lightboxIndex + 1);
+});
 elements.clearHistory.addEventListener("click", async () => {
   if (!historyItems.length || !window.confirm("Delete all prompt history and all locally stored generated images? This cannot be undone.")) return;
   elements.clearHistory.disabled = true;

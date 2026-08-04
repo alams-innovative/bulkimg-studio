@@ -2,10 +2,13 @@ import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
-  ApiKeyStats, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RunMode,
-  SanitizedProviderError, SessionPromptOutcome, SessionStatus, SessionSummary, SessionTelemetry, SubmitRunInput,
+  ApiKeyStats, AppSettings, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RateLimitSnapshot,
+  RunMode, RunPhase, RunSummary, SanitizedProviderError, SessionPromptOutcome, SessionStatus,
+  SessionSummary, SessionTelemetry, SubmitRunInput,
 } from "../shared/contracts";
+import { APP_LIMITS } from "../shared/contracts";
 import { isOutputFormatId, legacySizeToFormat, outputSize } from "../shared/output-formats";
+import { estimateEtaMs } from "./services/eta";
 
 export type ApiKeyRecord = {
   id: string;
@@ -62,7 +65,7 @@ export class AppDatabase {
   constructor(dataDirectory: string) {
     mkdirSync(dataDirectory, { recursive: true });
     const databasePath = join(dataDirectory, "bulkimg-studio.db");
-    const backupPath = join(dataDirectory, "bulkimg-studio.pre-v3.backup.db");
+    const backupPath = join(dataDirectory, "bulkimg-studio.pre-v4.backup.db");
     if (existsSync(databasePath) && !existsSync(backupPath)) copyFileSync(databasePath, backupPath);
     this.db = new Database(databasePath, { create: true });
     this.db.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;");
@@ -213,6 +216,66 @@ export class AppDatabase {
       WHERE prompt_id IN (SELECT prompt_id FROM generated_assets WHERE prompt_id IS NOT NULL);
       PRAGMA user_version = 3;
     `);
+    this.migrateToV4();
+  }
+
+  private migrateToV4(): void {
+    const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+    if (version >= 4) return;
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS batch_runs (
+        run_id TEXT PRIMARY KEY,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        model_used TEXT NOT NULL,
+        run_mode TEXT NOT NULL DEFAULT 'batch',
+        output_format TEXT NOT NULL DEFAULT 'square',
+        quality TEXT NOT NULL DEFAULT 'high',
+        wave_size INTEGER NOT NULL DEFAULT 0,
+        wave_count INTEGER NOT NULL DEFAULT 1,
+        total_prompts INTEGER NOT NULL,
+        completed_count INTEGER DEFAULT 0,
+        status TEXT NOT NULL,
+        status_message TEXT DEFAULT '',
+        estimate_usd REAL NOT NULL DEFAULT 0.0,
+        cost_usd REAL DEFAULT 0.0,
+        cost_pkr REAL DEFAULT 0.0,
+        fx_rate REAL DEFAULT 276.61,
+        diagnostic_id TEXT
+      );
+      CREATE TABLE IF NOT EXISTS admin_config (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        encrypted_key TEXT,
+        key_hint TEXT,
+        project_id TEXT,
+        rate_limits_json TEXT,
+        rate_limits_fetched_at TEXT,
+        last_error TEXT,
+        header_probe_json TEXT
+      );
+      INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wave_size', '${APP_LIMITS.defaultWaveSize}');
+      INSERT OR IGNORE INTO admin_config (id) VALUES (1);
+    `);
+    this.ensureColumn("batch_sessions", "parent_run_id", "TEXT");
+    this.ensureColumn("batch_sessions", "wave_index", "INTEGER");
+    this.ensureColumn("batch_sessions", "wave_count", "INTEGER");
+    this.ensureColumn("batch_sessions", "phase", "TEXT NOT NULL DEFAULT 'queued'");
+    this.ensureColumn("batch_sessions", "submitted_at", "DATETIME");
+    this.ensureColumn("batch_sessions", "remote_completed_at", "DATETIME");
+    this.ensureColumn("batch_sessions", "download_started_at", "DATETIME");
+    this.ensureColumn("batch_sessions", "download_finished_at", "DATETIME");
+    this.ensureColumn("batch_sessions", "persist_finished_at", "DATETIME");
+    this.ensureColumn("session_prompts", "started_at", "DATETIME");
+    this.ensureColumn("session_prompts", "completed_at", "DATETIME");
+    this.ensureColumn("session_prompts", "duration_ms", "INTEGER");
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_batch_sessions_parent_run ON batch_sessions(parent_run_id);
+      CREATE INDEX IF NOT EXISTS idx_session_prompts_session_status ON session_prompts(session_id, status);
+      PRAGMA user_version = 4;
+    `);
   }
 
   private ensureColumn(table: "api_keys" | "batch_sessions" | "generated_assets" | "session_prompts" | "reference_files", column: string, definition: string): void {
@@ -220,6 +283,215 @@ export class AppDatabase {
     if (!columns.some((item) => item.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
+  }
+
+  getSetting(key: string, fallback = ""): string {
+    return this.db.query<{ value: string }, [string]>("SELECT value FROM app_settings WHERE key = ?").get(key)?.value ?? fallback;
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db.query(`
+      INSERT INTO app_settings (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(key, value);
+  }
+
+  getAppSettings(): AppSettings {
+    const waveSize = Number(this.getSetting("wave_size", String(APP_LIMITS.defaultWaveSize)));
+    return {
+      waveSize: Number.isFinite(waveSize) ? Math.max(0, Math.floor(waveSize)) : APP_LIMITS.defaultWaveSize,
+    };
+  }
+
+  setAppSettings(partial: Partial<AppSettings>): AppSettings {
+    if (partial.waveSize !== undefined) {
+      if (!Number.isInteger(partial.waveSize) || partial.waveSize < 0 || partial.waveSize > APP_LIMITS.batchPromptLimit) {
+        throw new Error(`Wave size must be 0 (no split) or 1–${APP_LIMITS.batchPromptLimit}.`);
+      }
+      this.setSetting("wave_size", String(partial.waveSize));
+    }
+    return this.getAppSettings();
+  }
+
+  getAdminConfigRow(): {
+    encrypted_key: string | null; key_hint: string | null; project_id: string | null;
+    rate_limits_json: string | null; rate_limits_fetched_at: string | null; last_error: string | null;
+    header_probe_json: string | null;
+  } {
+    return this.db.query<{
+      encrypted_key: string | null; key_hint: string | null; project_id: string | null;
+      rate_limits_json: string | null; rate_limits_fetched_at: string | null; last_error: string | null;
+      header_probe_json: string | null;
+    }, []>("SELECT encrypted_key, key_hint, project_id, rate_limits_json, rate_limits_fetched_at, last_error, header_probe_json FROM admin_config WHERE id = 1").get()
+      ?? {
+        encrypted_key: null, key_hint: null, project_id: null, rate_limits_json: null,
+        rate_limits_fetched_at: null, last_error: null, header_probe_json: null,
+      };
+  }
+
+  setAdminEncryptedKey(encryptedKey: string | null, keyHint: string | null): void {
+    this.db.query(`
+      UPDATE admin_config SET encrypted_key = ?, key_hint = ?, last_error = NULL WHERE id = 1
+    `).run(encryptedKey, keyHint);
+  }
+
+  setAdminProjectId(projectId: string | null): void {
+    this.db.query("UPDATE admin_config SET project_id = ? WHERE id = 1").run(projectId);
+  }
+
+  setAdminRateLimits(snapshot: RateLimitSnapshot | null, lastError: string | null = null): void {
+    this.db.query(`
+      UPDATE admin_config SET rate_limits_json = ?, rate_limits_fetched_at = ?, last_error = ? WHERE id = 1
+    `).run(
+      snapshot ? JSON.stringify(snapshot) : null,
+      snapshot?.fetchedAt ?? null,
+      lastError,
+    );
+  }
+
+  setHeaderProbe(probe: object | null): void {
+    this.db.query("UPDATE admin_config SET header_probe_json = ? WHERE id = 1")
+      .run(probe ? JSON.stringify(probe) : null);
+  }
+
+  createBatchRun(run: {
+    runId: string; model: string; mode: RunMode; format: OutputFormatId; quality: QualityTier;
+    waveSize: number; waveCount: number; totalPrompts: number; estimateUsd: number; fxRate: number;
+  }): void {
+    this.db.query(`
+      INSERT INTO batch_runs
+        (run_id, model_used, run_mode, output_format, quality, wave_size, wave_count, total_prompts,
+         status, status_message, estimate_usd, fx_rate, diagnostic_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'Queued', ?, ?, ?)
+    `).run(
+      run.runId, run.model, run.mode, run.format, run.quality, run.waveSize, run.waveCount,
+      run.totalPrompts, run.estimateUsd, run.fxRate, `BIS-${run.runId.replaceAll("-", "").slice(0, 8)}`,
+    );
+  }
+
+  updateBatchRun(runId: string, update: {
+    status?: SessionStatus; message?: string; completedCount?: number;
+    costUsd?: number; costPkr?: number;
+  }): void {
+    const row = this.db.query<{
+      status: SessionStatus; status_message: string; completed_count: number; cost_usd: number; fx_rate: number;
+    }, [string]>(
+      "SELECT status, status_message, completed_count, cost_usd, fx_rate FROM batch_runs WHERE run_id = ?",
+    ).get(runId);
+    if (!row) return;
+    const costUsd = update.costUsd ?? row.cost_usd;
+    this.db.query(`
+      UPDATE batch_runs SET status = ?, status_message = ?, completed_count = ?,
+        cost_usd = ?, cost_pkr = ?
+      WHERE run_id = ?
+    `).run(
+      update.status ?? row.status,
+      update.message ?? row.status_message,
+      update.completedCount ?? row.completed_count,
+      costUsd,
+      update.costPkr ?? costUsd * row.fx_rate,
+      runId,
+    );
+  }
+
+  getBatchRun(runId: string): {
+    run_id: string; model_used: string; run_mode: RunMode; output_format: string; quality: QualityTier;
+    wave_size: number; wave_count: number; total_prompts: number; completed_count: number;
+    status: SessionStatus; status_message: string; estimate_usd: number; cost_usd: number;
+    cost_pkr: number; fx_rate: number; created_at: string; diagnostic_id: string;
+  } | null {
+    return this.db.query<{
+      run_id: string; model_used: string; run_mode: RunMode; output_format: string; quality: QualityTier;
+      wave_size: number; wave_count: number; total_prompts: number; completed_count: number;
+      status: SessionStatus; status_message: string; estimate_usd: number; cost_usd: number;
+      cost_pkr: number; fx_rate: number; created_at: string; diagnostic_id: string;
+    }, [string]>(`
+      SELECT run_id, model_used, run_mode, output_format, quality, wave_size, wave_count, total_prompts,
+        completed_count, status, status_message, estimate_usd, cost_usd, cost_pkr, fx_rate, created_at,
+        COALESCE(diagnostic_id, '') AS diagnostic_id
+      FROM batch_runs WHERE run_id = ?
+    `).get(runId) ?? null;
+  }
+
+  listSessionIdsForRun(runId: string): string[] {
+    return this.db.query<{ session_id: string }, [string]>(
+      "SELECT session_id FROM batch_sessions WHERE parent_run_id = ? ORDER BY wave_index ASC, start_time ASC",
+    ).all(runId).map((row) => row.session_id);
+  }
+
+  listIncompletePromptsForRun(runId: string): Array<{
+    promptText: string; week: string; scheduleDate: string; themeColumn: string;
+  }> {
+    return this.db.query<{
+      prompt_text: string; week: string; schedule_date: string; theme_column: string;
+    }, [string]>(`
+      SELECT p.prompt_text, COALESCE(p.week, '') AS week,
+        COALESCE(p.schedule_date, '') AS schedule_date,
+        COALESCE(p.theme_column, '') AS theme_column
+      FROM session_prompts p
+      JOIN batch_sessions s ON s.session_id = p.session_id
+      LEFT JOIN generated_assets a ON a.prompt_id = p.prompt_id
+      WHERE s.parent_run_id = ? AND a.asset_id IS NULL AND p.status != 'completed'
+      ORDER BY s.wave_index ASC, p.ordinal ASC
+    `).all(runId).map((row) => ({
+      promptText: row.prompt_text,
+      week: row.week,
+      scheduleDate: row.schedule_date,
+      themeColumn: row.theme_column,
+    }));
+  }
+
+  listIncompletePromptsForSession(sessionId: string): Array<{
+    promptText: string; week: string; scheduleDate: string; themeColumn: string;
+  }> {
+    return this.db.query<{
+      prompt_text: string; week: string; schedule_date: string; theme_column: string;
+    }, [string]>(`
+      SELECT p.prompt_text, COALESCE(p.week, '') AS week,
+        COALESCE(p.schedule_date, '') AS schedule_date,
+        COALESCE(p.theme_column, '') AS theme_column
+      FROM session_prompts p
+      LEFT JOIN generated_assets a ON a.prompt_id = p.prompt_id
+      WHERE p.session_id = ? AND a.asset_id IS NULL AND p.status != 'completed'
+      ORDER BY p.ordinal
+    `).all(sessionId).map((row) => ({
+      promptText: row.prompt_text,
+      week: row.week,
+      scheduleDate: row.schedule_date,
+      themeColumn: row.theme_column,
+    }));
+  }
+
+  setSessionPhase(sessionId: string, phase: RunPhase, stamp?: {
+    submitted?: boolean; remoteCompleted?: boolean; downloadStarted?: boolean;
+    downloadFinished?: boolean; persistFinished?: boolean;
+  }): void {
+    const parts = ["phase = ?"];
+    const values: Array<string | null> = [phase];
+    if (stamp?.submitted) parts.push("submitted_at = COALESCE(submitted_at, CURRENT_TIMESTAMP)");
+    if (stamp?.remoteCompleted) parts.push("remote_completed_at = COALESCE(remote_completed_at, CURRENT_TIMESTAMP)");
+    if (stamp?.downloadStarted) parts.push("download_started_at = COALESCE(download_started_at, CURRENT_TIMESTAMP)");
+    if (stamp?.downloadFinished) parts.push("download_finished_at = COALESCE(download_finished_at, CURRENT_TIMESTAMP)");
+    if (stamp?.persistFinished) parts.push("persist_finished_at = COALESCE(persist_finished_at, CURRENT_TIMESTAMP)");
+    this.db.query(`UPDATE batch_sessions SET ${parts.join(", ")} WHERE session_id = ?`).run(...values, sessionId);
+  }
+
+  markPromptStarted(promptId: string): void {
+    this.db.query(`
+      UPDATE session_prompts SET started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
+      WHERE prompt_id = ?
+    `).run(promptId);
+  }
+
+  averagePromptDurationMs(limit = 40): number | null {
+    const row = this.db.query<{ avg_ms: number | null }, [number]>(`
+      SELECT AVG(duration_ms) AS avg_ms FROM (
+        SELECT duration_ms FROM session_prompts
+        WHERE duration_ms IS NOT NULL AND duration_ms > 0
+        ORDER BY rowid DESC LIMIT ?
+      )
+    `).get(limit);
+    return row?.avg_ms != null && Number.isFinite(row.avg_ms) ? row.avg_ms : null;
   }
 
   listKeys(): ApiKeyRecord[] {
@@ -446,7 +718,7 @@ export class AppDatabase {
         COALESCE(p.theme_column, '') AS theme_column
       FROM session_prompts p
       LEFT JOIN generated_assets a ON a.prompt_id = p.prompt_id
-      WHERE p.session_id = ? AND a.asset_id IS NULL AND p.status != 'cancelled'
+      WHERE p.session_id = ? AND a.asset_id IS NULL AND p.status != 'completed'
       ORDER BY p.ordinal
     `).all(sessionId).map((row) => ({
       promptText: row.prompt_text,
@@ -461,17 +733,22 @@ export class AppDatabase {
     input: SubmitRunInput,
     fxRate: number,
     estimate: { costUsd: number; pricingVersion: string } = { costUsd: 0, pricingVersion: "unknown" },
+    meta: { parentRunId?: string | null; waveIndex?: number | null; waveCount?: number | null } = {},
   ): void {
     const transaction = this.db.transaction(() => {
       this.db.query(`
         INSERT INTO batch_sessions
           (session_id, model_used, run_mode, total_prompts, status, status_message, fx_rate, quality,
-           size_used, output_format, reference_file_id, diagnostic_id, estimate_usd, pricing_version)
-        VALUES (?, ?, ?, ?, 'pending', 'Queued', ?, ?, ?, ?, ?, ?, ?, ?)
+           size_used, output_format, reference_file_id, diagnostic_id, estimate_usd, pricing_version,
+           parent_run_id, wave_index, wave_count, phase)
+        VALUES (?, ?, ?, ?, 'pending', 'Queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued')
       `).run(
         sessionId, input.model, input.mode, input.prompts.length, fxRate,
         input.quality, outputSize(input.format), input.format, input.referenceImageFileIds?.[0] ?? null,
         `BIS-${sessionId.replaceAll("-", "").slice(0, 8)}`, estimate.costUsd, estimate.pricingVersion,
+        meta.parentRunId ?? input.parentRunId ?? null,
+        meta.waveIndex ?? input.waveIndex ?? null,
+        meta.waveCount ?? input.waveCount ?? null,
       );
 
       const insertReference = this.db.query(`
@@ -565,16 +842,47 @@ export class AppDatabase {
       diagnostic_id: string;
       last_provider_error: string | null;
       next_poll_at: string | null;
+      parent_run_id: string | null;
+      wave_index: number | null;
+      wave_count: number | null;
+      estimate_usd: number;
+      phase: string;
+      submitted_at: string | null;
+      remote_completed_at: string | null;
+      download_started_at: string | null;
+      download_finished_at: string | null;
+      persist_finished_at: string | null;
     }, [string]>(`
       SELECT session_id, status, total_prompts, completed_count,
         CAST((julianday(COALESCE(end_time, CURRENT_TIMESTAMP)) - julianday(start_time)) * 86400000 AS INTEGER) AS elapsed_ms,
         input_tokens, output_tokens, cost_usd, cost_pkr, fx_rate, status_message,
         run_mode, output_format, size_used, quality, diagnostic_id, last_provider_error, next_poll_at,
+        parent_run_id, wave_index, wave_count, estimate_usd, COALESCE(phase, 'queued') AS phase,
+        submitted_at, remote_completed_at, download_started_at, download_finished_at, persist_finished_at,
         (SELECT COUNT(*) FROM session_prompts p WHERE p.session_id = batch_sessions.session_id
           AND p.status != 'completed') AS retryable_count
       FROM batch_sessions WHERE session_id = ?
     `).get(sessionId);
     if (!row) throw new Error(`Unknown session: ${sessionId}`);
+    const remaining = Math.max(0, row.total_prompts - row.completed_count);
+    const avgMs = this.averagePromptDurationMs();
+    const etaMs = estimateEtaMs({
+      status: row.status,
+      phase: (row.phase as RunPhase) || "queued",
+      runMode: row.run_mode,
+      remaining,
+      totalPrompts: row.total_prompts,
+      completedCount: row.completed_count,
+      elapsedMs: Math.max(0, row.elapsed_ms),
+      avgDurationMs: avgMs,
+    });
+    const msBetween = (start: string | null, end: string | null) => {
+      if (!start || !end) return null;
+      const a = Date.parse(start);
+      const b = Date.parse(end);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+      return Math.max(0, b - a);
+    };
     return {
       sessionId: row.session_id,
       status: row.status,
@@ -594,6 +902,18 @@ export class AppDatabase {
       diagnosticId: row.diagnostic_id,
       lastError: parseError(row.last_provider_error),
       nextPollAt: row.next_poll_at,
+      parentRunId: row.parent_run_id,
+      waveIndex: row.wave_index,
+      waveCount: row.wave_count,
+      estimateUsd: row.estimate_usd,
+      etaMs,
+      phase: (row.phase as RunPhase) || "queued",
+      durationMs: {
+        submit: msBetween(row.submitted_at, row.remote_completed_at ?? row.download_started_at),
+        remote: msBetween(row.submitted_at, row.remote_completed_at),
+        download: msBetween(row.download_started_at, row.download_finished_at),
+        persist: msBetween(row.download_finished_at ?? row.persist_finished_at, row.persist_finished_at),
+      },
     };
   }
 
@@ -639,9 +959,11 @@ export class AppDatabase {
     const rows = this.db.query<{
       prompt_id: string; ordinal: number; prompt_text: string; status: PromptStatus;
       error_message: string | null; attempts: number; has_image: number;
+      duration_ms: number | null; cost_usd: number;
     }, [string]>(`
       SELECT p.prompt_id, p.ordinal, p.prompt_text, p.status, p.error_message, p.attempts,
-        EXISTS(SELECT 1 FROM generated_assets a WHERE a.prompt_id = p.prompt_id) AS has_image
+        EXISTS(SELECT 1 FROM generated_assets a WHERE a.prompt_id = p.prompt_id) AS has_image,
+        p.duration_ms, COALESCE(p.cost_usd, 0) AS cost_usd
       FROM session_prompts p WHERE p.session_id = ? ORDER BY p.ordinal
     `).all(sessionId);
     return rows.map((row) => ({
@@ -652,12 +974,15 @@ export class AppDatabase {
       error: parseError(row.error_message),
       attempts: row.attempts,
       hasImage: row.has_image === 1,
+      durationMs: row.duration_ms,
+      costUsd: row.cost_usd,
     }));
   }
 
   markPromptProcessing(promptId: string): boolean {
     return this.db.query(`
-      UPDATE session_prompts SET status = 'processing', error_message = NULL, attempts = attempts + 1
+      UPDATE session_prompts SET status = 'processing', error_message = NULL, attempts = attempts + 1,
+        started_at = COALESCE(started_at, CURRENT_TIMESTAMP)
       WHERE prompt_id = ? AND status IN ('pending', 'failed')
     `).run(promptId).changes === 1;
   }
@@ -665,7 +990,11 @@ export class AppDatabase {
   completePrompt(promptId: string, usage: { inputTokens: number; outputTokens: number; costUsd: number }): void {
     this.db.query(`
       UPDATE session_prompts SET status = 'completed', error_message = NULL,
-        input_tokens = ?, output_tokens = ?, cost_usd = ?
+        input_tokens = ?, output_tokens = ?, cost_usd = ?,
+        completed_at = CURRENT_TIMESTAMP,
+        duration_ms = CASE
+          WHEN started_at IS NOT NULL THEN CAST((julianday(CURRENT_TIMESTAMP) - julianday(started_at)) * 86400000 AS INTEGER)
+          ELSE duration_ms END
       WHERE prompt_id = ? AND status != 'cancelled'
     `).run(usage.inputTokens, usage.outputTokens, usage.costUsd, promptId);
   }
@@ -774,17 +1103,18 @@ export class AppDatabase {
 
   listHistory(): HistoryItem[] {
     const rows = this.db.query<{
-      prompt_id: string; asset_id: string | null; session_id: string; prompt_text: string;
+      prompt_id: string; asset_id: string | null; session_id: string; parent_run_id: string | null;
+      wave_index: number | null; prompt_text: string;
       week: string; schedule_date: string; theme_column: string; model_used: string;
       status: SessionStatus; start_time: string; image_filename: string | null; file_path: string | null;
-      input_tokens: number; output_tokens: number; cost_usd: number; cost_pkr: number;
+      input_tokens: number; output_tokens: number; cost_usd: number; cost_pkr: number; run_mode: RunMode;
     }, []>(`
-      SELECT p.prompt_id, a.asset_id, p.session_id, p.prompt_text,
+      SELECT p.prompt_id, a.asset_id, p.session_id, s.parent_run_id, s.wave_index, p.prompt_text,
         COALESCE(p.week, '') AS week, COALESCE(p.schedule_date, '') AS schedule_date,
         COALESCE(p.theme_column, '') AS theme_column, s.model_used, s.status, s.start_time,
         a.image_filename, a.file_path, COALESCE(a.input_tokens, 0) AS input_tokens,
         COALESCE(a.output_tokens, 0) AS output_tokens, COALESCE(a.cost_usd, 0) AS cost_usd,
-        COALESCE(a.cost_pkr, 0) AS cost_pkr
+        COALESCE(a.cost_pkr, 0) AS cost_pkr, s.run_mode
       FROM session_prompts p
       JOIN batch_sessions s ON s.session_id = p.session_id
       LEFT JOIN generated_assets a ON a.asset_id = (
@@ -799,6 +1129,8 @@ export class AppDatabase {
       promptId: row.prompt_id,
       assetId: row.asset_id,
       sessionId: row.session_id,
+      parentRunId: row.parent_run_id,
+      waveIndex: row.wave_index,
       promptText: row.prompt_text,
       week: row.week,
       scheduleDate: row.schedule_date,
@@ -812,6 +1144,7 @@ export class AppDatabase {
       outputTokens: row.output_tokens,
       costUsd: row.cost_usd,
       costPkr: row.cost_pkr,
+      runMode: row.run_mode,
     }));
   }
 
@@ -858,12 +1191,14 @@ export class AppDatabase {
       total_prompts: number; completed_count: number; cost_usd: number; cost_pkr: number;
       start_time: string; end_time: string | null; key_label: string | null;
       output_format: string; size_used: string; quality: QualityTier; retryable_count: number;
-      diagnostic_id: string; last_provider_error: string | null;
+      diagnostic_id: string; last_provider_error: string | null; parent_run_id: string | null;
+      wave_index: number | null; estimate_usd: number; elapsed_ms: number;
     }, []>(`
       SELECT s.session_id, s.status, s.model_used, s.run_mode, s.total_prompts,
         s.completed_count, s.cost_usd, s.cost_pkr, s.start_time, s.end_time,
         k.label AS key_label, s.output_format, s.size_used, s.quality, s.diagnostic_id,
-        s.last_provider_error,
+        s.last_provider_error, s.parent_run_id, s.wave_index, s.estimate_usd,
+        CAST((julianday(COALESCE(s.end_time, CURRENT_TIMESTAMP)) - julianday(s.start_time)) * 86400000 AS INTEGER) AS elapsed_ms,
         (SELECT COUNT(*) FROM session_prompts p WHERE p.session_id = s.session_id
           AND p.status != 'completed') AS retryable_count
       FROM batch_sessions s LEFT JOIN api_keys k ON k.id = s.key_used_id
@@ -886,7 +1221,64 @@ export class AppDatabase {
       retryableCount: row.retryable_count,
       diagnosticId: row.diagnostic_id,
       lastError: parseError(row.last_provider_error),
+      parentRunId: row.parent_run_id,
+      waveIndex: row.wave_index,
+      estimateUsd: row.estimate_usd,
+      elapsedMs: Math.max(0, row.elapsed_ms),
     }));
+  }
+
+  listRuns(): RunSummary[] {
+    const runs = this.db.query<{
+      run_id: string; status: SessionStatus; model_used: string; run_mode: RunMode;
+      total_prompts: number; completed_count: number; cost_usd: number; cost_pkr: number;
+      estimate_usd: number; wave_size: number; wave_count: number; created_at: string;
+      status_message: string; output_format: string; quality: QualityTier; diagnostic_id: string;
+    }, []>(`
+      SELECT run_id, status, model_used, run_mode, total_prompts, completed_count, cost_usd, cost_pkr,
+        estimate_usd, wave_size, wave_count, created_at, status_message, output_format, quality,
+        COALESCE(diagnostic_id, '') AS diagnostic_id
+      FROM batch_runs ORDER BY created_at DESC LIMIT 100
+    `).all();
+    const sessions = this.listSessions();
+    return runs.map((run) => ({
+      runId: run.run_id,
+      status: run.status,
+      model: run.model_used,
+      runMode: run.run_mode,
+      totalPrompts: run.total_prompts,
+      completedCount: run.completed_count,
+      costUsd: run.cost_usd,
+      costPkr: run.cost_pkr,
+      estimateUsd: run.estimate_usd,
+      waveSize: run.wave_size,
+      waveCount: run.wave_count,
+      startTime: run.created_at,
+      message: run.status_message,
+      format: isOutputFormatId(run.output_format) ? run.output_format : "square",
+      quality: run.quality,
+      diagnosticId: run.diagnostic_id,
+      sessions: sessions.filter((session) => session.parentRunId === run.run_id),
+    }));
+  }
+
+  getRunDetail(runId: string): RunSummary | null {
+    return this.listRuns().find((run) => run.runId === runId) ?? null;
+  }
+
+  isRunCancelled(runId: string): boolean {
+    const row = this.getBatchRun(runId);
+    return row?.status === "cancelled";
+  }
+
+  aggregateRunUsage(runId: string): { completed: number; failed: number; costUsd: number } {
+    const row = this.db.query<{ completed: number; failed: number; cost_usd: number }, [string]>(`
+      SELECT COALESCE(SUM(s.completed_count), 0) AS completed,
+        COALESCE(SUM((SELECT COUNT(*) FROM session_prompts p WHERE p.session_id = s.session_id AND p.status = 'failed')), 0) AS failed,
+        COALESCE(SUM(s.cost_usd), 0) AS cost_usd
+      FROM batch_sessions s WHERE s.parent_run_id = ?
+    `).get(runId);
+    return { completed: row?.completed ?? 0, failed: row?.failed ?? 0, costUsd: row?.cost_usd ?? 0 };
   }
 
   reconcileMissingAssets(fileExists: (path: string) => boolean): number {
