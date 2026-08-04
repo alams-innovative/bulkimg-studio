@@ -24,6 +24,8 @@ import {
   LoaderCircle,
   Moon,
   PackageOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Rows3,
   ScrollText,
@@ -96,8 +98,18 @@ const elements = {
   logsList: byId("logs-list"),
   logsPath: byId("logs-path"),
   selectedCount: byId("selected-count"),
+  selectedChip: byId("selected-chip"),
   estimatedCost: byId("estimated-cost"),
+  estimateBox: byId("estimate-box"),
   fxRate: byId("fx-rate"),
+  appShell: byId("app-shell"),
+  sidebar: byId("sidebar"),
+  sidebarToggle: byId<HTMLButtonElement>("sidebar-toggle"),
+  waveSizeField: byId("wave-size-field"),
+  toastMessage: byId("toast-message"),
+  toastTimerLabel: byId("toast-timer"),
+  toastClose: byId<HTMLButtonElement>("toast-close"),
+  toastProgress: byId("toast-progress"),
   csvTab: byId<HTMLButtonElement>("csv-tab"),
   manualTab: byId<HTMLButtonElement>("manual-tab"),
   csvPanel: byId("csv-panel"),
@@ -203,6 +215,13 @@ let pollTimer: number | null = null;
 let elapsedTimer: number | null = null;
 let elapsedAnchor: { wallMs: number; elapsedMs: number } | null = null;
 let toastTimer: number | null = null;
+let toastTickTimer: number | null = null;
+let toastEndsAt = 0;
+let runSubmitInFlight = false;
+let lastWaveSizeValue = 100;
+const SIDEBAR_STORAGE_KEY = "bulkimg.sidebar.collapsed";
+const TOAST_MS_OK = 4200;
+const TOAST_MS_ERR = 7000;
 let logsLines: string[] = [];
 let logsSearchTimer: number | null = null;
 let historyItems: HistoryItem[] = [];
@@ -264,38 +283,39 @@ function describeWaveMath(promptCount: number): string {
   return `${promptCount} prompts → ${full} wave${full === 1 ? "" : "s"} of ${size} + 1 of ${rem}`;
 }
 
+function setHidden(el: HTMLElement, hidden: boolean): void {
+  el.classList.toggle("hidden", hidden);
+  el.hidden = hidden;
+}
+
 function updateWaveUi(): void {
   const batch = currentMode() === "batch";
-  elements.waveControls.classList.toggle("hidden", !batch);
-  elements.waveSize.disabled = !batch || !elements.waveSplit.checked;
-  elements.waveMath.textContent = batch ? describeWaveMath(selected.size) : "Direct mode does not use waves";
+  const split = elements.waveSplit.checked;
+  setHidden(elements.waveControls, !batch);
+  setHidden(elements.waveSizeField, !batch || !split);
+  elements.waveSize.disabled = !batch || !split;
+  const showMath = batch && split && selected.size > 0;
+  setHidden(elements.waveMath, !showMath);
+  if (showMath) elements.waveMath.textContent = describeWaveMath(selected.size);
 }
 
-function formatEta(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
-  if (ms < 60_000) return `~${Math.max(1, Math.ceil(ms / 1000))}s`;
-  const minutes = Math.ceil(ms / 60_000);
-  if (minutes < 60) return `~${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  const rest = minutes % 60;
-  return rest ? `~${hours}h ${rest}m` : `~${hours}h`;
-}
-
-function formatRateLimits(admin: AdminConfigView | null): string {
+function formatRateLimits(admin: AdminConfigView | null): { text: string; level: "soft" | "warn" | "ready" } {
   if (!admin?.configured) {
-    return admin?.lastError
-      ? `Admin key error: ${admin.lastError}`
-      : "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works.";
+    if (admin?.lastError) return { text: `Admin key: ${admin.lastError}`, level: "warn" };
+    return { text: "Org limits optional — Admin key in API keys.", level: "soft" };
   }
   const limits = admin.rateLimits;
   if (!limits) {
-    return admin.projectId
-      ? `Admin key saved · project ${admin.projectId}. Limits not loaded yet — refresh limits.`
-      : "Admin key saved. Set a project ID and refresh limits.";
+    return {
+      text: admin.projectId
+        ? `Admin · ${admin.projectId} — refresh limits`
+        : "Admin key saved — pick a project and refresh",
+      level: "soft",
+    };
   }
-  const ipm = limits.maxImagesPerMinute != null ? `${formatNumber(limits.maxImagesPerMinute)} images/min` : "images/min —";
+  const ipm = limits.maxImagesPerMinute != null ? `${formatNumber(limits.maxImagesPerMinute)}/min` : "images/min —";
   const tpm = limits.maxTokensPerMinute != null ? `${formatNumber(limits.maxTokensPerMinute)} TPM` : "TPM —";
-  return `${limits.model}: ${ipm} · ${tpm}`;
+  return { text: `${limits.model}: ${ipm} · ${tpm}`, level: "ready" };
 }
 
 function applyAdminView(admin: AdminConfigView): void {
@@ -304,12 +324,160 @@ function applyAdminView(admin: AdminConfigView): void {
     : "No Admin key — generation still works; rate limits stay hidden.";
   if (admin.projectId) elements.adminProject.value = admin.projectId;
   elements.adminLimitsPreview.textContent = admin.rateLimits
-    ? formatRateLimits(admin)
+    ? formatRateLimits(admin).text
     : (admin.lastError ?? "");
-  elements.rateLimitsLine.textContent = formatRateLimits(admin);
+  const limitsUi = formatRateLimits(admin);
+  elements.rateLimitsLine.textContent = limitsUi.text;
+  elements.rateLimitsLine.dataset["level"] = limitsUi.level;
   elements.clearAdmin.disabled = !admin.configured;
   elements.refreshLimits.disabled = !admin.configured;
   elements.loadAdminProjects.disabled = !admin.configured;
+}
+
+function isSessionActive(target: SessionTelemetry | null = session): boolean {
+  return Boolean(target && (target.status === "pending" || target.status === "processing"));
+}
+
+function canResumeSession(target: SessionTelemetry | null = session): boolean {
+  return Boolean(target && target.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(target.status));
+}
+
+function syncEstimateChrome(count: number): void {
+  const show = count > 0;
+  setHidden(elements.estimatedCost, !show);
+  setHidden(elements.estimateBox, !show);
+  if (!show) {
+    elements.estimatedCost.textContent = "";
+    elements.railEstimate.textContent = "";
+    elements.railPkr.textContent = "";
+  }
+}
+
+function syncKeyCountBadge(active: number): void {
+  elements.keyCount.textContent = String(active);
+  setHidden(elements.keyCount, active === 0);
+}
+
+function syncActionState(): void {
+  const count = selected.size;
+  const overDirectLimit = currentMode() === "direct" && count > directPromptLimit();
+  const active = isSessionActive();
+  const canResume = canResumeSession();
+  const busy = runSubmitInFlight || elements.runButton.getAttribute("aria-busy") === "true";
+  const noKeys = activeKeyCount === 0;
+  const canGenerate = !busy && count > 0 && !overDirectLimit && !noKeys && !active;
+
+  elements.runButton.disabled = !canGenerate;
+  const label = elements.runButton.querySelector("span");
+  if (label) {
+    if (busy) label.textContent = "Starting…";
+    else if (active) label.textContent = "Running…";
+    else if (noKeys) label.textContent = "Add API key";
+    else if (overDirectLimit) label.textContent = `Choose up to ${directPromptLimit()}`;
+    else if (count) label.textContent = `Generate ${count}`;
+    else label.textContent = "Generate";
+  }
+  elements.runButton.title = noKeys
+    ? "Add a generation API key"
+    : count === 0
+      ? "Select prompts to generate"
+      : overDirectLimit
+        ? `Direct mode allows up to ${directPromptLimit()} prompts`
+        : active
+          ? "A run is already in progress"
+          : "Start generation";
+
+  setHidden(elements.cancelButton, !active);
+  elements.cancelButton.disabled = !active;
+
+  setHidden(elements.resumeButton, !canResume);
+  elements.resumeButton.disabled = !canResume;
+  elements.retryButton.classList.toggle("hidden", !canResume);
+  elements.retryButton.disabled = !canResume;
+
+  elements.exportButton.disabled = !session || busy;
+
+  const cells = selectableCells();
+  document.querySelectorAll<HTMLButtonElement>("[data-pick]").forEach((button) => {
+    const action = button.dataset["pick"];
+    if (action === "none") button.disabled = selected.size === 0;
+    else if (action === "all") button.disabled = cells.length === 0 || selected.size === cells.length;
+    else button.disabled = cells.length === 0;
+  });
+
+  elements.parseManual.disabled = elements.parseManual.getAttribute("aria-busy") === "true"
+    || !elements.manualPrompts.value.trim();
+}
+
+function dismissToast(): void {
+  if (toastTimer !== null) {
+    window.clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+  if (toastTickTimer !== null) {
+    window.clearInterval(toastTickTimer);
+    toastTickTimer = null;
+  }
+  elements.toast.classList.remove("show");
+  elements.toast.hidden = true;
+  elements.toastProgress.style.animation = "none";
+}
+
+function showToast(message: string, isError = false): void {
+  dismissToast();
+  const duration = isError ? TOAST_MS_ERR : TOAST_MS_OK;
+  toastEndsAt = Date.now() + duration;
+  elements.toastMessage.textContent = message;
+  elements.toast.classList.toggle("error", isError);
+  elements.toast.setAttribute("role", isError ? "alert" : "status");
+  elements.toast.setAttribute("aria-live", isError ? "assertive" : "polite");
+  elements.toast.hidden = false;
+  const secondsLeft = () => Math.max(0, Math.ceil((toastEndsAt - Date.now()) / 1000));
+  elements.toastTimerLabel.textContent = `${secondsLeft()}s`;
+  // restart CSS progress animation
+  elements.toastProgress.style.animation = "none";
+  void elements.toastProgress.offsetWidth;
+  elements.toastProgress.style.animation = "";
+  elements.toastProgress.style.animationDuration = `${duration}ms`;
+  elements.toast.classList.add("show");
+  refreshIcons();
+  toastTickTimer = window.setInterval(() => {
+    const left = secondsLeft();
+    elements.toastTimerLabel.textContent = `${left}s`;
+    if (left <= 0 && toastTickTimer !== null) {
+      window.clearInterval(toastTickTimer);
+      toastTickTimer = null;
+    }
+  }, 250);
+  toastTimer = window.setTimeout(() => dismissToast(), duration);
+}
+
+function applySidebarCollapsed(collapsed: boolean, persist = false): void {
+  elements.appShell.dataset["sidebar"] = collapsed ? "collapsed" : "expanded";
+  elements.sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+  elements.sidebarToggle.setAttribute("aria-label", collapsed ? "Expand sidebar" : "Collapse sidebar");
+  elements.sidebarToggle.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  elements.sidebarToggle.innerHTML = collapsed
+    ? '<i data-lucide="panel-left-open"></i>'
+    : '<i data-lucide="panel-left-close"></i>';
+  refreshIcons();
+  if (persist) {
+    try {
+      window.localStorage.setItem(SIDEBAR_STORAGE_KEY, collapsed ? "1" : "0");
+    } catch {
+      // persist optional
+    }
+  }
+}
+
+function restoreSidebar(): void {
+  let collapsed = false;
+  try {
+    collapsed = window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1";
+  } catch {
+    collapsed = false;
+  }
+  applySidebarCollapsed(collapsed, false);
 }
 
 function setKeyTypeTab(type: "generation" | "admin"): void {
@@ -370,6 +538,8 @@ const slateStackIcons = {
   LoaderCircle,
   Moon,
   PackageOpen,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Rows3,
   ScrollText,
@@ -465,14 +635,14 @@ function formatDate(value: string | null): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-function showToast(message: string, isError = false): void {
-  elements.toast.textContent = message;
-  elements.toast.classList.toggle("error", isError);
-  elements.toast.setAttribute("role", isError ? "alert" : "status");
-  elements.toast.setAttribute("aria-live", isError ? "assertive" : "polite");
-  elements.toast.classList.add("show");
-  if (toastTimer !== null) window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => elements.toast.classList.remove("show"), 4200);
+function formatEta(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 60_000) return `~${Math.max(1, Math.ceil(ms / 1000))}s`;
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `~${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  return rest ? `~${hours}h ${rest}m` : `~${hours}h`;
 }
 
 function setTab(mode: "csv" | "manual"): void {
@@ -557,26 +727,18 @@ function updateSelection(): void {
   const previousCount = elements.selectedCount.textContent;
   elements.selectedCount.textContent = String(count);
   if (previousCount !== String(count)) animateState(elements.selectedCount);
-  const overDirectLimit = currentMode() === "direct" && count > directPromptLimit();
-  elements.runButton.disabled = count === 0 || overDirectLimit;
-  elements.runButton.querySelector("span")!.textContent = overDirectLimit
-    ? `Choose up to ${directPromptLimit()}`
-    : count ? `Generate ${count}` : "Generate";
   updateWaveUi();
+  syncEstimateChrome(count);
+  syncActionState();
   if (estimateTimer !== null) window.clearTimeout(estimateTimer);
-  if (count === 0) {
-    elements.estimatedCost.textContent = "$0.00";
-    elements.railEstimate.textContent = "$0.00";
-    elements.railPkr.textContent = "PKR 0.00";
-    return;
-  }
+  if (count === 0) return;
   estimateTimer = window.setTimeout(() => void refreshEstimate(), 180);
 }
 
 async function refreshEstimate(): Promise<void> {
   const count = selected.size;
   if (count === 0) {
-    elements.estimatedCost.textContent = "$0.00";
+    syncEstimateChrome(0);
     return;
   }
   try {
@@ -589,11 +751,14 @@ async function refreshEstimate(): Promise<void> {
       referenceCount: referenceImages.length,
     });
     elements.fxRate.textContent = `PKR ${estimate.fxRate.toFixed(2)}`;
+    setHidden(elements.estimatedCost, false);
+    setHidden(elements.estimateBox, false);
     elements.estimatedCost.textContent = `$${estimate.costUsd.toFixed(2)}`;
     elements.railEstimate.textContent = `$${estimate.costUsd.toFixed(3)}`;
     elements.railPkr.textContent = `PKR ${estimate.costPkr.toFixed(2)}`;
     animateState(elements.railEstimate);
   } catch {
+    setHidden(elements.estimatedCost, false);
     elements.estimatedCost.textContent = "—";
   }
 }
@@ -771,13 +936,7 @@ function renderTelemetry(next: SessionTelemetry): void {
   const estimate = Number.isFinite(next.estimateUsd) ? next.estimateUsd : 0;
   elements.sessionCost.textContent = `$${next.costUsd.toFixed(3)} · est $${estimate.toFixed(3)} · PKR ${next.costPkr.toFixed(2)}`;
   elements.fxRate.textContent = `PKR ${next.fxRate.toFixed(2)}`;
-  elements.exportButton.disabled = false;
-  elements.cancelButton.disabled = !active;
-  const canResume = next.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(next.status);
-  elements.retryButton.classList.toggle("hidden", !canResume);
-  elements.retryButton.disabled = !canResume;
-  elements.resumeButton.classList.toggle("hidden", !canResume);
-  elements.resumeButton.disabled = !canResume;
+  syncActionState();
   if (pollTimer !== null && ["partial", "completed", "failed", "cancelled"].includes(next.status)) {
     window.clearInterval(pollTimer);
     pollTimer = null;
@@ -856,14 +1015,16 @@ function referenceMimeType(file: File): string {
 function renderReferenceImages(announcement?: string): void {
   const count = referenceImages.length;
   const limit = referenceLimit();
+  elements.referenceControl.dataset["count"] = String(count);
   elements.referenceDock.classList.toggle("has-image", count > 0);
   elements.referenceDock.disabled = count >= limit;
   elements.referenceTitle.textContent = count === 0 ? "Add reference images" : count >= limit ? "References ready" : "Add another reference";
   elements.referenceHint.textContent = count === 0
-    ? `Choose, drop, or paste up to ${limit} images · 50 MB each`
-    : count >= limit ? "Remove an image to add another" : "Click, drop, or press Ctrl+V to add more";
+    ? `Optional · up to ${limit} · 50 MB each`
+    : count >= limit ? "Remove an image to add another" : "Click, drop, or Ctrl+V to add more";
   elements.referenceBadge.textContent = `${count}/${limit}`;
-  elements.referenceList.classList.toggle("hidden", count === 0);
+  setHidden(elements.referenceBadge, count === 0);
+  setHidden(elements.referenceList, count === 0);
   elements.referenceList.innerHTML = referenceImages.map((reference, index) => `
     <div class="reference-item" role="listitem">
       <img src="${escapeHtml(reference.previewUrl)}" alt="" />
@@ -958,7 +1119,8 @@ async function loadKeys(): Promise<void> {
   const requests = keys.reduce((sum, key) => sum + key.totalRequests, 0);
   const tokens = keys.reduce((sum, key) => sum + key.inputTokens + key.outputTokens, 0);
   const spend = keys.reduce((sum, key) => sum + key.costUsd, 0);
-  elements.keyCount.textContent = String(active);
+  activeKeyCount = active;
+  syncKeyCountBadge(active);
   elements.activeKeyTotal.textContent = String(active);
   elements.keyRequestTotal.textContent = formatNumber(requests);
   elements.keyTokenTotal.textContent = formatNumber(tokens);
@@ -1007,6 +1169,7 @@ async function loadKeys(): Promise<void> {
       }
     });
   });
+  syncActionState();
 }
 
 async function loadSessions(): Promise<void> {
@@ -1564,6 +1727,7 @@ async function bootstrap(): Promise<void> {
   elements.platform.textContent = data.platform;
   elements.keyCount.textContent = String(data.keyCount);
   activeKeyCount = data.keyCount;
+  syncKeyCountBadge(data.keyCount);
   elements.fxRate.textContent = `PKR ${data.fxRate.toFixed(2)}`;
   elements.model.innerHTML = data.models.models.map((model) =>
     `<option value="${escapeHtml(model.id)}" ${model.enabled ? "" : "disabled"}>${escapeHtml(model.label)}</option>`,
@@ -1581,17 +1745,41 @@ async function bootstrap(): Promise<void> {
   }
   if (data.settings) {
     const waveSize = data.settings.waveSize;
-    elements.waveSize.value = String(waveSize);
-    elements.waveSplit.checked = waveSize > 0;
+    if (waveSize > 0) {
+      elements.waveSize.value = String(waveSize);
+      lastWaveSizeValue = waveSize;
+      elements.waveSplit.checked = true;
+    } else {
+      elements.waveSplit.checked = false;
+      elements.waveSize.value = String(appLimits.defaultWaveSize || APP_LIMITS.defaultWaveSize);
+      lastWaveSizeValue = appLimits.defaultWaveSize || APP_LIMITS.defaultWaveSize;
+    }
   }
   if (data.admin) applyAdminView(data.admin);
-  else if (data.adminWarning) elements.rateLimitsLine.textContent = data.adminWarning;
+  else if (data.adminWarning) {
+    elements.rateLimitsLine.textContent = "Org limits optional — Admin key in API keys.";
+    elements.rateLimitsLine.dataset["level"] = "soft";
+  }
   renderReferenceImages();
   updateWaveUi();
+  syncEstimateChrome(selected.size);
+  syncActionState();
 }
 
 applyTheme(getInitialTheme());
+restoreSidebar();
 refreshIcons();
+syncEstimateChrome(0);
+syncActionState();
+
+elements.sidebarToggle.addEventListener("click", () => {
+  const collapsed = elements.appShell.dataset["sidebar"] !== "collapsed";
+  applySidebarCollapsed(collapsed, true);
+  // Keep focus on toggle for keyboard users
+  elements.sidebarToggle.focus();
+});
+
+elements.toastClose.addEventListener("click", () => dismissToast());
 
 elements.themeToggle.addEventListener("click", () => {
   const current = document.documentElement.dataset["theme"] === "light" ? "light" : "dark";
@@ -1663,6 +1851,7 @@ elements.parseManual.addEventListener("click", async () => {
     elements.parseManual.removeAttribute("aria-busy");
   }
 });
+elements.manualPrompts.addEventListener("input", () => syncActionState());
 elements.manualPrompts.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && event.key === "Enter") elements.parseManual.click();
 });
@@ -1692,14 +1881,27 @@ document.querySelectorAll<HTMLInputElement>('input[name="run-mode"]').forEach((r
   });
 });
 elements.waveSplit.addEventListener("change", () => {
-  if (!elements.waveSplit.checked) elements.waveSize.value = "0";
-  else if (Number(elements.waveSize.value) <= 0) elements.waveSize.value = String(appLimits.defaultWaveSize || APP_LIMITS.defaultWaveSize);
+  if (elements.waveSplit.checked) {
+    if (Number(elements.waveSize.value) <= 0) {
+      elements.waveSize.value = String(lastWaveSizeValue || appLimits.defaultWaveSize || APP_LIMITS.defaultWaveSize);
+    }
+    lastWaveSizeValue = Math.max(1, Number(elements.waveSize.value) || lastWaveSizeValue);
+  } else {
+    const current = Number(elements.waveSize.value);
+    if (Number.isFinite(current) && current > 0) lastWaveSizeValue = current;
+  }
   updateWaveUi();
   void app.rpc!.request.setSettings({ waveSize: effectiveWaveSize() }).catch(() => undefined);
 });
 elements.waveSize.addEventListener("change", () => {
-  if (Number(elements.waveSize.value) <= 0) elements.waveSplit.checked = false;
-  else elements.waveSplit.checked = true;
+  const raw = Number(elements.waveSize.value);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    elements.waveSplit.checked = false;
+  } else {
+    elements.waveSplit.checked = true;
+    lastWaveSizeValue = Math.min(appLimits.batchPromptLimit, Math.floor(raw));
+    elements.waveSize.value = String(lastWaveSizeValue);
+  }
   updateWaveUi();
   void app.rpc!.request.setSettings({ waveSize: effectiveWaveSize() }).catch(() => undefined);
 });
@@ -1752,9 +1954,10 @@ elements.runButton.addEventListener("click", async () => {
     return;
   }
   if (currentMode() === "batch" && selected.size > 100 && !window.confirm(`Submit ${selected.size} prompts as a paid Batch run?`)) return;
+  runSubmitInFlight = true;
   elements.runButton.disabled = true;
   elements.runButton.setAttribute("aria-busy", "true");
-  elements.runButton.querySelector("span")!.textContent = "Starting…";
+  syncActionState();
   try {
     const prompts = matrix.cells.filter((cell) => selected.has(cell.id)).map(({ promptText, week, scheduleDate, themeColumn }) => ({ promptText, week, scheduleDate, themeColumn }));
     const next = await app.rpc!.request.submitBatchRun({
@@ -1774,6 +1977,7 @@ elements.runButton.addEventListener("click", async () => {
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not start generation", true);
   } finally {
+    runSubmitInFlight = false;
     elements.runButton.removeAttribute("aria-busy");
     updateSelection();
   }
@@ -1787,6 +1991,8 @@ elements.cancelButton.addEventListener("click", async () => {
     showToast("Run cancelled. Saved images stay.");
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not cancel run", true);
+  } finally {
+    syncActionState();
   }
 });
 
@@ -1804,8 +2010,8 @@ async function resumeLeftovers(): Promise<void> {
     if (next.status === "pending" || next.status === "processing") await startSessionPolling(next.sessionId);
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not resume prompts", true);
-    elements.resumeButton.disabled = false;
-    elements.retryButton.disabled = false;
+  } finally {
+    syncActionState();
   }
 }
 
@@ -1864,7 +2070,7 @@ async function fillAdminProjects(): Promise<void> {
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not load projects", true);
   } finally {
-    elements.loadAdminProjects.disabled = false;
+    elements.loadAdminProjects.disabled = elements.clearAdmin.disabled;
   }
 }
 

@@ -8,31 +8,36 @@
     <link rel="stylesheet" href="index.css" />
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="sidebar" aria-label="Application sidebar">
-        <div class="brand-lockup">
-          <img class="brand-logo-dark" src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png" alt="" />
-          <img class="brand-logo-light" src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
-          <span><strong id="brand-name">BulkImg Studio</strong><small id="brand-version">1.0.1-beta</small></span>
+    <div class="app-shell" id="app-shell" data-sidebar="expanded">
+      <aside class="sidebar" id="sidebar" aria-label="Application sidebar">
+        <div class="sidebar-head">
+          <div class="brand-lockup">
+            <img class="brand-logo-dark" src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png" alt="" />
+            <img class="brand-logo-light" src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
+            <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small id="brand-version">1.0.1-beta</small></span>
+          </div>
+          <button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true" title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
         </div>
         <nav class="primary-nav" aria-label="Primary navigation">
-          <button id="nav-generator" class="nav-item active" data-view="generator" aria-current="page"><i data-lucide="layout-grid"></i><span>Generator</span></button>
-          <button id="nav-sessions" class="nav-item" data-view="sessions"><i data-lucide="clock-3"></i><span>Sessions</span></button>
-          <button id="nav-history" class="nav-item" data-view="history"><i data-lucide="images"></i><span>History</span></button>
-          <button id="nav-exports" class="nav-item" data-view="exports"><i data-lucide="archive"></i><span>Exports</span></button>
-          <button id="nav-logs" class="nav-item" data-view="logs"><i data-lucide="scroll-text"></i><span>Logs</span></button>
+          <button id="nav-generator" class="nav-item active" data-view="generator" aria-current="page" title="Generator"><i data-lucide="layout-grid"></i><span>Generator</span></button>
+          <button id="nav-sessions" class="nav-item" data-view="sessions" title="Sessions"><i data-lucide="clock-3"></i><span>Sessions</span></button>
+          <button id="nav-history" class="nav-item" data-view="history" title="History"><i data-lucide="images"></i><span>History</span></button>
+          <button id="nav-exports" class="nav-item" data-view="exports" title="Exports"><i data-lucide="archive"></i><span>Exports</span></button>
+          <button id="nav-logs" class="nav-item" data-view="logs" title="Logs"><i data-lucide="scroll-text"></i><span>Logs</span></button>
         </nav>
         <div class="sidebar-spacer"></div>
-        <button id="manage-keys" class="nav-item"><i data-lucide="key-round"></i><span>API keys</span><b id="key-count">0</b></button>
-        <button id="theme-toggle" class="nav-item" aria-label="Switch to light theme"><i class="theme-icon-moon" data-lucide="moon"></i><i class="theme-icon-sun" data-lucide="sun"></i><span id="theme-label">Dark theme</span></button>
-        <div class="platform-pill"><span id="platform">Windows</span><span>Local-first</span></div>
+        <button id="manage-keys" class="nav-item" title="API keys"><i data-lucide="key-round"></i><span>API keys</span><b id="key-count" class="hidden" hidden>0</b></button>
+        <button id="theme-toggle" class="nav-item" title="Theme" aria-label="Switch to light theme"><i class="theme-icon-moon" data-lucide="moon"></i><i class="theme-icon-sun" data-lucide="sun"></i><span id="theme-label">Dark theme</span></button>
+        <div class="platform-pill"><span id="platform">Windows</span><span class="platform-meta">Local-first</span></div>
       </aside>
 
       <main class="app-main">
         <header class="topbar">
           <div class="page-heading"><h1 id="page-title">Generate images.</h1></div>
           <div id="header-stats" class="compact-summary" aria-label="Current selection">
-            <span><strong id="selected-count">0</strong> selected</span><span id="estimated-cost">$0.00</span><span id="fx-rate">PKR —</span>
+            <span id="selected-chip"><strong id="selected-count">0</strong> selected</span>
+            <span id="estimated-cost" class="hidden" hidden>$0.00</span>
+            <span id="fx-rate">PKR —</span>
           </div>
         </header>
 
@@ -82,18 +87,24 @@
                 <label class="mode-option"><input type="radio" name="run-mode" value="direct" /><span><strong>Direct</strong><small>Up to 4 images</small></span></label>
               </fieldset>
               <div id="wave-controls" class="wave-controls">
-                <label class="mode-option wave-option"><input type="checkbox" id="wave-split" checked /><span><strong>Split into waves</strong><small id="wave-math">Off when size is 0</small></span></label>
-                <label>Wave size <input id="wave-size" type="number" min="0" max="1000" value="100" /><small class="field-hint">0 = one batch for all prompts</small></label>
+                <label class="mode-option wave-option"><input type="checkbox" id="wave-split" checked /><span><strong>Split into waves</strong><small id="wave-math" class="hidden" hidden></small></span></label>
+                <div id="wave-size-field" class="wave-size-field">
+                  <label>Wave size <input id="wave-size" type="number" min="1" max="1000" value="100" /><small class="field-hint">Prompts per OpenAI batch</small></label>
+                </div>
               </div>
-              <div id="reference-control" class="reference-control">
-                <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small id="reference-hint">Choose, drop, or paste up to 16 images · 50 MB each</small></span><b id="reference-badge">0/16</b></button>
+              <div id="reference-control" class="reference-control" data-count="0">
+                <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small id="reference-hint">Optional · up to 16 · 50 MB each</small></span><b id="reference-badge" class="hidden" hidden>0/16</b></button>
                 <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
-                <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images"></div>
+                <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images" hidden></div>
                 <span id="reference-status" class="sr-only" role="status" aria-live="polite"></span>
               </div>
-              <div id="rate-limits-line" class="rate-limits-line" role="status">Limits unknown — add an Admin API key to see org rate limits.</div>
-              <div class="estimate-box"><span>Estimated cost</span><strong><span id="rail-estimate">$0.00</span> <small id="rail-pkr">PKR 0.00</small></strong></div>
-              <div class="run-actions"><button id="run-button" class="primary-button" disabled><span>Generate</span><i data-lucide="arrow-right"></i></button><button id="cancel-button" class="secondary-button danger-button" disabled><i data-lucide="x"></i>Cancel</button><button id="resume-button" class="secondary-button hidden" type="button"><i data-lucide="refresh-cw"></i>Resume leftovers</button></div>
+              <div id="rate-limits-line" class="rate-limits-line" role="status">Org limits optional — Admin key in API keys.</div>
+              <div id="estimate-box" class="estimate-box hidden" hidden><span>Estimated cost</span><strong><span id="rail-estimate">$0.00</span> <small id="rail-pkr">PKR 0.00</small></strong></div>
+              <div class="run-actions">
+                <button id="run-button" class="primary-button" disabled title="Select prompts to generate"><span>Generate</span><i data-lucide="arrow-right"></i></button>
+                <button id="cancel-button" class="secondary-button danger-button hidden" type="button" disabled hidden><i data-lucide="x"></i>Cancel</button>
+                <button id="resume-button" class="secondary-button hidden" type="button" hidden><i data-lucide="refresh-cw"></i>Resume leftovers</button>
+              </div>
               <p class="privacy-note"><i data-lucide="shield-check"></i>Keys are validated, encrypted, and stored locally.</p>
             </aside>
           </section>
@@ -211,7 +222,14 @@
       <figure class="lightbox-frame"><img id="lightbox-image" alt="" /><figcaption id="lightbox-caption"></figcaption></figure>
       <button type="button" class="lightbox-nav next" id="lightbox-next" aria-label="Next image"><i data-lucide="arrow-right"></i></button>
     </div>
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+      <div class="toast-body">
+        <p id="toast-message" class="toast-message"></p>
+        <span id="toast-timer" class="toast-timer" aria-hidden="true"></span>
+        <button type="button" id="toast-close" class="toast-close" aria-label="Dismiss notification"><i data-lucide="x"></i></button>
+      </div>
+      <div id="toast-progress" class="toast-progress" aria-hidden="true"></div>
+    </div>
     <span id="check-icon-template" class="hidden" aria-hidden="true"><i data-lucide="check"></i></span>
     <script type="module" src="index.js"></script>
   </body>
