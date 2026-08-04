@@ -136,10 +136,17 @@ const elements = {
   keyLabel: byId<HTMLInputElement>("key-label"),
   apiKey: byId<HTMLInputElement>("api-key"),
   keyError: byId("key-error"),
+  keyPanelGeneration: byId("key-panel-generation"),
+  keyPanelAdmin: byId("key-panel-admin"),
+  keyTypeGeneration: byId<HTMLButtonElement>("key-type-generation"),
+  keyTypeAdmin: byId<HTMLButtonElement>("key-type-admin"),
   adminForm: byId<HTMLFormElement>("admin-form"),
   adminKey: byId<HTMLInputElement>("admin-key"),
   adminProject: byId<HTMLInputElement>("admin-project"),
+  adminProjectList: byId<HTMLDataListElement>("admin-project-list"),
   adminStatus: byId("admin-status"),
+  adminLimitsPreview: byId("admin-limits-preview"),
+  loadAdminProjects: byId<HTMLButtonElement>("load-admin-projects"),
   refreshLimits: byId<HTMLButtonElement>("refresh-limits"),
   clearAdmin: byId<HTMLButtonElement>("clear-admin"),
   sessionStatus: byId("session-status"),
@@ -293,10 +300,34 @@ function formatRateLimits(admin: AdminConfigView | null): string {
 
 function applyAdminView(admin: AdminConfigView): void {
   elements.adminStatus.textContent = admin.configured
-    ? `Admin key ${admin.keyHint ?? "saved"}${admin.projectId ? ` · ${admin.projectId}` : ""}`
-    : "No Admin key — limits won’t show.";
-  if (admin.projectId && !elements.adminProject.value) elements.adminProject.value = admin.projectId;
+    ? `Admin key ${admin.keyHint ?? "saved"}${admin.projectId ? ` · project ${admin.projectId}` : " · no project yet"}`
+    : "No Admin key — generation still works; rate limits stay hidden.";
+  if (admin.projectId) elements.adminProject.value = admin.projectId;
+  elements.adminLimitsPreview.textContent = admin.rateLimits
+    ? formatRateLimits(admin)
+    : (admin.lastError ?? "");
   elements.rateLimitsLine.textContent = formatRateLimits(admin);
+  elements.clearAdmin.disabled = !admin.configured;
+  elements.refreshLimits.disabled = !admin.configured;
+  elements.loadAdminProjects.disabled = !admin.configured;
+}
+
+function setKeyTypeTab(type: "generation" | "admin"): void {
+  const generation = type === "generation";
+  elements.keyTypeGeneration.classList.toggle("active", generation);
+  elements.keyTypeAdmin.classList.toggle("active", !generation);
+  elements.keyTypeGeneration.setAttribute("aria-selected", String(generation));
+  elements.keyTypeAdmin.setAttribute("aria-selected", String(!generation));
+  elements.keyPanelGeneration.classList.toggle("hidden", !generation);
+  elements.keyPanelGeneration.hidden = !generation;
+  elements.keyPanelAdmin.classList.toggle("hidden", generation);
+  elements.keyPanelAdmin.hidden = generation;
+  elements.keyError.classList.add("hidden");
+  window.requestAnimationFrame(() => {
+    if (generation) elements.keyLabel.focus();
+    else if (elements.adminKey.value || !elements.clearAdmin.disabled) elements.adminProject.focus();
+    else elements.adminKey.focus();
+  });
 }
 
 function resumeConfirmMessage(): string {
@@ -1790,12 +1821,18 @@ elements.manageKeys.addEventListener("click", async () => {
     } catch {
       // Keys dialog still works if bootstrap refresh fails.
     }
+    setKeyTypeTab("generation");
     openKeysDialog(byId<HTMLElement>("keys-title"));
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not load API keys", true);
   }
 });
-elements.refreshKeys.addEventListener("click", () => void loadKeys());
+elements.refreshKeys.addEventListener("click", () => {
+  if (elements.keyPanelAdmin.hidden) void loadKeys();
+  else void refreshAdminPanel();
+});
+elements.keyTypeGeneration.addEventListener("click", () => setKeyTypeTab("generation"));
+elements.keyTypeAdmin.addEventListener("click", () => setKeyTypeTab("admin"));
 elements.keyForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   elements.keyError.classList.add("hidden");
@@ -1806,14 +1843,43 @@ elements.keyForm.addEventListener("submit", async (event) => {
     elements.apiKey.value = "";
     elements.keyLabel.value = "";
     await loadKeys();
-    showToast("API key encrypted and saved.");
+    showToast("Generation key encrypted and saved.");
   } catch (error) {
-    elements.keyError.textContent = error instanceof Error ? error.message : "Could not save key";
+    elements.keyError.textContent = error instanceof Error ? error.message : "Could not save generation key";
     elements.keyError.classList.remove("hidden");
   } finally {
     if (submit) submit.disabled = false;
   }
 });
+
+async function fillAdminProjects(): Promise<void> {
+  elements.loadAdminProjects.disabled = true;
+  try {
+    const projects = await app.rpc!.request.listAdminProjects({});
+    elements.adminProjectList.innerHTML = projects.map((project) =>
+      `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name || project.id)}</option>`,
+    ).join("");
+    if (projects.length === 1 && !elements.adminProject.value) elements.adminProject.value = projects[0]!.id;
+    showToast(projects.length ? `Loaded ${projects.length} project${projects.length === 1 ? "" : "s"}.` : "No projects returned for this Admin key.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not load projects", true);
+  } finally {
+    elements.loadAdminProjects.disabled = false;
+  }
+}
+
+async function refreshAdminPanel(): Promise<void> {
+  try {
+    if (elements.adminProject.value.trim()) {
+      await app.rpc!.request.setAdminProjectId({ projectId: elements.adminProject.value.trim() });
+    }
+    applyAdminView(await app.rpc!.request.refreshRateLimits({}));
+    showToast("Rate limits refreshed.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not refresh rate limits", true);
+  }
+}
+
 elements.adminForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   elements.keyError.classList.add("hidden");
@@ -1825,26 +1891,23 @@ elements.adminForm.addEventListener("submit", async (event) => {
     elements.adminKey.value = "";
     applyAdminView(admin);
     showToast(admin.configured ? "Admin key saved." : "Admin key updated.");
+    if (admin.configured) {
+      try { await fillAdminProjects(); } catch { /* optional */ }
+    }
   } catch (error) {
     elements.keyError.textContent = error instanceof Error ? error.message : "Could not save Admin key";
     elements.keyError.classList.remove("hidden");
   }
 });
-elements.refreshLimits.addEventListener("click", async () => {
-  try {
-    if (elements.adminProject.value.trim()) {
-      await app.rpc!.request.setAdminProjectId({ projectId: elements.adminProject.value.trim() });
-    }
-    applyAdminView(await app.rpc!.request.refreshRateLimits({}));
-    showToast("Rate limits refreshed.");
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "Could not refresh rate limits", true);
-  }
-});
+elements.loadAdminProjects.addEventListener("click", () => void fillAdminProjects());
+elements.refreshLimits.addEventListener("click", () => void refreshAdminPanel());
 elements.clearAdmin.addEventListener("click", async () => {
+  if (!window.confirm("Clear the Admin API key and cached rate limits from this device?")) return;
   try {
     applyAdminView(await app.rpc!.request.clearAdminKey({}));
     elements.adminProject.value = "";
+    elements.adminProjectList.innerHTML = "";
+    elements.adminKey.value = "";
     showToast("Admin key cleared.");
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not clear Admin key", true);

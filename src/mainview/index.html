@@ -139,7 +139,72 @@
       </main>
     </div>
 
-    <dialog id="keys-dialog" class="keys-dialog panel" aria-labelledby="keys-title"><form method="dialog" class="dialog-head"><div><h2 id="keys-title" tabindex="-1">API keys</h2><p>Generation keys run jobs. Admin key is optional for org rate limits.</p></div><div class="button-row"><button id="refresh-keys" type="button" class="icon-button" aria-label="Refresh keys"><i data-lucide="refresh-cw"></i></button><button class="icon-button" aria-label="Close API keys"><i data-lucide="x"></i></button></div></form><div id="key-summary" class="key-summary hidden"><div><span>Active</span><strong id="active-key-total">0</strong></div><div><span>Requests</span><strong id="key-request-total">0</strong></div><div><span>Tokens</span><strong id="key-token-total">0</strong></div><div><span>Spend</span><strong id="key-spend-total">$0.000</strong></div></div><div id="key-list" class="key-list" aria-live="polite"></div><form id="key-form" class="key-form"><label>Label<input id="key-label" autocomplete="off" placeholder="Production key" /></label><label>API key<input id="api-key" type="password" autocomplete="new-password" placeholder="sk-…" required /></label><button class="primary-button" type="submit"><span>Add API key</span><i data-lucide="key-round"></i></button></form><div class="admin-block"><h3>Admin API key (optional)</h3><p id="admin-status" class="admin-status">No Admin key — limits won’t show.</p><form id="admin-form" class="key-form"><label>Admin key<input id="admin-key" type="password" autocomplete="new-password" placeholder="sk-admin-…" /></label><label>Project ID<input id="admin-project" autocomplete="off" placeholder="proj_…" /></label><div class="button-row"><button class="secondary-button" type="submit">Save Admin key</button><button id="refresh-limits" class="secondary-button" type="button">Refresh limits</button><button id="clear-admin" class="secondary-button danger-button" type="button">Clear</button></div></form></div><div id="key-error" class="warnings hidden" role="alert"></div></dialog>
+    <dialog id="keys-dialog" class="keys-dialog panel" aria-labelledby="keys-title">
+      <form method="dialog" class="dialog-head">
+        <div>
+          <h2 id="keys-title" tabindex="-1">API keys</h2>
+          <p>Two types: generation keys run jobs; an admin key is optional for org rate limits only.</p>
+        </div>
+        <div class="button-row">
+          <button id="refresh-keys" type="button" class="icon-button" aria-label="Refresh keys"><i data-lucide="refresh-cw"></i></button>
+          <button class="icon-button" aria-label="Close API keys" value="cancel"><i data-lucide="x"></i></button>
+        </div>
+      </form>
+
+      <div class="key-type-tabs segmented" role="tablist" aria-label="Key type">
+        <button type="button" class="key-type-tab active" role="tab" id="key-type-generation" data-key-type="generation" aria-selected="true" aria-controls="key-panel-generation">Generation</button>
+        <button type="button" class="key-type-tab" role="tab" id="key-type-admin" data-key-type="admin" aria-selected="false" aria-controls="key-panel-admin">Admin</button>
+      </div>
+
+      <div id="key-panel-generation" class="key-panel" role="tabpanel" aria-labelledby="key-type-generation">
+        <header class="key-panel-head">
+          <div>
+            <h3>Generation keys</h3>
+            <p>Used for GPT Image 2 runs. You can keep several and pause or rotate them.</p>
+          </div>
+        </header>
+        <div id="key-summary" class="key-summary hidden">
+          <div><span>Active</span><strong id="active-key-total">0</strong></div>
+          <div><span>Requests</span><strong id="key-request-total">0</strong></div>
+          <div><span>Tokens</span><strong id="key-token-total">0</strong></div>
+          <div><span>Spend</span><strong id="key-spend-total">$0.000</strong></div>
+        </div>
+        <div id="key-list" class="key-list" aria-live="polite"></div>
+        <form id="key-form" class="key-form key-form-generation">
+          <label>Label<input id="key-label" autocomplete="off" placeholder="Production key" /></label>
+          <label>Generation API key<input id="api-key" type="password" autocomplete="new-password" placeholder="sk-…" required /></label>
+          <button class="primary-button" type="submit"><span>Add generation key</span><i data-lucide="key-round"></i></button>
+        </form>
+      </div>
+
+      <div id="key-panel-admin" class="key-panel hidden" role="tabpanel" aria-labelledby="key-type-admin" hidden>
+        <header class="key-panel-head">
+          <div>
+            <h3>Admin key <span class="key-optional">optional</span></h3>
+            <p>Never used for image generation. Only for org rate limits (images/min, TPM).</p>
+          </div>
+        </header>
+        <p id="admin-status" class="admin-status" role="status">No Admin key — limits won’t show.</p>
+        <p id="admin-limits-preview" class="admin-limits-preview" role="status"></p>
+        <form id="admin-form" class="key-form key-form-admin">
+          <label>Admin API key<input id="admin-key" type="password" autocomplete="new-password" placeholder="sk-…" /></label>
+          <label>Project
+            <span class="project-field">
+              <input id="admin-project" list="admin-project-list" autocomplete="off" placeholder="proj_… or pick a project" />
+              <datalist id="admin-project-list"></datalist>
+              <button id="load-admin-projects" class="secondary-button" type="button">Load projects</button>
+            </span>
+          </label>
+          <div class="admin-actions">
+            <button class="primary-button" type="submit"><span>Save Admin key</span></button>
+            <button id="refresh-limits" class="secondary-button" type="button">Refresh limits</button>
+            <button id="clear-admin" class="secondary-button danger-button" type="button">Clear Admin key</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="key-error" class="warnings hidden" role="alert"></div>
+    </dialog>
     <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Image preview" hidden>
       <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close preview"><i data-lucide="x"></i></button>
       <button type="button" class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous image"><i data-lucide="arrow-left"></i></button>
