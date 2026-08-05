@@ -8,6 +8,7 @@ import {
   ArrowUp,
   Check,
   CircleAlert,
+  ClipboardPaste,
   Clock3,
   Copy,
   createIcons,
@@ -153,14 +154,28 @@ const elements = {
   keyTypeGeneration: byId<HTMLButtonElement>("key-type-generation"),
   keyTypeAdmin: byId<HTMLButtonElement>("key-type-admin"),
   adminForm: byId<HTMLFormElement>("admin-form"),
+  adminManageForm: byId<HTMLFormElement>("admin-manage-form"),
   adminKey: byId<HTMLInputElement>("admin-key"),
   adminProject: byId<HTMLInputElement>("admin-project"),
+  adminProjectNew: byId<HTMLInputElement>("admin-project-new"),
   adminProjectList: byId<HTMLDataListElement>("admin-project-list"),
   adminStatus: byId("admin-status"),
   adminLimitsPreview: byId("admin-limits-preview"),
+  adminConfigured: byId("admin-configured"),
+  adminEdit: byId("admin-edit"),
+  adminSavedHint: byId("admin-saved-hint"),
+  adminSavedMeta: byId("admin-saved-meta"),
+  adminSaveLabel: byId("admin-save-label"),
+  genTabCount: byId("gen-tab-count"),
+  adminTabBadge: byId("admin-tab-badge"),
   loadAdminProjects: byId<HTMLButtonElement>("load-admin-projects"),
   refreshLimits: byId<HTMLButtonElement>("refresh-limits"),
   clearAdmin: byId<HTMLButtonElement>("clear-admin"),
+  editAdminKey: byId<HTMLButtonElement>("edit-admin-key"),
+  cancelAdminEdit: byId<HTMLButtonElement>("cancel-admin-edit"),
+  pasteCsv: byId<HTMLButtonElement>("paste-csv"),
+  pasteReference: byId<HTMLButtonElement>("paste-reference"),
+  pickReference: byId<HTMLButtonElement>("pick-reference"),
   sessionStatus: byId("session-status"),
   sessionMessage: byId("session-message"),
   elapsed: byId("elapsed"),
@@ -217,6 +232,8 @@ let elapsedAnchor: { wallMs: number; elapsedMs: number } | null = null;
 let toastTimer: number | null = null;
 let toastTickTimer: number | null = null;
 let toastEndsAt = 0;
+let adminEditingKey = false;
+let adminConfiguredState = false;
 let runSubmitInFlight = false;
 let lastWaveSizeValue = 100;
 const SIDEBAR_STORAGE_KEY = "bulkimg.sidebar.collapsed";
@@ -319,19 +336,40 @@ function formatRateLimits(admin: AdminConfigView | null): { text: string; level:
 }
 
 function applyAdminView(admin: AdminConfigView): void {
-  elements.adminStatus.textContent = admin.configured
-    ? `Admin key ${admin.keyHint ?? "saved"}${admin.projectId ? ` · project ${admin.projectId}` : " · no project yet"}`
-    : "No Admin key — generation still works; rate limits stay hidden.";
-  if (admin.projectId) elements.adminProject.value = admin.projectId;
-  elements.adminLimitsPreview.textContent = admin.rateLimits
-    ? formatRateLimits(admin).text
-    : (admin.lastError ?? "");
+  adminConfiguredState = admin.configured;
+  elements.adminSavedHint.textContent = admin.keyHint ?? "saved";
+  elements.adminSavedMeta.textContent = admin.projectId
+    ? `Project ${admin.projectId}`
+    : "No project selected yet";
+  if (admin.projectId) {
+    elements.adminProject.value = admin.projectId;
+    elements.adminProjectNew.value = admin.projectId;
+  }
   const limitsUi = formatRateLimits(admin);
+  elements.adminLimitsPreview.textContent = admin.rateLimits
+    ? limitsUi.text
+    : (admin.lastError ?? (admin.configured ? "Limits not loaded yet — pick a project and refresh." : ""));
   elements.rateLimitsLine.textContent = limitsUi.text;
   elements.rateLimitsLine.dataset["level"] = limitsUi.level;
+  elements.adminTabBadge.textContent = admin.configured ? "On" : "—";
+  elements.adminTabBadge.classList.toggle("off", !admin.configured);
+
+  // Editing when no key yet, or user chose Change Admin key
+  const editing = !admin.configured || adminEditingKey;
+  elements.adminStatus.textContent = editing
+    ? (admin.configured
+      ? `Replace Admin key. Current: ${admin.keyHint ?? "saved"}`
+      : "Paste an Admin API key from OpenAI → Organization → Admin keys.")
+    : "";
+  setHidden(elements.adminConfigured, editing);
+  setHidden(elements.adminEdit, !editing);
+  elements.adminSaveLabel.textContent = admin.configured && adminEditingKey ? "Replace Admin key" : "Save Admin key";
+  setHidden(elements.cancelAdminEdit, !(admin.configured && adminEditingKey));
+  elements.adminKey.required = editing;
   elements.clearAdmin.disabled = !admin.configured;
   elements.refreshLimits.disabled = !admin.configured;
   elements.loadAdminProjects.disabled = !admin.configured;
+  elements.editAdminKey.disabled = !admin.configured;
 }
 
 function isSessionActive(target: SessionTelemetry | null = session): boolean {
@@ -493,7 +531,7 @@ function setKeyTypeTab(type: "generation" | "admin"): void {
   elements.keyError.classList.add("hidden");
   window.requestAnimationFrame(() => {
     if (generation) elements.keyLabel.focus();
-    else if (elements.adminKey.value || !elements.clearAdmin.disabled) elements.adminProject.focus();
+    else if (adminConfiguredState && !adminEditingKey) elements.adminProject.focus();
     else elements.adminKey.focus();
   });
 }
@@ -523,6 +561,7 @@ const slateStackIcons = {
   ArrowUp,
   Check,
   CircleAlert,
+  ClipboardPaste,
   Clock3,
   Copy,
   Database,
@@ -789,11 +828,16 @@ function renderMatrix(resetScroll = false, animateRows = false): void {
   elements.matrixViewList.setAttribute("aria-pressed", String(matrixView === "list"));
   elements.matrixViewCards.setAttribute("aria-pressed", String(matrixView === "cards"));
   if (!matrix || matrix.cells.length === 0) {
-    elements.matrix.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="circle-alert"></i></span><strong>No prompts found</strong><small>Check the file structure or try the manual prompt pad.</small></div>';
+    elements.matrix.innerHTML = matrix
+      ? '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="circle-alert"></i></span><strong>No prompts found</strong><small>Check the file structure or try the manual prompt pad.</small></div>'
+      : '<div class="empty-state"><i data-lucide="layers-3"></i><strong>No prompts loaded</strong><small>CSV and manual input are both supported.</small></div>';
     refreshIcons();
     elements.matrixScrollUp.disabled = true;
     elements.matrixScrollDown.disabled = true;
     elements.matrixScrollPosition.textContent = "No imported rows";
+    elements.matrixPage.textContent = "No pages";
+    elements.matrixPrev.disabled = true;
+    elements.matrixNext.disabled = true;
     return;
   }
   const pages = Math.max(1, Math.ceil(matrix.cells.length / PAGE_SIZE));
@@ -808,9 +852,12 @@ function renderMatrix(resetScroll = false, animateRows = false): void {
     group,
     cells: group.cellIds.map((id) => cellById.get(id)).filter((cell): cell is PromptCell => Boolean(cell && visibleIds.has(cell.id))),
   })).filter(({ cells }) => cells.length > 0);
-  elements.matrixPage.textContent = `Page ${matrixPage + 1} of ${pages}`;
-  elements.matrixPrev.disabled = matrixPage === 0;
-  elements.matrixNext.disabled = matrixPage >= pages - 1;
+  elements.matrixPage.textContent = matrix.cells.length
+    ? `Page ${matrixPage + 1} of ${pages}`
+    : "No pages";
+  const multiPage = pages > 1;
+  elements.matrixPrev.disabled = !multiPage || matrixPage === 0;
+  elements.matrixNext.disabled = !multiPage || matrixPage >= pages - 1;
   const renderCard = (cell: PromptCell) => `
     <button type="button" class="prompt-card ${cell.disabled ? "disabled" : ""} ${selected.has(cell.id) ? "selected" : ""}" data-id="${cell.id}" aria-pressed="${selected.has(cell.id)}" ${cell.disabled ? `disabled title="${escapeHtml(cell.disabledReason ?? "This schedule cell cannot generate an image")}"` : ""}>
       <span class="prompt-meta"><span>${escapeHtml(cell.dayLabel || "Prompt")}</span><span>${escapeHtml(cell.scheduleDate || "No date")}</span></span>
@@ -1121,6 +1168,7 @@ async function loadKeys(): Promise<void> {
   const spend = keys.reduce((sum, key) => sum + key.costUsd, 0);
   activeKeyCount = active;
   syncKeyCountBadge(active);
+  elements.genTabCount.textContent = String(keys.length);
   elements.activeKeyTotal.textContent = String(active);
   elements.keyRequestTotal.textContent = formatNumber(requests);
   elements.keyTokenTotal.textContent = formatNumber(tokens);
@@ -1928,16 +1976,39 @@ elements.referenceControl.addEventListener("drop", (event) => {
 });
 window.addEventListener("paste", (event) => {
   const itemFiles = [...(event.clipboardData?.items ?? [])]
-    .filter((entry) => entry.kind === "file" && entry.type.startsWith("image/"))
+    .filter((entry) => entry.kind === "file")
     .map((entry) => entry.getAsFile())
     .filter((file): file is File => Boolean(file));
-  const clipboardFiles = [...(event.clipboardData?.files ?? [])].filter((file) => file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name));
-  const files = [...itemFiles, ...clipboardFiles].filter((file, index, all) =>
+  const clipboardFiles = [...(event.clipboardData?.files ?? [])];
+  const allFiles = [...itemFiles, ...clipboardFiles].filter((file, index, all) =>
     all.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.type === file.type) === index,
   );
-  if (files.length) {
+  const imageFiles = allFiles.filter((file) => file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name));
+  const csvFiles = allFiles.filter((file) => file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv");
+
+  // Prefer CSV when focused on CSV import
+  if (csvFiles.length && !elements.csvPanel.classList.contains("hidden")) {
     event.preventDefault();
-    void attachReferenceFiles(files);
+    void importCsvFile(csvFiles[0]!);
+    return;
+  }
+  // CSV text paste into CSV panel
+  const text = event.clipboardData?.getData("text/plain")?.trim() ?? "";
+  if (text && !elements.csvPanel.classList.contains("hidden") && !imageFiles.length
+    && (text.includes(",") || text.includes("\t")) && text.includes("\n")
+    && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) {
+    event.preventDefault();
+    void app.rpc!.request.importCSV({ csvText: text, sourceName: "clipboard.csv" })
+      .then((matrix) => {
+        applyMatrix(matrix);
+        showToast("Loaded CSV from pasted text.");
+      })
+      .catch((error) => showToast(error instanceof Error ? error.message : "Could not paste CSV", true));
+    return;
+  }
+  if (imageFiles.length && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) {
+    event.preventDefault();
+    void attachReferenceFiles(imageFiles);
   }
 });
 
@@ -2065,12 +2136,15 @@ async function fillAdminProjects(): Promise<void> {
     elements.adminProjectList.innerHTML = projects.map((project) =>
       `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name || project.id)}</option>`,
     ).join("");
-    if (projects.length === 1 && !elements.adminProject.value) elements.adminProject.value = projects[0]!.id;
+    if (projects.length === 1 && !elements.adminProject.value) {
+      elements.adminProject.value = projects[0]!.id;
+      elements.adminProjectNew.value = projects[0]!.id;
+    }
     showToast(projects.length ? `Loaded ${projects.length} project${projects.length === 1 ? "" : "s"}.` : "No projects returned for this Admin key.");
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not load projects", true);
   } finally {
-    elements.loadAdminProjects.disabled = elements.clearAdmin.disabled;
+    elements.loadAdminProjects.disabled = !adminConfiguredState;
   }
 }
 
@@ -2079,6 +2153,7 @@ async function refreshAdminPanel(): Promise<void> {
     if (elements.adminProject.value.trim()) {
       await app.rpc!.request.setAdminProjectId({ projectId: elements.adminProject.value.trim() });
     }
+    adminEditingKey = false;
     applyAdminView(await app.rpc!.request.refreshRateLimits({}));
     showToast("Rate limits refreshed.");
   } catch (error) {
@@ -2089,12 +2164,16 @@ async function refreshAdminPanel(): Promise<void> {
 elements.adminForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   elements.keyError.classList.add("hidden");
+  const submit = elements.adminForm.querySelector<HTMLButtonElement>('button[type="submit"]');
+  if (submit) submit.disabled = true;
   try {
+    const projectId = elements.adminProjectNew.value.trim() || elements.adminProject.value.trim();
     const admin = await app.rpc!.request.setAdminKey({
       key: elements.adminKey.value,
-      ...(elements.adminProject.value.trim() ? { projectId: elements.adminProject.value.trim() } : {}),
+      ...(projectId ? { projectId } : {}),
     });
     elements.adminKey.value = "";
+    adminEditingKey = false;
     applyAdminView(admin);
     showToast(admin.configured ? "Admin key saved." : "Admin key updated.");
     if (admin.configured) {
@@ -2103,15 +2182,74 @@ elements.adminForm.addEventListener("submit", async (event) => {
   } catch (error) {
     elements.keyError.textContent = error instanceof Error ? error.message : "Could not save Admin key";
     elements.keyError.classList.remove("hidden");
+  } finally {
+    if (submit) submit.disabled = false;
   }
 });
+
+elements.adminManageForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  elements.keyError.classList.add("hidden");
+  try {
+    const projectId = elements.adminProject.value.trim();
+    if (!projectId) {
+      showToast("Enter a project ID first.", true);
+      elements.adminProject.focus();
+      return;
+    }
+    applyAdminView(await app.rpc!.request.setAdminProjectId({ projectId }));
+    showToast("Project saved.");
+  } catch (error) {
+    elements.keyError.textContent = error instanceof Error ? error.message : "Could not save project";
+    elements.keyError.classList.remove("hidden");
+  }
+});
+
+elements.editAdminKey.addEventListener("click", () => {
+  adminEditingKey = true;
+  applyAdminView({
+    configured: adminConfiguredState,
+    projectId: elements.adminProject.value || null,
+    keyHint: elements.adminSavedHint.textContent || null,
+    rateLimits: null,
+    lastError: elements.adminLimitsPreview.textContent || null,
+  });
+  // keep last applied limits text - re-fetch full view
+  void (async () => {
+    try {
+      const data = await app.rpc!.request.getBootstrap({});
+      if (data.admin) {
+        adminEditingKey = true;
+        applyAdminView(data.admin);
+      }
+    } catch { /* local toggle still works */ }
+    elements.adminKey.focus();
+  })();
+});
+
+elements.cancelAdminEdit.addEventListener("click", () => {
+  adminEditingKey = false;
+  elements.adminKey.value = "";
+  elements.keyError.classList.add("hidden");
+  void (async () => {
+    try {
+      const data = await app.rpc!.request.getBootstrap({});
+      if (data.admin) applyAdminView(data.admin);
+    } catch {
+      adminEditingKey = false;
+    }
+  })();
+});
+
 elements.loadAdminProjects.addEventListener("click", () => void fillAdminProjects());
 elements.refreshLimits.addEventListener("click", () => void refreshAdminPanel());
 elements.clearAdmin.addEventListener("click", async () => {
   if (!window.confirm("Clear the Admin API key and cached rate limits from this device?")) return;
   try {
+    adminEditingKey = false;
     applyAdminView(await app.rpc!.request.clearAdminKey({}));
     elements.adminProject.value = "";
+    elements.adminProjectNew.value = "";
     elements.adminProjectList.innerHTML = "";
     elements.adminKey.value = "";
     showToast("Admin key cleared.");
@@ -2119,6 +2257,91 @@ elements.clearAdmin.addEventListener("click", async () => {
     showToast(error instanceof Error ? error.message : "Could not clear Admin key", true);
   }
 });
+
+// Close keys dialog when backdrop (outside panel) is clicked
+elements.keysDialog.addEventListener("click", (event) => {
+  if (event.target === elements.keysDialog) elements.keysDialog.close();
+});
+elements.keysDialog.addEventListener("cancel", () => {
+  adminEditingKey = false;
+});
+
+async function readClipboardFiles(kinds: "image" | "csv" | "any" = "any"): Promise<File[]> {
+  const files: File[] = [];
+  try {
+    if (typeof navigator.clipboard?.read === "function") {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        for (const type of item.types) {
+          if (kinds === "image" && !type.startsWith("image/")) continue;
+          if (kinds === "csv" && type !== "text/csv" && type !== "text/plain" && !type.includes("spreadsheet")) continue;
+          try {
+            const blob = await item.getType(type);
+            const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : type.includes("jpeg") || type.includes("jpg") ? "jpg" : kinds === "csv" ? "csv" : "bin";
+            files.push(new File([blob], `clipboard.${ext}`, { type: blob.type || type }));
+          } catch { /* type unavailable */ }
+        }
+      }
+    }
+  } catch {
+    // Clipboard item read may be blocked; text/path fallbacks below.
+  }
+  return files;
+}
+
+async function pasteCsvFromClipboard(): Promise<void> {
+  elements.pasteCsv.disabled = true;
+  try {
+    const files = await readClipboardFiles("csv");
+    const csvFile = files.find((file) => file.name.toLowerCase().endsWith(".csv") || file.type.includes("csv") || file.type === "text/plain");
+    if (csvFile && csvFile.type !== "text/plain") {
+      await importCsvFile(csvFile);
+      return;
+    }
+    let text = "";
+    try {
+      text = (await navigator.clipboard.readText()).trim();
+    } catch {
+      showToast("Could not read the clipboard. Try Ctrl+V on the CSV drop zone.", true);
+      return;
+    }
+    if (!text) {
+      showToast("Clipboard is empty. Copy a CSV file or CSV text first.", true);
+      return;
+    }
+    if (!text.includes(",") && !text.includes("\t") && !text.includes("\n")) {
+      showToast("Clipboard does not look like CSV. Copy the file or spreadsheet text and try again.", true);
+      return;
+    }
+    applyMatrix(await app.rpc!.request.importCSV({ csvText: text, sourceName: "clipboard.csv" }));
+    showToast("Loaded CSV from clipboard.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not paste CSV", true);
+  } finally {
+    elements.pasteCsv.disabled = false;
+  }
+}
+
+async function pasteReferencesFromClipboard(): Promise<void> {
+  elements.pasteReference.disabled = true;
+  try {
+    let files = await readClipboardFiles("image");
+    if (!files.length) {
+      showToast("No images in clipboard. Copy images, then paste, or use Ctrl+V.", true);
+      return;
+    }
+    await attachReferenceFiles(files);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not paste images", true);
+  } finally {
+    elements.pasteReference.disabled = false;
+  }
+}
+
+elements.pasteCsv.addEventListener("click", () => void pasteCsvFromClipboard());
+elements.pasteReference.addEventListener("click", () => void pasteReferencesFromClipboard());
+elements.pickReference.addEventListener("click", () => elements.referenceFile.click());
+
 elements.exportButton.addEventListener("click", async () => {
   if (!session) return;
   elements.exportButton.disabled = true;

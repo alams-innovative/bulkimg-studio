@@ -51,8 +51,11 @@
                 </div>
               </div>
               <div id="csv-panel" class="input-panel" role="tabpanel" aria-labelledby="csv-tab">
-                <label class="dropzone" for="csv-file"><input id="csv-file" type="file" accept=".csv,text/csv" /><i data-lucide="upload-cloud"></i><span><strong>Choose a CSV</strong><small>Up to 10 MB</small></span></label>
-                <button id="pick-csv-native" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse</button>
+                <label class="dropzone" for="csv-file"><input id="csv-file" type="file" accept=".csv,text/csv" /><i data-lucide="upload-cloud"></i><span><strong>Choose a CSV</strong><small>Browse, drop, or paste · up to 10 MB</small></span></label>
+                <div class="input-panel-actions">
+                  <button id="pick-csv-native" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse</button>
+                  <button id="paste-csv" class="secondary-button" type="button"><i data-lucide="clipboard-paste"></i>Paste</button>
+                </div>
               </div>
               <div id="manual-panel" class="input-panel hidden" role="tabpanel" aria-labelledby="manual-tab">
                 <label class="sr-only" for="manual-prompts">Manual prompts</label>
@@ -93,7 +96,11 @@
                 </div>
               </div>
               <div id="reference-control" class="reference-control" data-count="0">
-                <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small id="reference-hint">Optional · up to 16 · 50 MB each</small></span><b id="reference-badge" class="hidden" hidden>0/16</b></button>
+                <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small id="reference-hint">Optional · browse, drop, or paste · up to 16 · 50 MB each</small></span><b id="reference-badge" class="hidden" hidden>0/16</b></button>
+                <div class="reference-actions">
+                  <button id="pick-reference" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse images</button>
+                  <button id="paste-reference" class="secondary-button" type="button"><i data-lucide="clipboard-paste"></i>Paste images</button>
+                </div>
                 <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
                 <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images" hidden></div>
                 <span id="reference-status" class="sr-only" role="status" aria-live="polite"></span>
@@ -154,7 +161,7 @@
       <form method="dialog" class="dialog-head">
         <div>
           <h2 id="keys-title" tabindex="-1">API keys</h2>
-          <p>Two types: generation keys run jobs; an admin key is optional for org rate limits only.</p>
+          <p>Generation keys run jobs. Admin key is optional and only loads org rate limits.</p>
         </div>
         <div class="button-row">
           <button id="refresh-keys" type="button" class="icon-button" aria-label="Refresh keys"><i data-lucide="refresh-cw"></i></button>
@@ -163,8 +170,8 @@
       </form>
 
       <div class="key-type-tabs segmented" role="tablist" aria-label="Key type">
-        <button type="button" class="key-type-tab active" role="tab" id="key-type-generation" data-key-type="generation" aria-selected="true" aria-controls="key-panel-generation">Generation</button>
-        <button type="button" class="key-type-tab" role="tab" id="key-type-admin" data-key-type="admin" aria-selected="false" aria-controls="key-panel-admin">Admin</button>
+        <button type="button" class="key-type-tab active" role="tab" id="key-type-generation" data-key-type="generation" aria-selected="true" aria-controls="key-panel-generation">Generation <b id="gen-tab-count" class="tab-count">0</b></button>
+        <button type="button" class="key-type-tab" role="tab" id="key-type-admin" data-key-type="admin" aria-selected="false" aria-controls="key-panel-admin">Admin <b id="admin-tab-badge" class="tab-count off">—</b></button>
       </div>
 
       <div id="key-panel-generation" class="key-panel" role="tabpanel" aria-labelledby="key-type-generation">
@@ -195,23 +202,48 @@
             <p>Never used for image generation. Only for org rate limits (images/min, TPM).</p>
           </div>
         </header>
-        <p id="admin-status" class="admin-status" role="status">No Admin key — limits won’t show.</p>
-        <p id="admin-limits-preview" class="admin-limits-preview" role="status"></p>
-        <form id="admin-form" class="key-form key-form-admin">
-          <label>Admin API key<input id="admin-key" type="password" autocomplete="new-password" placeholder="sk-…" /></label>
-          <label>Project
-            <span class="project-field">
-              <input id="admin-project" list="admin-project-list" autocomplete="off" placeholder="proj_… or pick a project" />
-              <datalist id="admin-project-list"></datalist>
-              <button id="load-admin-projects" class="secondary-button" type="button">Load projects</button>
-            </span>
-          </label>
-          <div class="admin-actions">
-            <button class="primary-button" type="submit"><span>Save Admin key</span></button>
-            <button id="refresh-limits" class="secondary-button" type="button">Refresh limits</button>
-            <button id="clear-admin" class="secondary-button danger-button" type="button">Clear Admin key</button>
+
+        <div id="admin-configured" class="admin-configured hidden" hidden>
+          <div class="admin-card">
+            <div>
+              <span>Saved Admin key</span>
+              <strong id="admin-saved-hint">••••</strong>
+              <small id="admin-saved-meta">No project selected</small>
+            </div>
+            <p id="admin-limits-preview" class="admin-limits-preview" role="status"></p>
           </div>
-        </form>
+          <form id="admin-manage-form" class="key-form key-form-admin">
+            <label>Project
+              <span class="project-field">
+                <input id="admin-project" list="admin-project-list" autocomplete="off" placeholder="proj_… or pick a project" />
+                <datalist id="admin-project-list"></datalist>
+                <button id="load-admin-projects" class="secondary-button" type="button">Load projects</button>
+              </span>
+            </label>
+            <div class="admin-actions">
+              <button id="save-admin-project" class="primary-button" type="submit"><span>Save project</span></button>
+              <button id="refresh-limits" class="secondary-button" type="button">Refresh limits</button>
+              <button id="edit-admin-key" class="secondary-button" type="button">Change Admin key</button>
+              <button id="clear-admin" class="secondary-button danger-button" type="button">Clear Admin key</button>
+            </div>
+          </form>
+        </div>
+
+        <div id="admin-edit" class="admin-edit">
+          <p id="admin-status" class="admin-status" role="status">No Admin key — limits won’t show.</p>
+          <form id="admin-form" class="key-form key-form-admin">
+            <label>Admin API key<input id="admin-key" type="password" autocomplete="new-password" placeholder="sk-admin-… or sk-…" required /></label>
+            <label>Project <span class="optional-label">(optional)</span>
+              <span class="project-field">
+                <input id="admin-project-new" list="admin-project-list" autocomplete="off" placeholder="proj_… (optional)" />
+              </span>
+            </label>
+            <div class="admin-actions">
+              <button class="primary-button" type="submit"><span id="admin-save-label">Save Admin key</span></button>
+              <button id="cancel-admin-edit" class="secondary-button hidden" type="button" hidden>Cancel</button>
+            </div>
+          </form>
+        </div>
       </div>
 
       <div id="key-error" class="warnings hidden" role="alert"></div>

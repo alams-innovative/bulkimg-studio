@@ -94,16 +94,31 @@ export class KeyVault {
   }
 
   async setAdminKey(key: string, projectId?: string): Promise<void> {
-    if (!key.trim() || key.length < 20) throw new Error("Enter a valid OpenAI Admin API key.");
-    const client = new OpenAIClient(key.trim());
+    const trimmed = key.trim();
+    const existing = await this.getAdminKey();
+
+    // Project-only update when a key is already saved and the form key field is blank.
+    if (!trimmed) {
+      if (!existing) throw new Error("Enter a valid OpenAI Admin API key.");
+      if (projectId !== undefined) {
+        this.database.setAdminProjectId(projectId.trim() || null);
+      }
+      return;
+    }
+
+    if (trimmed.length < 20) throw new Error("Enter a valid OpenAI Admin API key.");
+    const client = new OpenAIClient(trimmed);
     try {
       await client.validateAdminKey();
-    } catch {
-      throw new Error("That Admin API key could not access organization projects. Create an Admin key in the OpenAI dashboard.");
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "OpenAI rejected this key.";
+      throw new Error(
+        `That Admin API key could not access organization projects (${detail}). Use an Admin key from OpenAI → Organization → Admin keys.`,
+      );
     }
-    this.database.setAdminEncryptedKey(await this.encrypt(key.trim()), `••••${key.trim().slice(-4)}`);
-    if (projectId?.trim()) this.database.setAdminProjectId(projectId.trim());
-    this.decryptedKeyCache.set("admin", key.trim());
+    this.database.setAdminEncryptedKey(await this.encrypt(trimmed), `••••${trimmed.slice(-4)}`);
+    if (projectId !== undefined) this.database.setAdminProjectId(projectId.trim() || null);
+    this.decryptedKeyCache.set("admin", trimmed);
   }
 
   clearAdminKey(): void {

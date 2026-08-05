@@ -159,7 +159,8 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
       setAdminKey: async ({ key, projectId }) => {
         await keyVault.setAdminKey(key, projectId);
-        if (projectId || database.getAdminConfigRow().project_id) await keyVault.refreshAdminRateLimits();
+        const row = database.getAdminConfigRow();
+        if (row.encrypted_key && row.project_id) await keyVault.refreshAdminRateLimits();
         return adminView(database);
       },
       clearAdminKey: () => {
