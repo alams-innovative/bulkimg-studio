@@ -107,12 +107,22 @@ const elements = {
   converterTabHistory: byId<HTMLButtonElement>("converter-tab-history"),
   converterWorkspace: byId("converter-workspace"),
   converterHistory: byId("converter-history"),
+  converterGrid: byId("converter-grid"),
+  converterControls: byId("converter-controls"),
+  converterQueueTitle: byId("converter-queue-title"),
+  converterQueueSubtitle: byId("converter-queue-subtitle"),
+  converterSessionSources: byId("converter-session-sources"),
+  converterSessionCards: byId<HTMLButtonElement>("converter-session-cards"),
+  converterSessionListMode: byId<HTMLButtonElement>("converter-session-list-mode"),
+  converterSessionSelection: byId("converter-session-selection"),
+  converterSessionAddInline: byId<HTMLButtonElement>("converter-session-add-inline"),
   converterDropzone: byId("converter-dropzone"),
   converterFile: byId<HTMLInputElement>("converter-file"),
   converterFromSession: byId<HTMLButtonElement>("converter-from-session"),
   converterBrowse: byId<HTMLButtonElement>("converter-browse"),
   converterPaste: byId<HTMLButtonElement>("converter-paste"),
   converterQueue: byId("converter-queue"),
+  converterQueueColumns: byId("converter-queue-columns"),
   converterFormats: byId("converter-formats"),
   converterRulesToggle: byId<HTMLButtonElement>("converter-rules-toggle"),
   converterRules: byId("converter-rules"),
@@ -310,6 +320,8 @@ let converterRules: ConverterRule[] = [];
 let converterJobs: ConverterJob[] = [];
 let converterSessionImages: ConverterSourceImage[] = [];
 let converterTab: "workspace" | "history" = "workspace";
+let converterSessionLayout: "cards" | "list" = "cards";
+let selectedConverterSessionAssets = new Set<string>();
 let lightboxItems: HistoryItem[] = [];
 let lightboxIndex = 0;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
@@ -850,7 +862,84 @@ function renderConverterRules(): void {
   refreshIcons();
 }
 
+function renderConverterSessionSources(): void {
+  const grouped = new Map<string, ConverterSourceImage[]>();
+  for (const image of converterSessionImages) {
+    const images = grouped.get(image.sessionId) ?? [];
+    images.push(image); grouped.set(image.sessionId, images);
+  }
+  elements.converterSessionCards.classList.toggle("active", converterSessionLayout === "cards");
+  elements.converterSessionListMode.classList.toggle("active", converterSessionLayout === "list");
+  elements.converterSessionCards.setAttribute("aria-pressed", String(converterSessionLayout === "cards"));
+  elements.converterSessionListMode.setAttribute("aria-pressed", String(converterSessionLayout === "list"));
+  const selectedCount = selectedConverterSessionAssets.size;
+  elements.converterSessionSelection.textContent = selectedCount ? `${selectedCount} session image${selectedCount === 1 ? "" : "s"} selected` : "Select images from your generated sessions";
+  elements.converterSessionAddInline.disabled = selectedCount === 0;
+  if (!converterSessionImages.length) {
+    elements.converterSessionSources.innerHTML = '<div class="empty-state"><i data-lucide="images"></i><strong>No session images yet</strong><small>Your generated images will appear here automatically.</small></div>';
+    refreshIcons(); return;
+  }
+  const renderImage = (image: ConverterSourceImage) => `<button type="button" class="converter-session-source${selectedConverterSessionAssets.has(image.assetId) ? " selected" : ""}" data-session-asset-id="${image.assetId}" aria-pressed="${selectedConverterSessionAssets.has(image.assetId)}"><span class="converter-session-preview" data-session-preview-id="${image.assetId}"><i data-lucide="image"></i></span><span><strong>${escapeHtml(image.name)}</strong><small>${escapeHtml(new Date(image.createdAt).toLocaleDateString())}</small></span></button>`;
+  if (converterSessionLayout === "list") {
+    elements.converterSessionSources.innerHTML = `<div class="converter-session-list-inline">${[...grouped.entries()].map(([sessionId, images]) => `<section><header><strong>Session ${escapeHtml(sessionId.slice(0, 8))}</strong><small>${images.length} image${images.length === 1 ? "" : "s"} · ${escapeHtml(new Date(images[0]!.createdAt).toLocaleString())}</small><button type="button" class="secondary-button converter-add-session" data-session-id="${sessionId}">Add all</button></header>${images.map(renderImage).join("")}</section>`).join("")}</div>`;
+  } else {
+    elements.converterSessionSources.innerHTML = `<div class="converter-session-cards">${[...grouped.entries()].map(([sessionId, images]) => `<article class="converter-session-card"><header><div><strong>Session ${escapeHtml(sessionId.slice(0, 8))}</strong><small>${images.length} image${images.length === 1 ? "" : "s"} · ${escapeHtml(new Date(images[0]!.createdAt).toLocaleString())}</small></div><button type="button" class="secondary-button converter-add-session" data-session-id="${sessionId}">Add all</button></header><div class="converter-session-image-grid">${images.map(renderImage).join("")}</div></article>`).join("")}</div>`;
+  }
+  elements.converterSessionSources.querySelectorAll<HTMLButtonElement>(".converter-session-source").forEach((button) => button.addEventListener("click", () => {
+    const assetId = button.dataset["sessionAssetId"]!;
+    if (selectedConverterSessionAssets.has(assetId)) selectedConverterSessionAssets.delete(assetId); else selectedConverterSessionAssets.add(assetId);
+    renderConverterSessionSources();
+  }));
+  elements.converterSessionSources.querySelectorAll<HTMLButtonElement>(".converter-add-session").forEach((button) => button.addEventListener("click", () => {
+    const sessionId = button.dataset["sessionId"]!;
+    converterSessionImages.filter((image) => image.sessionId === sessionId).forEach((image) => selectedConverterSessionAssets.add(image.assetId));
+    addSelectedConverterSessionImages();
+  }));
+  elements.converterSessionSources.querySelectorAll<HTMLElement>("[data-session-preview-id]").forEach((preview) => void loadConverterSessionPreview(preview));
+  refreshIcons();
+}
+
+async function loadConverterSessionPreview(preview: HTMLElement): Promise<void> {
+  const assetId = preview.dataset["sessionPreviewId"];
+  if (!assetId) return;
+  try {
+    const { dataUrl } = await app.rpc!.request.getHistoryImage({ assetId });
+    preview.innerHTML = `<img src="${escapeHtml(dataUrl)}" alt="Generated session image" />`;
+  } catch { preview.innerHTML = '<i data-lucide="image-off"></i>'; refreshIcons(); }
+}
+
+function addSelectedConverterSessionImages(): void {
+  const alreadyQueued = new Set(converterQueue.filter((item) => item.assetId).map((item) => item.assetId!));
+  for (const image of converterSessionImages) {
+    if (!selectedConverterSessionAssets.has(image.assetId) || alreadyQueued.has(image.assetId)) continue;
+    converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "session", assetId: image.assetId, name: image.name });
+  }
+  selectedConverterSessionAssets.clear();
+  renderConverterSessionSources(); renderConverterQueue();
+}
+
+async function loadConverterSessionSources(): Promise<void> {
+  elements.converterSessionSources.setAttribute("aria-busy", "true");
+  elements.converterSessionSources.innerHTML = '<div class="empty-state"><i data-lucide="loader-circle"></i><strong>Loading session images…</strong></div>';
+  refreshIcons();
+  try {
+    const images = await app.rpc!.request.listConverterSessionImages({});
+    converterSessionImages = Array.isArray(images) ? images : [];
+    renderConverterSessionSources();
+  }
+  catch (error) { elements.converterSessionSources.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load session images.")}</div>`; }
+  finally { elements.converterSessionSources.removeAttribute("aria-busy"); }
+}
+
 function renderConverterQueue(): void {
+  const hasItems = converterQueue.length > 0;
+  elements.converterGrid.classList.toggle("has-queue", hasItems);
+  elements.converterControls.classList.toggle("hidden", !hasItems);
+  elements.converterControls.hidden = !hasItems;
+  elements.converterQueueColumns.classList.toggle("hidden", !hasItems);
+  elements.converterQueueColumns.hidden = !hasItems;
+  elements.converterQueueTitle.textContent = hasItems ? "Conversion plan" : "Add more images";
+  elements.converterQueueSubtitle.textContent = hasItems ? "Set one format for all images, then override individual rows only where needed." : "Upload, drag and drop, or paste images when they are not in a session.";
   elements.converterRun.disabled = converterQueue.length === 0;
   if (!converterQueue.length) {
     elements.converterQueue.innerHTML = '<div class="empty-state"><i data-lucide="images"></i><strong>No images added</strong><small>Choose a source to start a local conversion.</small></div>';
@@ -1003,7 +1092,7 @@ async function setView(view: "generator" | "converter" | "sessions" | "usage" | 
   } as const;
   elements.pageTitle.textContent = titles[view];
   if (view === "sessions") await loadSessions();
-  if (view === "converter") { renderConverterQueue(); renderConverterRules(); if (converterTab === "history") await loadConverterJobs(); }
+  if (view === "converter") { renderConverterQueue(); renderConverterRules(); await loadConverterSessionSources(); if (converterTab === "history") await loadConverterJobs(); }
   if (view === "usage") await loadUsage();
   if (view === "history") await loadHistory();
   if (view === "exports") await loadExports();
@@ -2439,21 +2528,10 @@ elements.converterPaste.addEventListener("click", async () => {
   } catch (error) { showToast(error instanceof Error ? error.message : "Could not paste image.", true); }
   finally { elements.converterPaste.disabled = false; }
 });
-elements.converterFromSession.addEventListener("click", async () => {
-  elements.converterSessionList.innerHTML = '<div class="empty-state"><i data-lucide="loader-circle"></i><strong>Loading session images…</strong></div>'; refreshIcons();
-  elements.converterSessionDialog.showModal();
-  try {
-    converterSessionImages = await app.rpc!.request.listConverterSessionImages({});
-    if (!converterSessionImages.length) { elements.converterSessionList.innerHTML = '<div class="empty-state"><i data-lucide="images"></i><strong>No session images yet</strong><small>Generate images first, then they will be available here.</small></div>'; refreshIcons(); return; }
-    elements.converterSessionList.innerHTML = converterSessionImages.map((image) => `<label class="converter-session-item"><input type="checkbox" value="${image.assetId}" /><span><strong>${escapeHtml(image.name)}</strong><small>${escapeHtml(new Date(image.createdAt).toLocaleString())}</small></span></label>`).join("");
-    elements.converterSessionList.querySelectorAll<HTMLInputElement>("input").forEach((input) => input.addEventListener("change", () => { elements.converterSessionAdd.disabled = !elements.converterSessionList.querySelector("input:checked"); }));
-  } catch (error) { elements.converterSessionList.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load session images.")}</div>`; }
-});
-elements.converterSessionAdd.addEventListener("click", () => {
-  const selectedIds = new Set([...elements.converterSessionList.querySelectorAll<HTMLInputElement>("input:checked")].map((input) => input.value));
-  for (const image of converterSessionImages.filter((candidate) => selectedIds.has(candidate.assetId))) converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "session", assetId: image.assetId, name: image.name });
-  elements.converterSessionDialog.close(); elements.converterSessionAdd.disabled = true; renderConverterQueue();
-});
+elements.converterFromSession.addEventListener("click", () => void loadConverterSessionSources());
+elements.converterSessionCards.addEventListener("click", () => { converterSessionLayout = "cards"; renderConverterSessionSources(); });
+elements.converterSessionListMode.addEventListener("click", () => { converterSessionLayout = "list"; renderConverterSessionSources(); });
+elements.converterSessionAddInline.addEventListener("click", () => addSelectedConverterSessionImages());
 elements.converterAddRule.addEventListener("click", () => {
   const type = elements.converterRuleType.value; const value = elements.converterRuleValue.value.trim(); const format = elements.converterRuleFormat.value as ConverterFormat;
   let rule: ConverterRule | null = null;

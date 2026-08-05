@@ -170,10 +170,11 @@ test("Converter keeps quick conversion simple and exposes per-image rules", asyn
   await page.locator("#converter-rule-type").selectOption("nth");
   await page.locator("#converter-rule-value").fill("3");
   await page.locator("#converter-rule-format").selectOption("avif");
-  await page.getByRole("button", { name: "Add" }).click();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByText("Every 3rd image → AVIF")).toBeVisible();
   await expect(page.locator(".converter-queue-item").nth(2).locator("b")).toHaveText("AVIF");
   await expect(page.getByRole("button", { name: "Convert", exact: true })).toBeEnabled();
+  await expect(page.locator("#converter-view")).toHaveScreenshot("converter-with-queue.png", { animations: "disabled" });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 

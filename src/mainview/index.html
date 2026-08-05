@@ -234,23 +234,29 @@
           <button id="converter-tab-history" type="button" role="tab" aria-selected="false">History</button>
         </div>
         <div id="converter-workspace">
-          <section class="converter-grid">
+          <section class="panel converter-session-library" aria-labelledby="converter-session-library-title">
+            <div class="section-heading"><div><h2 id="converter-session-library-title">Start with a session</h2><p>Generated session images are ready to convert first. Add individual images or a complete session.</p></div><div class="converter-session-actions"><div class="view-switch" role="group" aria-label="Session image display"><button id="converter-session-cards" class="icon-button active" type="button" aria-label="Session cards" aria-pressed="true" title="Session cards"><i data-lucide="layout-grid"></i></button><button id="converter-session-list-mode" class="icon-button" type="button" aria-label="Session list" aria-pressed="false" title="Session list"><i data-lucide="rows-3"></i></button></div><button id="converter-from-session" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button></div></div>
+            <div id="converter-session-sources" class="converter-session-sources" aria-live="polite"><div class="empty-state"><i data-lucide="loader-circle"></i><strong>Loading session images…</strong></div></div>
+            <div class="converter-session-footer"><span id="converter-session-selection">No session images selected</span><button id="converter-session-add-inline" class="primary-button" type="button" disabled>Add selected images</button></div>
+          </section>
+          <section id="converter-grid" class="converter-grid">
             <div class="panel converter-queue-panel">
-              <div class="section-heading"><div><h2>Add images</h2><p>Use session images, upload files, or paste from the clipboard.</p></div></div>
+              <div class="section-heading"><div><h2 id="converter-queue-title">Add more images</h2><p id="converter-queue-subtitle">Upload, drag and drop, or paste images when they are not in a session.</p></div></div>
               <div id="converter-dropzone" class="dropzone converter-dropzone" tabindex="0" role="button" aria-label="Upload images or drop them here"><i data-lucide="image-plus"></i><span><strong>Add images</strong><small>Drop files · Browse · Paste · or Ctrl+V</small></span></div>
               <div class="input-panel-actions">
-                <button id="converter-from-session" class="secondary-button" type="button"><i data-lucide="clock-3"></i>From session</button>
                 <button id="converter-browse" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse images</button>
                 <button id="converter-paste" class="secondary-button" type="button"><i data-lucide="clipboard-paste"></i>Paste</button>
                 <input id="converter-file" type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/tiff,image/bmp,image/gif,image/svg+xml" multiple hidden />
               </div>
+              <div id="converter-queue-columns" class="converter-queue-columns hidden" hidden><span>Image</span><span>Output for this image</span><span>Final</span></div>
               <div id="converter-queue" class="converter-queue" role="list" aria-live="polite"><div class="empty-state"><i data-lucide="images"></i><strong>No images added</strong><small>Choose a source to start a local conversion.</small></div></div>
             </div>
-            <aside class="panel converter-controls">
+            <aside id="converter-controls" class="panel converter-controls hidden" hidden>
               <div class="section-heading"><div><h2>Convert to</h2><p>Choose one format or set rules per image.</p></div></div>
               <div id="converter-formats" class="converter-formats" role="group" aria-label="Output format">
                 <button data-converter-format="png" class="active" type="button">PNG</button><button data-converter-format="jpg" type="button">JPG</button><button data-converter-format="webp" type="button">WebP</button><button data-converter-format="avif" type="button">AVIF</button><button data-converter-format="tiff" type="button">TIFF</button><button data-converter-format="bmp" type="button">BMP</button>
               </div>
+              <button id="converter-run" class="primary-button" type="button" disabled><span>Convert</span><i data-lucide="arrow-right"></i></button>
               <button id="converter-rules-toggle" class="secondary-button converter-disclosure" type="button" aria-expanded="false">Output rules <span>Optional</span></button>
               <div id="converter-rules" class="converter-rules hidden" hidden>
                 <p>Rules apply in order. A manual image choice always wins.</p>
@@ -266,7 +272,6 @@
                 <label>File prefix<input id="converter-prefix" type="text" placeholder="Optional" /></label>
                 <label class="mode-option"><input id="converter-strip-metadata" type="checkbox" checked /><span><strong>Remove metadata</strong><small>Keep the output private and lightweight.</small></span></label>
               </div>
-              <button id="converter-run" class="primary-button" type="button" disabled><span>Convert</span><i data-lucide="arrow-right"></i></button>
             </aside>
           </section>
           <section id="converter-result" class="panel converter-result hidden" hidden aria-live="polite"></section>
