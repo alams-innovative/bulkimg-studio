@@ -2,7 +2,7 @@ import type { FailureCategory, RateLimitHeaderProbe, RateLimitSnapshot, Sanitize
 import { outputSize } from "../../shared/output-formats";
 
 const DEFAULT_API_BASE = Bun.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1";
-const APP_VERSION = "1.0.1-beta";
+const APP_VERSION = "1.0.2-beta";
 const SHORT_TIMEOUT_MS = 15_000;
 const IMAGE_TIMEOUT_MS = 180_000;
 const FILE_DOWNLOAD_TIMEOUT_MS = 600_000;
@@ -320,3 +320,4 @@ export class OpenAIClient {
     };
   }
 }
+

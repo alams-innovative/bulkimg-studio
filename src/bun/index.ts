@@ -10,16 +10,16 @@ import { HistoryService } from "./services/history-service";
 import { KeyVault } from "./services/key-vault";
 import { PricingService } from "./services/pricing-service";
 import { parseCSV, parseManualPrompts } from "./services/prompt-parser";
-import { pickOpenFile } from "./services/windows-native";
+import { pickOpenFile, readClipboardCsv, readClipboardImages } from "./services/windows-native";
 import { cleanupStaleTemporaryFiles, DiagnosticLog } from "./services/diagnostics";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.1-beta supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.0.2-beta supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.1-beta",
+  version: "1.0.2-beta",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -67,7 +67,12 @@ const assetRoots = [
 const dataDirectory = Utils.paths.userData;
 const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
-void diagnosticLog.write("startup", { cleanedFiles, version: "1.0.1-beta" });
+void diagnosticLog.write("startup", {
+  cleanedFiles,
+  version: "1.0.2-beta",
+  userData: dataDirectory,
+  pid: process.pid,
+});
 const database = new AppDatabase(dataDirectory);
 const keyVault = new KeyVault(database, dataDirectory);
 const fxService = new FxService(database);
@@ -114,6 +119,10 @@ const rpc = BrowserView.defineRPC<AppRPC>({
     requests: {
       getBootstrap: async () => {
         const admin = adminView(database);
+        void diagnosticLog.write("bootstrap", {
+          keyCount: keyVault.listSafe().filter((key) => key.isActive).length,
+          adminConfigured: admin.configured,
+        });
         return {
           brand,
           models,
@@ -245,8 +254,27 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       },
       writeDiagnosticLog: async ({ event, fields }) => {
         const safeEvent = (event || "ui_event").replace(/[^\w.-]/g, "_").slice(0, 64);
-        await diagnosticLog.write(safeEvent, fields ?? {});
+        await diagnosticLog.write(safeEvent, { ...(fields ?? {}), source: "ui" });
         return { success: true as const };
+      },
+      readClipboardCsv: async () => {
+        const result = await readClipboardCsv();
+        await diagnosticLog.write("clipboard_csv", {
+          ok: Boolean(result.text) && !result.error,
+          chars: result.text?.length ?? 0,
+          sourceName: result.sourceName,
+          error: result.error,
+        });
+        return result;
+      },
+      readClipboardImages: async ({ maxCount }) => {
+        const result = await readClipboardImages(maxCount ?? APP_LIMITS.maxReferences);
+        await diagnosticLog.write("clipboard_images", {
+          ok: result.images.length > 0 && !result.error,
+          count: result.images.length,
+          error: result.error,
+        });
+        return result;
       },
     },
     messages: {},

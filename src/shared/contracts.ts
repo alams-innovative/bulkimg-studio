@@ -354,6 +354,17 @@ export type AppRPC = {
         params: { event: string; fields?: Record<string, unknown> };
         response: { success: true };
       };
+      readClipboardCsv: {
+        params: {};
+        response: { text: string | null; sourceName: string | null; error: string | null };
+      };
+      readClipboardImages: {
+        params: { maxCount?: number };
+        response: {
+          images: Array<{ filename: string; mimeType: string; dataBase64: string }>;
+          error: string | null;
+        };
+      };
     };
     messages: {};
   };

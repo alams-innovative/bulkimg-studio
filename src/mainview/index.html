@@ -1,268 +1,422 @@
 <!doctype html>
 <html lang="en" data-theme="dark">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark light" />
-    <title>BulkImg Studio</title>
-    <link rel="stylesheet" href="index.css" />
-  </head>
-  <body>
-    <div class="app-shell" id="app-shell" data-sidebar="expanded">
-      <aside class="sidebar" id="sidebar" aria-label="Application sidebar">
-        <div class="sidebar-head">
-          <div class="brand-lockup">
-            <img class="brand-logo-dark" src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png" alt="" />
-            <img class="brand-logo-light" src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
-            <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small id="brand-version">1.0.1-beta</small></span>
-          </div>
-          <button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true" title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark light" />
+  <title>BulkImg Studio</title>
+  <link rel="stylesheet" href="index.css" />
+</head>
+
+<body>
+  <div class="app-shell" id="app-shell" data-sidebar="expanded">
+    <aside class="sidebar" id="sidebar" aria-label="Application sidebar">
+      <div class="sidebar-head">
+        <div class="brand-lockup">
+          <img class="brand-logo-dark"
+            src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png" alt="" />
+          <img class="brand-logo-light"
+            src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
+          <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
+              id="brand-version">1.0.2-beta</small></span>
         </div>
-        <nav class="primary-nav" aria-label="Primary navigation">
-          <button id="nav-generator" class="nav-item active" data-view="generator" aria-current="page" title="Generator"><i data-lucide="layout-grid"></i><span>Generator</span></button>
-          <button id="nav-sessions" class="nav-item" data-view="sessions" title="Sessions"><i data-lucide="clock-3"></i><span>Sessions</span></button>
-          <button id="nav-history" class="nav-item" data-view="history" title="History"><i data-lucide="images"></i><span>History</span></button>
-          <button id="nav-exports" class="nav-item" data-view="exports" title="Exports"><i data-lucide="archive"></i><span>Exports</span></button>
-          <button id="nav-logs" class="nav-item" data-view="logs" title="Logs"><i data-lucide="scroll-text"></i><span>Logs</span></button>
-        </nav>
-        <div class="sidebar-spacer"></div>
-        <button id="manage-keys" class="nav-item" title="API keys"><i data-lucide="key-round"></i><span>API keys</span><b id="key-count" class="hidden" hidden>0</b></button>
-        <button id="theme-toggle" class="nav-item" title="Theme" aria-label="Switch to light theme"><i class="theme-icon-moon" data-lucide="moon"></i><i class="theme-icon-sun" data-lucide="sun"></i><span id="theme-label">Dark theme</span></button>
-        <div class="platform-pill"><span id="platform">Windows</span><span class="platform-meta">Local-first</span></div>
-      </aside>
+        <button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
+          title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
+      </div>
+      <nav class="primary-nav" aria-label="Primary navigation">
+        <button id="nav-generator" class="nav-item active" data-view="generator" aria-current="page"
+          title="Generator"><i data-lucide="layout-grid"></i><span>Generator</span></button>
+        <button id="nav-sessions" class="nav-item" data-view="sessions" title="Sessions"><i
+            data-lucide="clock-3"></i><span>Sessions</span></button>
+        <button id="nav-history" class="nav-item" data-view="history" title="History"><i
+            data-lucide="images"></i><span>History</span></button>
+        <button id="nav-exports" class="nav-item" data-view="exports" title="Exports"><i
+            data-lucide="archive"></i><span>Exports</span></button>
+        <button id="nav-logs" class="nav-item" data-view="logs" title="Logs"><i
+            data-lucide="scroll-text"></i><span>Logs</span></button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <button id="manage-keys" class="nav-item" title="API keys"><i data-lucide="key-round"></i><span>API keys</span><b
+          id="key-count" class="hidden" hidden>0</b></button>
+      <button id="theme-toggle" class="nav-item" title="Theme" aria-label="Switch to light theme"><i
+          class="theme-icon-moon" data-lucide="moon"></i><i class="theme-icon-sun" data-lucide="sun"></i><span
+          id="theme-label">Dark theme</span></button>
+      <div class="platform-pill"><span id="platform">Windows</span><span class="platform-meta">Local-first</span></div>
+    </aside>
 
-      <main class="app-main">
-        <header class="topbar">
-          <div class="page-heading"><h1 id="page-title">Generate images.</h1></div>
-          <div id="header-stats" class="compact-summary" aria-label="Current selection">
-            <span id="selected-chip"><strong id="selected-count">0</strong> selected</span>
-            <span id="estimated-cost" class="hidden" hidden>$0.00</span>
-            <span id="fx-rate">PKR —</span>
-          </div>
-        </header>
+    <main class="app-main">
+      <header class="topbar">
+        <div class="page-heading">
+          <h1 id="page-title">Generate images.</h1>
+        </div>
+        <div id="header-stats" class="compact-summary" aria-label="Current selection">
+          <span id="selected-chip"><strong id="selected-count">0</strong> selected</span>
+          <span id="estimated-cost" class="hidden" hidden>$0.00</span>
+          <span id="fx-rate">PKR —</span>
+        </div>
+      </header>
 
-        <div id="generator-view" class="view-content generator-view">
-          <section class="workspace-grid" aria-label="Generation workspace">
-            <div class="composer panel">
-              <div class="section-heading"><div><h2>Add prompts</h2><p>Import a CSV or paste one prompt per line.</p></div>
-                <div class="segmented" role="tablist" aria-label="Prompt input mode">
-                  <button id="csv-tab" class="active" role="tab" aria-selected="true" aria-controls="csv-panel">CSV</button>
-                  <button id="manual-tab" role="tab" aria-selected="false" aria-controls="manual-panel" tabindex="-1">Manual</button>
-                </div>
+      <div id="generator-view" class="view-content generator-view">
+        <section class="workspace-grid" aria-label="Generation workspace">
+          <div class="composer panel">
+            <div class="section-heading">
+              <div>
+                <h2>Add prompts</h2>
+                <p>Import a CSV or paste one prompt per line.</p>
               </div>
-              <div id="csv-panel" class="input-panel" role="tabpanel" aria-labelledby="csv-tab">
-                <label class="dropzone" for="csv-file" tabindex="0"><input id="csv-file" type="file" accept=".csv,text/csv" /><i data-lucide="upload-cloud"></i><span><strong>Choose a CSV</strong><small>Click Paste, then Ctrl+V · or drop a file · up to 10 MB</small></span></label>
-                <div class="input-panel-actions">
-                  <button id="pick-csv-native" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse</button>
-                  <button id="paste-csv" class="secondary-button" type="button" title="Then press Ctrl+V"><i data-lucide="clipboard-paste"></i>Paste (Ctrl+V)</button>
-                </div>
-              </div>
-              <div id="manual-panel" class="input-panel hidden" role="tabpanel" aria-labelledby="manual-tab">
-                <label class="sr-only" for="manual-prompts">Manual prompts</label>
-                <textarea id="manual-prompts" placeholder="One prompt per line"></textarea>
-                <button id="parse-manual" class="secondary-button"><i data-lucide="layers-3"></i>Add prompts</button>
-              </div>
-              <div class="matrix-toolbar">
-                <div><strong id="source-name">No prompts yet</strong><span id="source-summary">Add prompts to continue.</span></div>
-                <div class="matrix-actions">
-                  <div class="view-switch" role="group" aria-label="Prompt display">
-                    <button id="matrix-view-list" class="icon-button active" type="button" aria-label="List view" aria-pressed="true" title="List view"><i data-lucide="rows-3"></i></button>
-                    <button id="matrix-view-cards" class="icon-button" type="button" aria-label="Card view" aria-pressed="false" title="Card view"><i data-lucide="layout-grid"></i></button>
-                  </div>
-                  <div class="quick-actions" aria-label="Prompt selection"><button type="button" data-pick="1">First 1</button><button type="button" data-pick="2">First 2</button><button type="button" data-pick="all">Select all</button><button type="button" data-pick="none">Clear</button></div>
-                </div>
-              </div>
-              <div id="warnings" class="warnings hidden" role="status"></div>
-              <div id="prompt-matrix" class="prompt-matrix view-list" tabindex="0" aria-label="Imported prompt selections. Scroll inside this area to review the current page." aria-live="polite"><div class="empty-state"><i data-lucide="layers-3"></i><strong>No prompts loaded</strong><small>CSV and manual input are both supported.</small></div></div>
-              <div class="pagination" aria-label="Prompt navigation">
-                <div class="scroll-controls"><span id="matrix-scroll-position">No imported rows</span><button id="matrix-scroll-up" class="icon-button" type="button" aria-label="Scroll imported prompts up" disabled><i data-lucide="arrow-up"></i></button><button id="matrix-scroll-down" class="icon-button" type="button" aria-label="Scroll imported prompts down" disabled><i data-lucide="arrow-down"></i></button></div>
-                <div class="page-controls"><button id="matrix-prev" class="icon-button" type="button" aria-label="Previous prompt page"><i data-lucide="arrow-left"></i></button><span id="matrix-page">Page 1 of 1</span><button id="matrix-next" class="icon-button" type="button" aria-label="Next prompt page"><i data-lucide="arrow-right"></i></button></div>
+              <div class="segmented" role="tablist" aria-label="Prompt input mode">
+                <button id="csv-tab" class="active" role="tab" aria-selected="true"
+                  aria-controls="csv-panel">CSV</button>
+                <button id="manual-tab" role="tab" aria-selected="false" aria-controls="manual-panel"
+                  tabindex="-1">Manual</button>
               </div>
             </div>
+            <div id="csv-panel" class="input-panel" role="tabpanel" aria-labelledby="csv-tab">
+              <label class="dropzone" for="csv-file" tabindex="0"><input id="csv-file" type="file"
+                  accept=".csv,text/csv" /><i data-lucide="upload-cloud"></i><span><strong>Choose a
+                    CSV</strong><small>Drop a file · Browse · Paste · or Ctrl+V · up to 10 MB</small></span></label>
+              <div class="input-panel-actions">
+                <button id="pick-csv-native" class="secondary-button" type="button"><i
+                    data-lucide="folder-open"></i>Browse</button>
+                <button id="paste-csv" class="secondary-button" type="button"
+                  title="Paste CSV text from the Windows clipboard (no browser permission)"><i
+                    data-lucide="clipboard-paste"></i>Paste CSV</button>
+              </div>
+            </div>
+            <div id="manual-panel" class="input-panel hidden" role="tabpanel" aria-labelledby="manual-tab">
+              <label class="sr-only" for="manual-prompts">Manual prompts</label>
+              <textarea id="manual-prompts" placeholder="One prompt per line"></textarea>
+              <button id="parse-manual" class="secondary-button"><i data-lucide="layers-3"></i>Add prompts</button>
+            </div>
+            <div class="matrix-toolbar">
+              <div><strong id="source-name">No prompts yet</strong><span id="source-summary">Add prompts to
+                  continue.</span></div>
+              <div class="matrix-actions">
+                <div class="view-switch" role="group" aria-label="Prompt display">
+                  <button id="matrix-view-list" class="icon-button active" type="button" aria-label="List view"
+                    aria-pressed="true" title="List view"><i data-lucide="rows-3"></i></button>
+                  <button id="matrix-view-cards" class="icon-button" type="button" aria-label="Card view"
+                    aria-pressed="false" title="Card view"><i data-lucide="layout-grid"></i></button>
+                </div>
+                <div class="quick-actions" aria-label="Prompt actions">
+                  <button type="button" data-pick="all">
+                    Select all
+                  </button>
 
-            <aside class="run-panel panel" aria-label="Choose output">
-              <div class="section-heading"><div><h2>Choose output</h2><p>Fixed production formats.</p></div></div>
-              <label class="model-field">Model<select id="model" disabled></select></label>
-              <label>Format<select id="size"><option value="square">Square · 1024×1024</option><option value="portrait">Portrait · 1024×1280</option><option value="landscape">Landscape · 1536×864</option><option value="story">Story · 864×1536</option></select></label>
-              <label>Quality<select id="quality"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option></select></label>
-              <fieldset><legend>Run mode</legend>
-                <label class="mode-option selected"><input type="radio" name="run-mode" value="batch" checked /><span><strong>Batch</strong><small>Lower cost, queue within 24h</small></span></label>
-                <label class="mode-option"><input type="radio" name="run-mode" value="direct" /><span><strong>Direct</strong><small>Up to 4 images</small></span></label>
-              </fieldset>
-              <div id="wave-controls" class="wave-controls">
-                <label class="mode-option wave-option"><input type="checkbox" id="wave-split" checked /><span><strong>Split into waves</strong><small id="wave-math" class="hidden" hidden></small></span></label>
-                <div id="wave-size-field" class="wave-size-field">
-                  <label>Wave size <input id="wave-size" type="number" min="1" max="1000" value="100" /><small class="field-hint">Prompts per OpenAI batch</small></label>
+                  <button type="button" data-pick="none">
+                    Deselect all
+                  </button>
+
+                  <button id="delete-selected-prompts" class="danger-button" type="button" disabled>
+                    Delete selected
+                  </button>
+
+                  <button id="clear-imported-prompts" class="danger-button" type="button" disabled>
+                    <i data-lucide="trash-2"></i>
+                    Clear imported
+                  </button>
                 </div>
               </div>
-              <div id="reference-control" class="reference-control" data-count="0">
-                <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small id="reference-hint">Optional · browse, drop, or paste · up to 16 · 50 MB each</small></span><b id="reference-badge" class="hidden" hidden>0/16</b></button>
-                <div class="reference-actions">
-                  <button id="pick-reference" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse images</button>
-                  <button id="paste-reference" class="secondary-button" type="button" title="Then press Ctrl+V"><i data-lucide="clipboard-paste"></i>Paste (Ctrl+V)</button>
-                </div>
-                <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
-                <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images" hidden></div>
-                <span id="reference-status" class="sr-only" role="status" aria-live="polite"></span>
-              </div>
-              <div id="rate-limits-line" class="rate-limits-line" role="status">Org limits optional — Admin key in API keys.</div>
-              <div id="estimate-box" class="estimate-box hidden" hidden><span>Estimated cost</span><strong><span id="rail-estimate">$0.00</span> <small id="rail-pkr">PKR 0.00</small></strong></div>
-              <div class="run-actions">
-                <button id="run-button" class="primary-button" disabled title="Select prompts to generate"><span>Generate</span><i data-lucide="arrow-right"></i></button>
-                <button id="cancel-button" class="secondary-button danger-button hidden" type="button" disabled hidden><i data-lucide="x"></i>Cancel</button>
-                <button id="resume-button" class="secondary-button hidden" type="button" hidden><i data-lucide="refresh-cw"></i>Resume leftovers</button>
-              </div>
-              <p class="privacy-note"><i data-lucide="shield-check"></i>Keys are validated, encrypted, and stored locally.</p>
-            </aside>
-          </section>
-
-          <section class="telemetry panel hidden" aria-live="polite" aria-label="Generation status">
-            <div class="telemetry-status"><span id="session-status">Pending</span><strong id="session-message"></strong></div>
-            <div class="telemetry-progress-wrap"><span>Progress</span><strong id="progress">0 / 0</strong><div class="progress-track" aria-hidden="true"><div id="progress-bar" class="progress-bar"></div></div></div>
-            <div><span>Elapsed</span><strong id="elapsed">00:00</strong></div>
-            <div><span>ETA left</span><strong id="eta">—</strong></div>
-            <div><span>Spent so far</span><strong id="session-cost">$0.000 · est $0.00</strong></div>
-            <div class="telemetry-actions"><button id="retry-button" class="secondary-button hidden"><i data-lucide="refresh-cw"></i>Resume leftovers</button><button id="export-button" class="secondary-button"><i data-lucide="package-open"></i>Export ZIP</button></div>
-          </section>
-        </div>
-
-        <section id="sessions-view" class="view-content management-view hidden"><div class="management-head"><p>Runs and waves on this device.</p><button id="refresh-sessions" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button></div><div id="session-list" class="data-list" aria-live="polite"></div></section>
-        <section id="history-view" class="view-content management-view hidden"><div class="management-head"><p>Generated images stored on this device.</p><div class="button-row"><button id="refresh-history" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button><button id="clear-history" class="secondary-button danger-button" type="button"><i data-lucide="trash-2"></i>Clear</button></div></div><div class="history-toolbar"><label><span class="sr-only">Search history</span><span class="search-control"><i data-lucide="search"></i><input id="history-search" type="search" placeholder="Search history" /></span></label><label class="history-filter"><span class="sr-only">Filter status</span><select id="history-filter" aria-label="Filter history"><option value="all">All</option><option value="has-image">Has image</option><option value="no-image">No image</option><option value="completed">Completed</option><option value="failed">Failed</option><option value="partial">Partial</option><option value="cancelled">Cancelled</option><option value="batch">Batch</option><option value="direct">Direct</option></select></label><strong id="history-count">0 items</strong></div><div id="history-list" class="history-grid" aria-live="polite"></div></section>
-        <section id="exports-view" class="view-content management-view hidden"><div class="management-head"><p>ZIP archives created on this device.</p><div class="button-row"><button id="refresh-exports" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button><button id="open-exports-folder" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Open folder</button></div></div><div id="export-list" class="data-list" aria-live="polite"></div></section>
-        <section id="logs-view" class="view-content management-view hidden">
-          <div class="management-head">
-            <p>Local diagnostic events. Ready to copy — secrets and image payloads are redacted.</p>
-            <div class="button-row">
-              <button id="refresh-logs" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Refresh</button>
-              <button id="copy-logs" class="secondary-button" type="button"><i data-lucide="copy"></i>Copy</button>
-              <button id="open-logs-folder" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Open folder</button>
+            </div>
+            <div id="warnings" class="warnings hidden" role="status"></div>
+            <div id="prompt-matrix" class="prompt-matrix view-list" tabindex="0"
+              aria-label="Imported prompt selections. Scroll inside this area to review the current page."
+              aria-live="polite">
+              <div class="empty-state"><i data-lucide="layers-3"></i><strong>No prompts loaded</strong><small>CSV and
+                  manual input are both supported.</small></div>
+            </div>
+            <div class="pagination" aria-label="Prompt navigation">
+              <div class="scroll-controls"><span id="matrix-scroll-position">No imported rows</span><button
+                  id="matrix-scroll-up" class="icon-button" type="button" aria-label="Scroll imported prompts up"
+                  disabled><i data-lucide="arrow-up"></i></button><button id="matrix-scroll-down" class="icon-button"
+                  type="button" aria-label="Scroll imported prompts down" disabled><i
+                    data-lucide="arrow-down"></i></button></div>
+              <div class="page-controls"><button id="matrix-prev" class="icon-button" type="button"
+                  aria-label="Previous prompt page"><i data-lucide="arrow-left"></i></button><span id="matrix-page">Page
+                  1 of 1</span><button id="matrix-next" class="icon-button" type="button"
+                  aria-label="Next prompt page"><i data-lucide="arrow-right"></i></button></div>
             </div>
           </div>
-          <div class="logs-toolbar">
-            <label>
-              <span class="sr-only">Filter by event</span>
-              <select id="logs-event" aria-label="Filter by event">
-                <option value="">All events</option>
-              </select>
-            </label>
-            <label class="logs-search-label">
-              <span class="sr-only">Search logs</span>
-              <span class="search-control"><i data-lucide="search"></i><input id="logs-search" type="search" placeholder="Search logs" /></span>
-            </label>
-            <strong id="logs-count">0 lines</strong>
-          </div>
-          <pre id="logs-list" class="logs-list" aria-live="polite" tabindex="0"></pre>
-          <p id="logs-path" class="logs-path"></p>
+
+          <aside class="run-panel panel" aria-label="Choose output">
+            <div class="section-heading">
+              <div>
+                <h2>Choose output</h2>
+                <p>Fixed production formats.</p>
+              </div>
+            </div>
+            <label class="model-field">Model<select id="model" disabled></select></label>
+            <label>Format<select id="size">
+                <option value="square">Square · 1024×1024</option>
+                <option value="portrait">Portrait · 1024×1280</option>
+                <option value="landscape">Landscape · 1536×864</option>
+                <option value="story">Story · 864×1536</option>
+              </select></label>
+            <label>Quality<select id="quality">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+              </select></label>
+            <fieldset>
+              <legend>Run mode</legend>
+              <label class="mode-option selected"><input type="radio" name="run-mode" value="batch"
+                  checked /><span><strong>Batch</strong><small>Lower cost, queue within 24h</small></span></label>
+              <label class="mode-option"><input type="radio" name="run-mode"
+                  value="direct" /><span><strong>Direct</strong><small>Up to 4 images</small></span></label>
+            </fieldset>
+            <div id="wave-controls" class="wave-controls">
+              <label class="mode-option wave-option"><input type="checkbox" id="wave-split"
+                  checked /><span><strong>Split into waves</strong><small id="wave-math" class="hidden"
+                    hidden></small></span></label>
+              <div id="wave-size-field" class="wave-size-field">
+                <label>Wave size <input id="wave-size" type="number" min="1" max="1000" value="100" /><small
+                    class="field-hint">Prompts per OpenAI batch</small></label>
+              </div>
+            </div>
+            <div id="reference-control" class="reference-control" data-count="0">
+              <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i
+                  data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small
+                    id="reference-hint">Optional · browse, drop, or paste · up to 16 · 50 MB each</small></span><b
+                  id="reference-badge" class="hidden" hidden>0/16</b></button>
+              <div class="reference-actions">
+                <button id="pick-reference" class="secondary-button" type="button"><i
+                    data-lucide="folder-open"></i>Browse images</button>
+                <button id="paste-reference" class="secondary-button" type="button"
+                  title="Paste images from the Windows clipboard"><i data-lucide="clipboard-paste"></i>Paste</button>
+              </div>
+              <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
+              <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images"
+                hidden></div>
+              <span id="reference-status" class="sr-only" role="status" aria-live="polite"></span>
+            </div>
+            <div id="rate-limits-line" class="rate-limits-line" role="status">Org limits optional — Admin key in API
+              keys.</div>
+            <div id="estimate-box" class="estimate-box hidden" hidden><span>Estimated cost</span><strong><span
+                  id="rail-estimate">$0.00</span> <small id="rail-pkr">PKR 0.00</small></strong></div>
+            <div class="run-actions">
+              <button id="run-button" class="primary-button" disabled
+                title="Select prompts to generate"><span>Generate</span><i data-lucide="arrow-right"></i></button>
+              <button id="cancel-button" class="secondary-button danger-button hidden" type="button" disabled hidden><i
+                  data-lucide="x"></i>Cancel</button>
+              <button id="resume-button" class="secondary-button hidden" type="button" hidden><i
+                  data-lucide="refresh-cw"></i>Resume leftovers</button>
+            </div>
+            <p class="privacy-note"><i data-lucide="shield-check"></i>Keys are validated, encrypted, and stored locally.
+            </p>
+          </aside>
         </section>
-      </main>
-    </div>
 
-    <dialog id="keys-dialog" class="keys-dialog panel" aria-labelledby="keys-title">
-      <form method="dialog" class="dialog-head">
-        <div>
-          <h2 id="keys-title" tabindex="-1">API keys</h2>
-          <p>Generation keys run jobs. Admin key is optional and only loads org rate limits.</p>
-        </div>
-        <div class="button-row">
-          <button id="refresh-keys" type="button" class="icon-button" aria-label="Refresh keys"><i data-lucide="refresh-cw"></i></button>
-          <button class="icon-button" aria-label="Close API keys" value="cancel"><i data-lucide="x"></i></button>
-        </div>
-      </form>
-
-      <div class="key-type-tabs segmented" role="tablist" aria-label="Key type">
-        <button type="button" class="key-type-tab active" role="tab" id="key-type-generation" data-key-type="generation" aria-selected="true" aria-controls="key-panel-generation">Generation <b id="gen-tab-count" class="tab-count">0</b></button>
-        <button type="button" class="key-type-tab" role="tab" id="key-type-admin" data-key-type="admin" aria-selected="false" aria-controls="key-panel-admin">Admin <b id="admin-tab-badge" class="tab-count off">—</b></button>
+        <section class="telemetry panel hidden" aria-live="polite" aria-label="Generation status">
+          <div class="telemetry-status"><span id="session-status">Pending</span><strong id="session-message"></strong>
+          </div>
+          <div class="telemetry-progress-wrap"><span>Progress</span><strong id="progress">0 / 0</strong>
+            <div class="progress-track" aria-hidden="true">
+              <div id="progress-bar" class="progress-bar"></div>
+            </div>
+          </div>
+          <div><span>Elapsed</span><strong id="elapsed">00:00</strong></div>
+          <div><span>ETA left</span><strong id="eta">—</strong></div>
+          <div><span>Spent so far</span><strong id="session-cost">$0.000 · est $0.00</strong></div>
+          <div class="telemetry-actions"><button id="retry-button" class="secondary-button hidden"><i
+                data-lucide="refresh-cw"></i>Resume leftovers</button><button id="export-button"
+              class="secondary-button"><i data-lucide="package-open"></i>Export ZIP</button></div>
+        </section>
       </div>
 
-      <div id="key-panel-generation" class="key-panel" role="tabpanel" aria-labelledby="key-type-generation">
-        <header class="key-panel-head">
-          <div>
-            <h3>Generation keys</h3>
-            <p>Used for GPT Image 2 runs. You can keep several and pause or rotate them.</p>
-          </div>
-        </header>
-        <div id="key-summary" class="key-summary hidden">
-          <div><span>Active</span><strong id="active-key-total">0</strong></div>
-          <div><span>Requests</span><strong id="key-request-total">0</strong></div>
-          <div><span>Tokens</span><strong id="key-token-total">0</strong></div>
-          <div><span>Spend</span><strong id="key-spend-total">$0.000</strong></div>
+      <section id="sessions-view" class="view-content management-view hidden">
+        <div class="management-head">
+          <p>Runs and waves on this device.</p><button id="refresh-sessions" class="secondary-button" type="button"><i
+              data-lucide="refresh-cw"></i>Refresh</button>
         </div>
-        <div id="key-list" class="key-list" aria-live="polite"></div>
-        <form id="key-form" class="key-form key-form-generation">
-          <label>Label<input id="key-label" autocomplete="off" placeholder="Production key" /></label>
-          <label>Generation API key<input id="api-key" type="password" autocomplete="new-password" placeholder="sk-…" required /></label>
-          <button class="primary-button" type="submit"><span>Add generation key</span><i data-lucide="key-round"></i></button>
+        <div id="session-list" class="data-list" aria-live="polite"></div>
+      </section>
+      <section id="history-view" class="view-content management-view hidden">
+        <div class="management-head">
+          <p>Generated images stored on this device.</p>
+          <div class="button-row"><button id="refresh-history" class="secondary-button" type="button"><i
+                data-lucide="refresh-cw"></i>Refresh</button><button id="clear-history"
+              class="secondary-button danger-button" type="button"><i data-lucide="trash-2"></i>Clear</button></div>
+        </div>
+        <div class="history-toolbar"><label><span class="sr-only">Search history</span><span class="search-control"><i
+                data-lucide="search"></i><input id="history-search" type="search"
+                placeholder="Search history" /></span></label><label class="history-filter"><span class="sr-only">Filter
+              status</span><select id="history-filter" aria-label="Filter history">
+              <option value="all">All</option>
+              <option value="has-image">Has image</option>
+              <option value="no-image">No image</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+              <option value="partial">Partial</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="batch">Batch</option>
+              <option value="direct">Direct</option>
+            </select></label><strong id="history-count">0 items</strong></div>
+        <div id="history-list" class="history-grid" aria-live="polite"></div>
+      </section>
+      <section id="exports-view" class="view-content management-view hidden">
+        <div class="management-head">
+          <p>ZIP archives created on this device.</p>
+          <div class="button-row"><button id="refresh-exports" class="secondary-button" type="button"><i
+                data-lucide="refresh-cw"></i>Refresh</button><button id="open-exports-folder" class="secondary-button"
+              type="button"><i data-lucide="folder-open"></i>Open folder</button></div>
+        </div>
+        <div id="export-list" class="data-list" aria-live="polite"></div>
+      </section>
+      <section id="logs-view" class="view-content management-view hidden">
+        <div class="management-head">
+          <p>Local diagnostic events. Ready to copy — secrets and image payloads are redacted.</p>
+          <div class="button-row">
+            <button id="refresh-logs" class="secondary-button" type="button"><i
+                data-lucide="refresh-cw"></i>Refresh</button>
+            <button id="copy-logs" class="secondary-button" type="button"><i data-lucide="copy"></i>Copy</button>
+            <button id="open-logs-folder" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Open
+              folder</button>
+          </div>
+        </div>
+        <div class="logs-toolbar">
+          <label>
+            <span class="sr-only">Filter by event</span>
+            <select id="logs-event" aria-label="Filter by event">
+              <option value="">All events</option>
+            </select>
+          </label>
+          <label class="logs-search-label">
+            <span class="sr-only">Search logs</span>
+            <span class="search-control"><i data-lucide="search"></i><input id="logs-search" type="search"
+                placeholder="Search logs" /></span>
+          </label>
+          <strong id="logs-count">0 lines</strong>
+        </div>
+        <pre id="logs-list" class="logs-list" aria-live="polite" tabindex="0"></pre>
+        <p id="logs-path" class="logs-path"></p>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="keys-dialog" class="keys-dialog panel" aria-labelledby="keys-title">
+    <form method="dialog" class="dialog-head">
+      <div>
+        <h2 id="keys-title" tabindex="-1">API keys</h2>
+        <p>Generation keys run jobs. Admin key is optional and only loads org rate limits.</p>
+      </div>
+      <div class="button-row">
+        <button id="refresh-keys" type="button" class="icon-button" aria-label="Refresh keys"><i
+            data-lucide="refresh-cw"></i></button>
+        <button class="icon-button" aria-label="Close API keys" value="cancel"><i data-lucide="x"></i></button>
+      </div>
+    </form>
+
+    <div class="key-type-tabs segmented" role="tablist" aria-label="Key type">
+      <button type="button" class="key-type-tab active" role="tab" id="key-type-generation" data-key-type="generation"
+        aria-selected="true" aria-controls="key-panel-generation">Generation <b id="gen-tab-count"
+          class="tab-count">0</b></button>
+      <button type="button" class="key-type-tab" role="tab" id="key-type-admin" data-key-type="admin"
+        aria-selected="false" aria-controls="key-panel-admin">Admin <b id="admin-tab-badge"
+          class="tab-count off">—</b></button>
+    </div>
+
+    <div id="key-panel-generation" class="key-panel" role="tabpanel" aria-labelledby="key-type-generation">
+      <header class="key-panel-head">
+        <div>
+          <h3>Generation keys</h3>
+          <p>Used for GPT Image 2 runs. You can keep several and pause or rotate them.</p>
+        </div>
+      </header>
+      <div id="key-summary" class="key-summary hidden">
+        <div><span>Active</span><strong id="active-key-total">0</strong></div>
+        <div><span>Requests</span><strong id="key-request-total">0</strong></div>
+        <div><span>Tokens</span><strong id="key-token-total">0</strong></div>
+        <div><span>Spend</span><strong id="key-spend-total">$0.000</strong></div>
+      </div>
+      <div id="key-list" class="key-list" aria-live="polite"></div>
+      <form id="key-form" class="key-form key-form-generation">
+        <label>Label<input id="key-label" autocomplete="off" placeholder="Production key" /></label>
+        <label>Generation API key<input id="api-key" type="password" autocomplete="new-password" placeholder="sk-…"
+            required /></label>
+        <button class="primary-button" type="submit"><span>Add generation key</span><i
+            data-lucide="key-round"></i></button>
+      </form>
+    </div>
+
+    <div id="key-panel-admin" class="key-panel hidden" role="tabpanel" aria-labelledby="key-type-admin" hidden>
+      <header class="key-panel-head">
+        <div>
+          <h3>Admin key <span class="key-optional">optional</span></h3>
+          <p>Never used for image generation. Only for org rate limits (images/min, TPM).</p>
+        </div>
+      </header>
+
+      <div id="admin-configured" class="admin-configured hidden" hidden>
+        <div class="admin-card">
+          <div>
+            <span>Saved Admin key</span>
+            <strong id="admin-saved-hint">••••</strong>
+            <small id="admin-saved-meta">No project selected</small>
+          </div>
+          <p id="admin-limits-preview" class="admin-limits-preview" role="status"></p>
+        </div>
+        <form id="admin-manage-form" class="key-form key-form-admin">
+          <label>Project
+            <span class="project-field">
+              <input id="admin-project" list="admin-project-list" autocomplete="off"
+                placeholder="proj_… or pick a project" />
+              <datalist id="admin-project-list"></datalist>
+              <button id="load-admin-projects" class="secondary-button" type="button">Load projects</button>
+            </span>
+          </label>
+          <div class="admin-actions">
+            <button id="save-admin-project" class="primary-button" type="submit"><span>Save project</span></button>
+            <button id="refresh-limits" class="secondary-button" type="button">Refresh limits</button>
+            <button id="edit-admin-key" class="secondary-button" type="button">Change Admin key</button>
+            <button id="clear-admin" class="secondary-button danger-button" type="button">Clear Admin key</button>
+          </div>
         </form>
       </div>
 
-      <div id="key-panel-admin" class="key-panel hidden" role="tabpanel" aria-labelledby="key-type-admin" hidden>
-        <header class="key-panel-head">
-          <div>
-            <h3>Admin key <span class="key-optional">optional</span></h3>
-            <p>Never used for image generation. Only for org rate limits (images/min, TPM).</p>
+      <div id="admin-edit" class="admin-edit">
+        <p id="admin-status" class="admin-status" role="status">No Admin key — limits won’t show.</p>
+        <form id="admin-form" class="key-form key-form-admin">
+          <label>Admin API key<input id="admin-key" type="password" autocomplete="new-password"
+              placeholder="sk-admin-… or sk-…" required /></label>
+          <label>Project <span class="optional-label">(optional)</span>
+            <span class="project-field">
+              <input id="admin-project-new" list="admin-project-list" autocomplete="off"
+                placeholder="proj_… (optional)" />
+            </span>
+          </label>
+          <div class="admin-actions">
+            <button class="primary-button" type="submit"><span id="admin-save-label">Save Admin key</span></button>
+            <button id="cancel-admin-edit" class="secondary-button hidden" type="button" hidden>Cancel</button>
           </div>
-        </header>
-
-        <div id="admin-configured" class="admin-configured hidden" hidden>
-          <div class="admin-card">
-            <div>
-              <span>Saved Admin key</span>
-              <strong id="admin-saved-hint">••••</strong>
-              <small id="admin-saved-meta">No project selected</small>
-            </div>
-            <p id="admin-limits-preview" class="admin-limits-preview" role="status"></p>
-          </div>
-          <form id="admin-manage-form" class="key-form key-form-admin">
-            <label>Project
-              <span class="project-field">
-                <input id="admin-project" list="admin-project-list" autocomplete="off" placeholder="proj_… or pick a project" />
-                <datalist id="admin-project-list"></datalist>
-                <button id="load-admin-projects" class="secondary-button" type="button">Load projects</button>
-              </span>
-            </label>
-            <div class="admin-actions">
-              <button id="save-admin-project" class="primary-button" type="submit"><span>Save project</span></button>
-              <button id="refresh-limits" class="secondary-button" type="button">Refresh limits</button>
-              <button id="edit-admin-key" class="secondary-button" type="button">Change Admin key</button>
-              <button id="clear-admin" class="secondary-button danger-button" type="button">Clear Admin key</button>
-            </div>
-          </form>
-        </div>
-
-        <div id="admin-edit" class="admin-edit">
-          <p id="admin-status" class="admin-status" role="status">No Admin key — limits won’t show.</p>
-          <form id="admin-form" class="key-form key-form-admin">
-            <label>Admin API key<input id="admin-key" type="password" autocomplete="new-password" placeholder="sk-admin-… or sk-…" required /></label>
-            <label>Project <span class="optional-label">(optional)</span>
-              <span class="project-field">
-                <input id="admin-project-new" list="admin-project-list" autocomplete="off" placeholder="proj_… (optional)" />
-              </span>
-            </label>
-            <div class="admin-actions">
-              <button class="primary-button" type="submit"><span id="admin-save-label">Save Admin key</span></button>
-              <button id="cancel-admin-edit" class="secondary-button hidden" type="button" hidden>Cancel</button>
-            </div>
-          </form>
-        </div>
+        </form>
       </div>
+    </div>
 
-      <div id="key-error" class="warnings hidden" role="alert"></div>
-    </dialog>
-    <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Image preview" hidden>
-      <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close preview"><i data-lucide="x"></i></button>
-      <button type="button" class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous image"><i data-lucide="arrow-left"></i></button>
-      <figure class="lightbox-frame"><img id="lightbox-image" alt="" /><figcaption id="lightbox-caption"></figcaption></figure>
-      <button type="button" class="lightbox-nav next" id="lightbox-next" aria-label="Next image"><i data-lucide="arrow-right"></i></button>
+    <div id="key-error" class="warnings hidden" role="alert"></div>
+  </dialog>
+  <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Image preview" hidden>
+    <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close preview"><i
+        data-lucide="x"></i></button>
+    <button type="button" class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous image"><i
+        data-lucide="arrow-left"></i></button>
+    <figure class="lightbox-frame"><img id="lightbox-image" alt="" />
+      <figcaption id="lightbox-caption"></figcaption>
+    </figure>
+    <button type="button" class="lightbox-nav next" id="lightbox-next" aria-label="Next image"><i
+        data-lucide="arrow-right"></i></button>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden>
+    <div class="toast-body">
+      <p id="toast-message" class="toast-message"></p>
+      <span id="toast-timer" class="toast-timer" aria-hidden="true"></span>
+      <button type="button" id="toast-close" class="toast-close" aria-label="Dismiss notification"><i
+          data-lucide="x"></i></button>
     </div>
-    <div id="toast" class="toast" role="status" aria-live="polite" hidden>
-      <div class="toast-body">
-        <p id="toast-message" class="toast-message"></p>
-        <span id="toast-timer" class="toast-timer" aria-hidden="true"></span>
-        <button type="button" id="toast-close" class="toast-close" aria-label="Dismiss notification"><i data-lucide="x"></i></button>
-      </div>
-      <div id="toast-progress" class="toast-progress" aria-hidden="true"></div>
-    </div>
-    <span id="check-icon-template" class="hidden" aria-hidden="true"><i data-lucide="check"></i></span>
-    <script type="module" src="index.js"></script>
-  </body>
+    <div id="toast-progress" class="toast-progress" aria-hidden="true"></div>
+  </div>
+  <span id="check-icon-template" class="hidden" aria-hidden="true"><i data-lucide="check"></i></span>
+  <script type="module" src="index.js"></script>
+</body>
+
 </html>

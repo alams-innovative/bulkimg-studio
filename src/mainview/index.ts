@@ -119,6 +119,8 @@ const elements = {
   pickCsvNative: byId<HTMLButtonElement>("pick-csv-native"),
   manualPrompts: byId<HTMLTextAreaElement>("manual-prompts"),
   parseManual: byId<HTMLButtonElement>("parse-manual"),
+  deleteSelectedPrompts: byId<HTMLButtonElement>("delete-selected-prompts"),
+  clearImportedPrompts: byId<HTMLButtonElement>("clear-imported-prompts"),
   sourceName: byId("source-name"),
   sourceSummary: byId("source-summary"),
   warnings: byId("warnings"),
@@ -440,8 +442,9 @@ function syncActionState(): void {
     const action = button.dataset["pick"];
     if (action === "none") button.disabled = selected.size === 0;
     else if (action === "all") button.disabled = cells.length === 0 || selected.size === cells.length;
-    else button.disabled = cells.length === 0;
   });
+  elements.deleteSelectedPrompts.disabled = selected.size === 0;
+  elements.clearImportedPrompts.disabled = !matrix || matrix.cells.length === 0;
 
   elements.parseManual.disabled = elements.parseManual.getAttribute("aria-busy") === "true"
     || !elements.manualPrompts.value.trim();
@@ -802,21 +805,85 @@ async function refreshEstimate(): Promise<void> {
   }
 }
 
+function updateMatrixSummary(): void {
+  if (!matrix) {
+    elements.sourceName.textContent = "No prompts yet";
+    elements.sourceSummary.textContent = "Add prompts to continue.";
+    return;
+  }
+
+  elements.sourceName.textContent = matrix.sourceName;
+  const enabled = matrix.cells.filter((cell) => !cell.disabled).length;
+  const disabled = matrix.cells.length - enabled;
+  const weekGroups = matrix.groups.filter((group) => group.id !== "manual").length;
+  elements.sourceSummary.textContent = weekGroups
+    ? `${enabled} prompts · ${weekGroups} weeks · ${disabled} unavailable`
+    : `${enabled} prompt${enabled === 1 ? "" : "s"}${disabled ? ` · ${disabled} unavailable` : ""}`;
+}
+
 function applyMatrix(next: PromptMatrix): void {
   matrix = next;
   selected = new Set();
   matrixPage = 0;
-  elements.sourceName.textContent = next.sourceName;
-  const enabled = next.cells.filter((cell) => !cell.disabled).length;
-  const disabled = next.cells.length - enabled;
-  const weekGroups = next.groups.filter((group) => group.id !== "manual").length;
-  elements.sourceSummary.textContent = weekGroups
-    ? `${enabled} prompts · ${weekGroups} weeks · ${disabled} unavailable`
-    : `${enabled} prompt${enabled === 1 ? "" : "s"}${disabled ? ` · ${disabled} unavailable` : ""}`;
+  updateMatrixSummary();
   elements.warnings.classList.toggle("hidden", next.warnings.length === 0);
   elements.warnings.textContent = next.warnings.join(" ");
   renderMatrix(true, true);
   updateSelection();
+}
+
+function clearPromptMatrix(showNotification = true): void {
+  matrix = null;
+  selected = new Set();
+  matrixPage = 0;
+  selectionSyncToken += 1;
+  elements.csvFile.value = "";
+  elements.warnings.textContent = "";
+  elements.warnings.classList.add("hidden");
+  updateMatrixSummary();
+  renderMatrix(true, false);
+  updateSelection();
+  if (showNotification) showToast("Imported prompts cleared.");
+}
+
+function removePromptIds(ids: Set<string>, message: string): void {
+  if (!matrix || ids.size === 0) return;
+
+  const remainingCells = matrix.cells.filter((cell) => !ids.has(cell.id));
+  if (remainingCells.length === 0) {
+    clearPromptMatrix(false);
+    showToast(message);
+    return;
+  }
+
+  const remainingIds = new Set(remainingCells.map((cell) => cell.id));
+  matrix = {
+    ...matrix,
+    cells: remainingCells,
+    groups: matrix.groups
+      .map((group) => ({
+        ...group,
+        cellIds: group.cellIds.filter((id) => remainingIds.has(id)),
+      }))
+      .filter((group) => group.cellIds.length > 0),
+  };
+  selected = new Set([...selected].filter((id) => remainingIds.has(id)));
+  const pageCount = Math.max(1, Math.ceil(remainingCells.length / PAGE_SIZE));
+  matrixPage = Math.min(matrixPage, pageCount - 1);
+  updateMatrixSummary();
+  renderMatrix(true, true);
+  updateSelection();
+  showToast(message);
+}
+
+function removeSelectedPrompts(): void {
+  const count = selected.size;
+  if (count === 0) return;
+  removePromptIds(new Set(selected), `${count} selected prompt${count === 1 ? "" : "s"} deleted.`);
+}
+
+function removePromptCell(id: string): void {
+  removePromptIds(new Set([id]), "Prompt deleted.");
 }
 
 function renderMatrix(resetScroll = false, animateRows = false): void {
@@ -859,11 +926,16 @@ function renderMatrix(resetScroll = false, animateRows = false): void {
   elements.matrixPrev.disabled = !multiPage || matrixPage === 0;
   elements.matrixNext.disabled = !multiPage || matrixPage >= pages - 1;
   const renderCard = (cell: PromptCell) => `
-    <button type="button" class="prompt-card ${cell.disabled ? "disabled" : ""} ${selected.has(cell.id) ? "selected" : ""}" data-id="${cell.id}" aria-pressed="${selected.has(cell.id)}" ${cell.disabled ? `disabled title="${escapeHtml(cell.disabledReason ?? "This schedule cell cannot generate an image")}"` : ""}>
-      <span class="prompt-meta"><span>${escapeHtml(cell.dayLabel || "Prompt")}</span><span>${escapeHtml(cell.scheduleDate || "No date")}</span></span>
-      <span class="prompt-copy"><span class="prompt-theme">${escapeHtml(cell.themeColumn)}</span><span class="prompt-text">${escapeHtml(cell.promptText)}</span></span>
-      <span class="check-dot" aria-hidden="true">${checkIconMarkup()}</span>
-    </button>
+    <div class="prompt-row" data-row-id="${cell.id}">
+      <button type="button" class="prompt-card ${cell.disabled ? "disabled" : ""} ${selected.has(cell.id) ? "selected" : ""}" data-id="${cell.id}" aria-pressed="${selected.has(cell.id)}" ${cell.disabled ? `disabled title="${escapeHtml(cell.disabledReason ?? "This schedule cell cannot generate an image")}"` : ""}>
+        <span class="prompt-meta"><span>${escapeHtml(cell.dayLabel || "Prompt")}</span><span>${escapeHtml(cell.scheduleDate || "No date")}</span></span>
+        <span class="prompt-copy"><span class="prompt-theme">${escapeHtml(cell.themeColumn)}</span><span class="prompt-text">${escapeHtml(cell.promptText)}</span></span>
+        <span class="check-dot" aria-hidden="true">${checkIconMarkup()}</span>
+      </button>
+      <button type="button" class="prompt-delete" data-delete-id="${cell.id}" aria-label="Delete ${escapeHtml(cell.dayLabel || "prompt")}" title="Delete prompt">
+        <i data-lucide="trash-2"></i>
+      </button>
+    </div>
   `;
   const renderGroup = ({ group, cells }: { group: PromptGroup; cells: PromptCell[] }) => {
     const selectable = group.cellIds.map((id) => cellById.get(id)).filter((cell): cell is PromptCell => Boolean(cell && !cell.disabled));
@@ -890,6 +962,12 @@ function renderMatrix(resetScroll = false, animateRows = false): void {
       syncCardSelection(card, selected.has(id));
       syncVisibleGroupControls();
       updateSelection();
+    });
+  });
+  elements.matrix.querySelectorAll<HTMLButtonElement>(".prompt-delete[data-delete-id]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const id = button.dataset["deleteId"];
+      if (id) removePromptCell(id);
     });
   });
   elements.matrix.querySelectorAll<HTMLButtonElement>(".week-select[data-group-id]").forEach((button) => {
@@ -1051,10 +1129,6 @@ function referenceFileError(file: File): string | null {
   return null;
 }
 
-function fileLooksLikeImage(file: File): boolean {
-  return file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name);
-}
-
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -1073,7 +1147,18 @@ function fileToBase64(file: File): Promise<string> {
 }
 
 function logUi(event: string, fields: Record<string, unknown> = {}): void {
-  void app.rpc?.request.writeDiagnosticLog({ event, fields }).catch(() => undefined);
+  void (async () => {
+    try {
+      const rpcClient = app.rpc;
+      if (!rpcClient?.request?.writeDiagnosticLog) {
+        console.warn("[bulkimg:diag] RPC not ready for", event, fields);
+        return;
+      }
+      await rpcClient.request.writeDiagnosticLog({ event, fields });
+    } catch (error) {
+      console.warn("[bulkimg:diag] write failed", event, error);
+    }
+  })();
 }
 
 function looksLikeCsvText(text: string): { ok: true } | { ok: false; reason: string } {
@@ -1097,72 +1182,6 @@ function looksLikeCsvText(text: string): { ok: true } | { ok: false; reason: str
     return { ok: false, reason: "Clipboard has HTML, not CSV. Copy from Excel/Sheets or a .csv file." };
   }
   return { ok: true };
-}
-
-type PasteArmMode = "csv" | "images";
-let pasteArm: { mode: PasteArmMode; until: number; timer: number | null } | null = null;
-
-function clearPasteArm(): void {
-  if (pasteArm?.timer != null) window.clearTimeout(pasteArm.timer);
-  pasteArm = null;
-  elements.csvPanel.classList.remove("paste-armed");
-  elements.referenceControl.classList.remove("paste-armed");
-}
-
-function armPaste(mode: PasteArmMode): void {
-  clearPasteArm();
-  const timer = window.setTimeout(() => {
-    clearPasteArm();
-    showToast("Paste timed out. Click Paste again, then press Ctrl+V.", true);
-  }, 12_000);
-  pasteArm = { mode, until: Date.now() + 12_000, timer };
-  if (mode === "csv") {
-    elements.csvPanel.classList.add("paste-armed");
-    dropzone?.focus?.();
-    showToast("Ready — press Ctrl+V now to paste CSV text or a file.");
-  } else {
-    elements.referenceControl.classList.add("paste-armed");
-    elements.referenceDock.focus();
-    showToast("Ready — press Ctrl+V now to paste images.");
-  }
-  logUi("ui_paste_arm", { mode });
-}
-
-/** Extract usable files from a Windows paste/drop DataTransfer (skips 0-byte placeholders). */
-async function filesFromDataTransfer(transfer: DataTransfer | null | undefined, kind: "image" | "csv" | "any"): Promise<File[]> {
-  if (!transfer) return [];
-  const found: File[] = [];
-  const seen = new Set<string>();
-  const push = (file: File | null) => {
-    if (!file || file.size <= 0) return;
-    if (kind === "image" && !fileLooksLikeImage(file)) return;
-    if (kind === "csv" && !(file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv" || file.type === "text/plain")) return;
-    const key = `${file.name}|${file.size}|${file.type}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    found.push(file);
-  };
-
-  for (const item of [...transfer.items]) {
-    if (item.kind !== "file") continue;
-    if (kind === "image" && item.type && !item.type.startsWith("image/") && item.type !== "") continue;
-    push(item.getAsFile());
-  }
-  for (const file of [...transfer.files]) push(file);
-
-  // Drop zero-byte and re-check by reading first 4 bytes when size reported wrong
-  const usable: File[] = [];
-  for (const file of found) {
-    if (file.size > 0) {
-      usable.push(file);
-      continue;
-    }
-    try {
-      const head = await file.slice(0, 8).arrayBuffer();
-      if (head.byteLength > 0) usable.push(file);
-    } catch { /* skip */ }
-  }
-  return usable;
 }
 
 function referenceMimeType(file: File): string {
@@ -1945,6 +1964,7 @@ async function bootstrap(): Promise<void> {
   updateWaveUi();
   syncEstimateChrome(selected.size);
   syncActionState();
+  logUi("ui_bootstrap_ok", { version: data.brand.version, platform: data.platform, keyCount: data.keyCount });
 }
 
 applyTheme(getInitialTheme());
@@ -1985,22 +2005,9 @@ elements.manualTab.addEventListener("click", () => setTab("manual"));
 elements.csvFile.addEventListener("change", () => {
   const file = elements.csvFile.files?.[0];
   if (file) void importCsvFile(file);
+  elements.csvFile.value = "";
 });
-elements.pickCsvNative.addEventListener("click", async () => {
-  elements.pickCsvNative.disabled = true;
-  elements.pickCsvNative.setAttribute("aria-busy", "true");
-  try {
-    const picked = await app.rpc!.request.pickCsvFile({});
-    if (!picked) return;
-    applyMatrix(await app.rpc!.request.importCSV(picked));
-    showToast(`Loaded ${picked.sourceName}`);
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "Could not open CSV", true);
-  } finally {
-    elements.pickCsvNative.disabled = false;
-    elements.pickCsvNative.removeAttribute("aria-busy");
-  }
-});
+elements.pickCsvNative.addEventListener("click", () => elements.csvFile.click());
 if (dropzone) {
   ["dragenter", "dragover"].forEach((eventName) => dropzone.addEventListener(eventName, (event) => {
     event.preventDefault();
@@ -2013,6 +2020,11 @@ if (dropzone) {
   dropzone.addEventListener("drop", (event) => {
     const file = event.dataTransfer?.files[0];
     if (file) void importCsvFile(file);
+  });
+  dropzone.addEventListener("mouseenter", () => {
+    // Keep dropzone as a real Ctrl+V target without stealing focus from text fields.
+    if (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement) return;
+    dropzone.focus({ preventScroll: true });
   });
 }
 elements.parseManual.addEventListener("click", async () => {
@@ -2040,11 +2052,13 @@ document.querySelectorAll<HTMLButtonElement>("[data-pick]").forEach((button) => 
   button.addEventListener("click", () => {
     const action = button.dataset["pick"];
     const cells = selectableCells();
-    selected = action === "none" ? new Set() : new Set(cells.slice(0, action === "all" ? undefined : Number(action)).map((cell) => cell.id));
+    selected = action === "all" ? new Set(cells.map((cell) => cell.id)) : new Set();
     syncVisibleSelections();
     updateSelection();
   });
 });
+elements.deleteSelectedPrompts.addEventListener("click", removeSelectedPrompts);
+elements.clearImportedPrompts.addEventListener("click", () => clearPromptMatrix());
 elements.matrixPrev.addEventListener("click", () => { matrixPage = Math.max(0, matrixPage - 1); renderMatrix(true, true); });
 elements.matrixNext.addEventListener("click", () => { matrixPage += 1; renderMatrix(true, true); });
 elements.matrixScrollUp.addEventListener("click", () => scrollPromptSelections(-1));
@@ -2107,70 +2121,90 @@ elements.referenceControl.addEventListener("drop", (event) => {
   const files = [...(event.dataTransfer?.files ?? [])].filter((file) => file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name));
   if (files.length) void attachReferenceFiles(files);
 });
+async function importCsvText(csvText: string, sourceName: string): Promise<void> {
+  const check = looksLikeCsvText(csvText);
+  if (!check.ok) {
+    showToast(check.reason, true);
+    logUi("ui_paste_csv_invalid", { reason: check.reason });
+    return;
+  }
+  elements.csvPanel.setAttribute("aria-busy", "true");
+  elements.pasteCsv.disabled = true;
+  try {
+    applyMatrix(await app.rpc!.request.importCSV({ csvText, sourceName }));
+    showToast(sourceName === "clipboard.csv" ? "Loaded CSV from paste." : `Loaded ${sourceName}`);
+    logUi("ui_paste_csv_text", { chars: csvText.length, ok: true, source: sourceName });
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "That paste is not a valid CSV for BulkImg.", true);
+    logUi("ui_paste_csv_text", { ok: false, message: error instanceof Error ? error.message : "error" });
+  } finally {
+    elements.csvPanel.removeAttribute("aria-busy");
+    elements.pasteCsv.disabled = false;
+  }
+}
+
+/** Focus or pointer is on the CSV dropzone / panel (hover + Ctrl+V / Paste button). */
+function isCsvPasteTarget(): boolean {
+  if (elements.csvPanel.classList.contains("hidden")) return false;
+  const active = document.activeElement;
+  if (active instanceof Node && elements.csvPanel.contains(active)) return true;
+  if (dropzone?.matches(":hover") || elements.csvPanel.matches(":hover")) return true;
+  return false;
+}
+
+/**
+ * CSV-only paste. Never reads browser clipboard (no permission prompts, no fake image.png).
+ * 1) text plain/csv from the Ctrl+V paste event when present
+ * 2) otherwise native Windows clipboard via Bun (Get-Clipboard)
+ */
+async function pasteCsvOnly(via: string, transfer?: DataTransfer | null): Promise<void> {
+  logUi("ui_paste_csv_start", { via });
+  // Text from the paste event only — never transfer.files / items (WebView invents empty image.png).
+  if (transfer) {
+    const text = (transfer.getData("text/plain") || transfer.getData("text/csv") || "").trim();
+    if (text) {
+      logUi("ui_paste_csv_event_text", { via, chars: text.length });
+      await importCsvText(text, "clipboard.csv");
+      return;
+    }
+  }
+  if (!app.rpc) {
+    showToast("App is not ready yet. Try Paste CSV again.", true);
+    logUi("ui_paste_csv_native", { ok: false, error: "rpc_missing", via });
+    return;
+  }
+  elements.pasteCsv.disabled = true;
+  try {
+    const result = await app.rpc.request.readClipboardCsv({});
+    if (result.error || !result.text) {
+      showToast(result.error || "Clipboard has no CSV text. Copy cells or a CSV, then paste again.", true);
+      logUi("ui_paste_csv_native", { ok: false, error: result.error, via });
+      return;
+    }
+    logUi("ui_paste_csv_native", { ok: true, via, chars: result.text.length, source: result.sourceName });
+    await importCsvText(result.text, result.sourceName || "clipboard.csv");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not paste CSV.";
+    showToast(message, true);
+    logUi("ui_paste_csv_native", { ok: false, message, via });
+  } finally {
+    elements.pasteCsv.disabled = false;
+  }
+}
+
 window.addEventListener("paste", (event) => {
   void (async () => {
-    const transfer = event.clipboardData;
-    const armed = pasteArm && Date.now() < pasteArm.until ? pasteArm.mode : null;
-    const wantsCsv = armed === "csv" || (!armed && !elements.csvPanel.classList.contains("hidden") && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement));
-    const wantsImages = armed === "images" || !wantsCsv;
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    if (!isCsvPasteTarget()) return;
 
-    // Prefer files from the paste event (Ctrl+V on Windows) — no clipboard permission hang.
-    if (wantsImages) {
-      const imageFiles = await filesFromDataTransfer(transfer, "image");
-      if (imageFiles.length) {
-        event.preventDefault();
-        clearPasteArm();
-        logUi("ui_paste_images", { count: imageFiles.length, via: armed ? "armed" : "ctrl_v" });
-        await attachReferenceFiles(imageFiles);
-        return;
-      }
-    }
-
-    if (wantsCsv) {
-      const csvFiles = await filesFromDataTransfer(transfer, "csv");
-      if (csvFiles.length) {
-        event.preventDefault();
-        clearPasteArm();
-        logUi("ui_paste_csv_file", { name: csvFiles[0]!.name, size: csvFiles[0]!.size });
-        await importCsvFile(csvFiles[0]!);
-        return;
-      }
-      const text = transfer?.getData("text/plain")?.trim() ?? "";
-      if (text && (armed === "csv" || !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement))) {
-        const check = looksLikeCsvText(text);
-        if (!check.ok) {
-          if (armed === "csv") {
-            event.preventDefault();
-            clearPasteArm();
-            showToast(check.reason, true);
-            logUi("ui_paste_csv_invalid", { reason: check.reason });
-          }
-          return;
-        }
-        event.preventDefault();
-        clearPasteArm();
-        try {
-          applyMatrix(await app.rpc!.request.importCSV({ csvText: text, sourceName: "clipboard.csv" }));
-          showToast("Loaded CSV from paste.");
-          logUi("ui_paste_csv_text", { chars: text.length, ok: true });
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : "That paste is not a valid CSV for BulkImg.", true);
-          logUi("ui_paste_csv_text", { ok: false, message: error instanceof Error ? error.message : "error" });
-        }
-      } else if (armed === "csv") {
-        event.preventDefault();
-        clearPasteArm();
-        showToast("Nothing usable to paste. Copy CSV text or a .csv file, then try again.", true);
-        logUi("ui_paste_csv_empty", {});
-      }
-    } else if (armed === "images") {
-      event.preventDefault();
-      clearPasteArm();
-      showToast("No image found in clipboard. Copy a PNG/JPEG/WebP, then Ctrl+V.", true);
-      logUi("ui_paste_images_empty", {});
-    }
+    // Ctrl+V is reserved for CSV text while the CSV panel has focus or pointer context.
+    // Reference images are pasted only through the explicit Paste button in that section.
+    event.preventDefault();
+    await pasteCsvOnly("csv_hover_ctrl_v", event.clipboardData);
   })();
 });
+
+elements.pasteCsv.addEventListener("click", () => void pasteCsvOnly("paste_button"));
 
 elements.runButton.addEventListener("click", async () => {
   if (!matrix) return;
@@ -2426,17 +2460,78 @@ elements.keysDialog.addEventListener("cancel", () => {
   adminEditingKey = false;
 });
 
-async function pasteCsvFromClipboard(): Promise<void> {
-  // WebView2 often blocks navigator.clipboard.read* (hangs or throws).
-  // Arm Ctrl+V paste instead — that path uses the paste event and works on Windows.
-  armPaste("csv");
+function base64PreviewUrl(dataBase64: string, mimeType: string): string {
+  try {
+    const binary = atob(dataBase64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+    return URL.createObjectURL(new Blob([bytes], { type: mimeType }));
+  } catch {
+    return `data:${mimeType};base64,${dataBase64}`;
+  }
 }
 
 async function pasteReferencesFromClipboard(): Promise<void> {
-  armPaste("images");
+  const remaining = referenceLimit() - referenceImages.length;
+  if (remaining <= 0) {
+    showToast("You can attach at most 16 reference images.", true);
+    return;
+  }
+  elements.pasteReference.disabled = true;
+  elements.referenceDock.setAttribute("aria-busy", "true");
+  logUi("ui_paste_images_click", { remaining });
+  try {
+    if (!app.rpc) throw new Error("App is not ready yet.");
+    const result = await app.rpc.request.readClipboardImages({ maxCount: remaining });
+    if (result.error || !result.images.length) {
+      showToast(result.error || "Clipboard has no image.", true);
+      logUi("ui_paste_images_native", { ok: false, error: result.error });
+      return;
+    }
+    let uploaded = 0;
+    for (const image of result.images) {
+      if (referenceImages.length >= referenceLimit()) break;
+      if (!image.dataBase64 || image.dataBase64.length < 8) continue;
+      try {
+        const upload = await app.rpc.request.uploadReferenceImage({
+          dataBase64: image.dataBase64,
+          filename: image.filename || `clipboard-${Date.now()}.png`,
+          mimeType: image.mimeType || "image/png",
+        });
+        referenceImages.push({
+          fileId: upload.fileId,
+          name: image.filename || "Pasted image",
+          previewUrl: base64PreviewUrl(image.dataBase64, image.mimeType || "image/png"),
+        });
+        uploaded += 1;
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "Could not upload pasted image.", true);
+        logUi("ui_reference_upload_error", {
+          name: image.filename,
+          message: error instanceof Error ? error.message : "error",
+        });
+      }
+    }
+    renderReferenceImages(uploaded
+      ? `${uploaded} reference image${uploaded === 1 ? "" : "s"} added. ${referenceImages.length} attached.`
+      : undefined);
+    if (uploaded) {
+      showToast(`${uploaded} reference image${uploaded === 1 ? "" : "s"} added.`);
+      void refreshEstimate();
+    } else {
+      showToast("Clipboard image was empty or could not be uploaded.", true);
+    }
+    logUi("ui_paste_images_native", { ok: uploaded > 0, uploaded, found: result.images.length });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not paste images.";
+    showToast(message, true);
+    logUi("ui_paste_images_native", { ok: false, message });
+  } finally {
+    elements.pasteReference.disabled = false;
+    elements.referenceDock.removeAttribute("aria-busy");
+  }
 }
 
-elements.pasteCsv.addEventListener("click", () => void pasteCsvFromClipboard());
 elements.pasteReference.addEventListener("click", () => void pasteReferencesFromClipboard());
 elements.pickReference.addEventListener("click", () => elements.referenceFile.click());
 

@@ -13,6 +13,8 @@ const promptMatrix = (text: string) => {
   return { sourceName: "Manual prompts", columns: ["Prompt"], warnings: [], cells, groups: cells.length ? [{ id: "manual", label: "Manual prompts", startDate: "", cellIds: cells.map((cell) => cell.id) }] : [] };
 };
 
+const clipboardPixelBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
 const telemetryBase = {
   sessionId: "session-test",
   status: "processing" as const,
@@ -42,7 +44,7 @@ const telemetryBase = {
 
 const mocks: Record<string, (params: any) => any> = {
   getBootstrap: () => ({
-    brand: { appName: "BulkImg Studio", version: "1.0.1-beta" },
+    brand: { appName: "BulkImg Studio", version: "1.0.2-beta" },
     models: { defaultModel: "gpt-image-2", models: [{ id: "gpt-image-2", label: "GPT Image 2", enabled: true }] },
     keyCount: 1,
     platform: "win32-x64",
@@ -257,7 +259,7 @@ const mocks: Record<string, (params: any) => any> = {
   ],
   getDiagnosticLogs: () => ({
     lines: [
-      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.1-beta"}',
+      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.2-beta"}',
       '{"ts":"2026-08-04T06:01:12.000Z","event":"session_created","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","mode":"batch"}',
       '{"ts":"2026-08-04T06:02:40.000Z","event":"batch_poll","status":"processing","completed":42,"total":100}',
       '{"ts":"2026-08-04T06:03:10.000Z","event":"batch_download_error","category":"timeout","message":"Download stalled; will retry"}',
@@ -267,6 +269,13 @@ const mocks: Record<string, (params: any) => any> = {
     total: 4,
   }),
   pickCsvFile: () => null,
+  readClipboardImages: ({ maxCount }: { maxCount?: number }) => ({
+    images: [
+      { filename: "clipboard-one.png", mimeType: "image/png", dataBase64: clipboardPixelBase64 },
+      { filename: "clipboard-two.png", mimeType: "image/png", dataBase64: clipboardPixelBase64 },
+    ].slice(0, maxCount ?? APP_LIMITS.maxReferences),
+    error: null,
+  }),
   uploadReferenceImage: (() => { let index = 0; return () => ({ fileId: `file-test-${++index}` }); })(),
   removeReferenceImage: () => ({ success: true }),
   setAdminKey: () => ({ configured: true, projectId: null, keyHint: "••••admn", rateLimits: null, lastError: null }),

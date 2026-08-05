@@ -88,31 +88,60 @@ test("weekly CSV rows can be selected as groups or as individual prompts", async
   await expect(page.locator("#selected-count")).toHaveText("0");
 });
 
-test("attaches multiple reference images from files and the clipboard", async ({ page }) => {
+test("deselects, deletes selected rows, deletes one row, and clears the imported matrix", async ({ page }) => {
+  await page.getByRole("tab", { name: "Manual" }).click();
+  await page.getByLabel("Manual prompts").fill("Prompt one\nPrompt two\nPrompt three");
+  await page.getByRole("button", { name: "Add prompts" }).click();
+
+  await expect(page.locator(".prompt-card")).toHaveCount(3);
+  await page.getByRole("button", { name: "Select all", exact: true }).click();
+  await expect(page.locator("#selected-count")).toHaveText("3");
+
+  await page.getByRole("button", { name: "Deselect all", exact: true }).click();
+  await expect(page.locator("#selected-count")).toHaveText("0");
+  await expect(page.locator(".prompt-card")).toHaveCount(3);
+
+  await page.locator(".prompt-card").first().click();
+  await page.getByRole("button", { name: "Delete selected" }).click();
+  await expect(page.locator(".prompt-card")).toHaveCount(2);
+  await expect(page.locator("#source-summary")).toHaveText("2 prompts");
+
+  await page.locator(".prompt-delete").first().click();
+  await expect(page.locator(".prompt-card")).toHaveCount(1);
+  await expect(page.locator("#source-summary")).toHaveText("1 prompt");
+
+  await page.getByRole("button", { name: "Clear imported" }).click();
+  await expect(page.getByText("No prompts loaded")).toBeVisible();
+  await expect(page.locator("#source-name")).toHaveText("No prompts yet");
+  await expect(page.getByRole("button", { name: "Clear imported" })).toBeDisabled();
+});
+
+test("keeps image paste explicit to the reference section", async ({ page }) => {
   const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
   await page.locator("#reference-file").setInputFiles([
     { name: "brand portrait.png", mimeType: "image/png", buffer: pixel },
     { name: "product.png", mimeType: "image/png", buffer: pixel },
   ]);
   await expect(page.locator(".reference-item")).toHaveCount(2);
-  await expect(page.locator("#reference-badge")).toHaveText("2/4");
+  await expect(page.locator("#reference-badge")).toHaveText("2/16");
 
   await page.evaluate((base64) => {
     const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
     const transfer = new DataTransfer();
-    transfer.items.add(new File([bytes], "clipboard-one.png", { type: "image/png" }));
-    transfer.items.add(new File([bytes], "clipboard-two.png", { type: "image/png" }));
+    transfer.items.add(new File([bytes], "should-not-auto-attach.png", { type: "image/png" }));
     window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true }));
   }, pixel.toString("base64"));
+  await expect(page.locator(".reference-item")).toHaveCount(2);
 
+  await page.getByRole("button", { name: "Paste", exact: true }).click();
   await expect(page.locator(".reference-item")).toHaveCount(4);
-  await expect(page.locator("#reference-badge")).toHaveText("4/4");
-  await expect(page.locator("#reference-dock")).toBeDisabled();
+  await expect(page.locator("#reference-badge")).toHaveText("4/16");
+  await expect(page.locator("#reference-dock")).toBeEnabled();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await page.getByRole("button", { name: "Remove brand portrait.png" }).click();
   await expect(page.locator(".reference-item")).toHaveCount(3);
-  await expect(page.locator("#reference-badge")).toHaveText("3/4");
+  await expect(page.locator("#reference-badge")).toHaveText("3/16");
   await expect(page.locator("#reference-dock")).toBeEnabled();
 });
 
