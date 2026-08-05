@@ -50,16 +50,16 @@ describe("wave planner", () => {
   });
 });
 
-describe("v4 migration and runs", () => {
-  test("opens fresh DB at user_version 4 with settings defaults", () => {
+describe("v5 migration, runs, and Converter storage", () => {
+  test("opens fresh DB at user_version 5 with settings defaults", () => {
     const directory = makeDir();
     const database = new AppDatabase(directory);
-    expect(database.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(4);
+    expect(database.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(5);
     expect(database.getAppSettings().waveSize).toBe(APP_LIMITS.defaultWaveSize);
     database.db.close();
   });
 
-  test("migrates v3 schema to v4", () => {
+  test("migrates v3 schema to v5", () => {
     const directory = makeDir();
     const original = new AppDatabase(directory);
     original.createSession("session-v3", input(2, "direct"), 278);
@@ -70,7 +70,7 @@ describe("v4 migration and runs", () => {
     raw.close();
 
     const migrated = new AppDatabase(directory);
-    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(4);
+    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(5);
     expect(migrated.getSessionPrompts("session-v3")).toHaveLength(2);
     expect(migrated.getAppSettings().waveSize).toBe(APP_LIMITS.defaultWaveSize);
     migrated.db.close();

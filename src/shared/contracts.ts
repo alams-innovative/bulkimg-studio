@@ -276,6 +276,79 @@ export type ExportSummary = {
   modifiedAt: string;
 };
 
+export type ConverterFormat = "png" | "jpg" | "webp" | "avif" | "tiff" | "bmp";
+export type ConverterQuality = "smallest" | "balanced" | "best";
+export type ConverterSourceKind = "session" | "upload" | "clipboard";
+export type ConverterRule =
+  | { id: string; type: "nth"; every: number; format: ConverterFormat }
+  | { id: string; type: "odd" | "even"; format: ConverterFormat }
+  | { id: string; type: "range"; start: number; end: number; format: ConverterFormat }
+  | { id: string; type: "cycle"; formats: ConverterFormat[] };
+
+export type ConverterOptions = {
+  defaultFormat: ConverterFormat;
+  quality: ConverterQuality;
+  width: number | null;
+  height: number | null;
+  fit: "inside" | "cover" | "fill";
+  stripMetadata: boolean;
+  background: string;
+  prefix: string;
+  rules: ConverterRule[];
+  overrides: Record<string, ConverterFormat>;
+};
+
+export type ConverterInput =
+  | { clientId: string; sourceKind: "session"; assetId: string; name: string }
+  | { clientId: string; sourceKind: "upload" | "clipboard"; name: string; dataBase64: string };
+
+export type ConverterSourceImage = {
+  assetId: string;
+  sessionId: string;
+  name: string;
+  createdAt: string;
+};
+
+export type ConverterImageProperties = {
+  name: string;
+  format: string;
+  mimeType: string;
+  sizeBytes: number;
+  width: number;
+  height: number;
+  channels: number | null;
+  bitDepth: string | null;
+  colorSpace: string | null;
+  hasAlpha: boolean;
+  density: number | null;
+  orientation: number | null;
+  pages: number | null;
+  hasExif: boolean;
+  hasIcc: boolean;
+};
+
+export type ConverterJobItem = {
+  id: string;
+  ordinal: number;
+  sourceKind: ConverterSourceKind;
+  sourceName: string;
+  outputName: string | null;
+  format: ConverterFormat;
+  status: "completed" | "failed";
+  error: string | null;
+  properties: ConverterImageProperties | null;
+};
+
+export type ConverterJob = {
+  id: string;
+  createdAt: string;
+  status: "completed" | "partial" | "failed";
+  totalCount: number;
+  completedCount: number;
+  options: ConverterOptions;
+  items: ConverterJobItem[];
+};
+
 export type HistoryItem = {
   promptId: string;
   assetId: string | null;
@@ -421,6 +494,19 @@ export type AppRPC = {
           error: string | null;
         };
       };
+      listConverterSessionImages: { params: {}; response: ConverterSourceImage[] };
+      convertImages: {
+        params: { inputs: ConverterInput[]; options: ConverterOptions };
+        response: ConverterJob;
+      };
+      listConverterJobs: { params: {}; response: ConverterJob[] };
+      getConverterOutput: { params: { jobId: string; itemId: string }; response: { dataUrl: string } };
+      getConverterProperties: { params: { jobId: string; itemId: string }; response: ConverterImageProperties };
+      getConverterSourceProperties: { params: { input: ConverterInput }; response: ConverterImageProperties };
+      copyConverterOutput: { params: { jobId: string; itemId: string }; response: { success: true } };
+      copyConverterFiles: { params: { jobId: string; itemIds: string[] }; response: { success: true } };
+      saveConverterOutputs: { params: { jobId: string; itemIds: string[] }; response: { directory: string | null; saved: number } };
+      deleteConverterJob: { params: { jobId: string }; response: { success: true } };
     };
     messages: {};
   };

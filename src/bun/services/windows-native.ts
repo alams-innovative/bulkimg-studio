@@ -47,6 +47,63 @@ if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
   return result.exitCode === 0 && result.stdout ? result.stdout.split(/\r?\n/)[0] ?? null : null;
 }
 
+export async function pickOpenFiles(options: {
+  title: string;
+  filter: string;
+  filterLabel: string;
+}): Promise<string[]> {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.OpenFileDialog
+$dialog.Title = ${JSON.stringify(options.title)}
+$dialog.Filter = ${JSON.stringify(`${options.filterLabel}|${options.filter}`)}
+$dialog.Multiselect = $true
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  $dialog.FileNames | ForEach-Object { Write-Output $_ }
+}
+`;
+  const result = await powershell(script);
+  return result.exitCode === 0 && result.stdout
+    ? result.stdout.split(/\r?\n/).map((path) => path.trim()).filter(Boolean)
+    : [];
+}
+
+export async function pickFolder(title: string): Promise<string | null> {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+$dialog.Description = ${JSON.stringify(title)}
+if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+  Write-Output $dialog.SelectedPath
+}
+`;
+  const result = await powershell(script);
+  return result.exitCode === 0 && result.stdout ? result.stdout.split(/\r?\n/)[0] ?? null : null;
+}
+
+export async function copyImageToClipboard(filePath: string): Promise<void> {
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$image = [System.Drawing.Image]::FromFile(${JSON.stringify(filePath)})
+try { [System.Windows.Forms.Clipboard]::SetImage($image) } finally { $image.Dispose() }
+`;
+  const result = await powershell(script);
+  if (result.exitCode !== 0) throw new Error(result.stderr || "Could not copy image to the Windows clipboard.");
+}
+
+export async function copyFilesToClipboard(filePaths: string[]): Promise<void> {
+  if (!filePaths.length) throw new Error("Choose at least one converted image to copy.");
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+$files = New-Object System.Collections.Specialized.StringCollection
+${filePaths.map((filePath) => `$files.Add(${JSON.stringify(filePath)}) | Out-Null`).join("\n")}
+[System.Windows.Forms.Clipboard]::SetFileDropList($files)
+`;
+  const result = await powershell(script);
+  if (result.exitCode !== 0) throw new Error(result.stderr || "Could not copy files to the Windows clipboard.");
+}
+
 export async function pickSaveFile(options: {
   title: string;
   defaultName: string;

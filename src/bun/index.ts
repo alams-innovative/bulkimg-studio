@@ -5,6 +5,7 @@ import { APP_LIMITS } from "../shared/contracts";
 import { AppDatabase } from "./database";
 import { BatchEngine } from "./services/batch-engine";
 import { ExportService } from "./services/export-service";
+import { ConverterService } from "./services/converter-service";
 import { FxService } from "./services/fx-service";
 import { HistoryService } from "./services/history-service";
 import { KeyVault } from "./services/key-vault";
@@ -81,6 +82,7 @@ const pricingService = new PricingService(assetRoots);
 await pricingService.load();
 const batchEngine = new BatchEngine(database, keyVault, fxService, historyService, pricingService, dataDirectory, diagnosticLog);
 const exportService = new ExportService(database, dataDirectory);
+const converterService = new ConverterService(database, dataDirectory);
 const recovered = batchEngine.recoverOnStartup();
 if (recovered > 0) {
   console.log(`Recovered ${recovered} session(s) after restart.`);
@@ -277,6 +279,28 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           error: result.error,
         });
         return result;
+      },
+      listConverterSessionImages: () => converterService.listSessionImages(),
+      convertImages: ({ inputs, options }) => logged("converter_convert", {
+        count: inputs.length,
+        defaultFormat: options.defaultFormat,
+      }, () => converterService.convert(inputs, options)),
+      listConverterJobs: () => converterService.listJobs(),
+      getConverterOutput: async ({ jobId, itemId }) => ({ dataUrl: await converterService.outputDataUrl(jobId, itemId) }),
+      getConverterProperties: ({ jobId, itemId }) => converterService.outputProperties(jobId, itemId),
+      getConverterSourceProperties: ({ input }) => converterService.sourceProperties(input),
+      copyConverterOutput: async ({ jobId, itemId }) => {
+        await converterService.copyOutput(jobId, itemId);
+        return { success: true as const };
+      },
+      copyConverterFiles: async ({ jobId, itemIds }) => {
+        await converterService.copyFiles(jobId, itemIds);
+        return { success: true as const };
+      },
+      saveConverterOutputs: ({ jobId, itemIds }) => converterService.saveOutputs(jobId, itemIds),
+      deleteConverterJob: ({ jobId }) => {
+        converterService.deleteJob(jobId);
+        return { success: true as const };
       },
     },
     messages: {},

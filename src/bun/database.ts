@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
-  ApiKeyStats, AppSettings, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RateLimitSnapshot,
+  ApiKeyStats, AppSettings, ConverterJob, ConverterJobItem, ConverterOptions, ConverterSourceImage, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RateLimitSnapshot,
   RunMode, RunPhase, RunSummary, SanitizedProviderError, SessionPromptOutcome, SessionStatus,
   SessionSummary, SessionTelemetry, SubmitRunInput, UsageSummary, UsageTotals,
 } from "../shared/contracts";
@@ -217,6 +217,7 @@ export class AppDatabase {
       PRAGMA user_version = 3;
     `);
     this.migrateToV4();
+    this.migrateToV5();
   }
 
   private migrateToV4(): void {
@@ -278,6 +279,38 @@ export class AppDatabase {
     `);
   }
 
+  private migrateToV5(): void {
+    const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+    if (version >= 5) return;
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS converter_jobs (
+        job_id TEXT PRIMARY KEY,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        status TEXT NOT NULL,
+        options_json TEXT NOT NULL,
+        total_count INTEGER NOT NULL,
+        completed_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS converter_items (
+        item_id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL,
+        ordinal INTEGER NOT NULL,
+        source_kind TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        source_path TEXT NOT NULL,
+        output_name TEXT,
+        output_path TEXT,
+        output_format TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        properties_json TEXT,
+        FOREIGN KEY(job_id) REFERENCES converter_jobs(job_id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_converter_items_job ON converter_items(job_id, ordinal);
+      PRAGMA user_version = 5;
+    `);
+  }
+
   private ensureColumn(table: "api_keys" | "batch_sessions" | "generated_assets" | "session_prompts" | "reference_files", column: string, definition: string): void {
     const columns = this.db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
     if (!columns.some((item) => item.name === column)) {
@@ -311,6 +344,130 @@ export class AppDatabase {
       this.setSetting("wave_size", String(partial.waveSize));
     }
     return this.getAppSettings();
+  }
+
+  listConverterSessionImages(): ConverterSourceImage[] {
+    return this.db.query<{
+      asset_id: string; session_id: string; image_filename: string; start_time: string;
+    }, []>(`
+      SELECT a.asset_id, a.session_id, a.image_filename, s.start_time
+      FROM generated_assets a JOIN batch_sessions s ON s.session_id = a.session_id
+      WHERE a.file_path != ''
+      ORDER BY s.start_time DESC, a.rowid DESC LIMIT 500
+    `).all().map((row) => ({
+      assetId: row.asset_id, sessionId: row.session_id, name: row.image_filename, createdAt: row.start_time,
+    }));
+  }
+
+  createConverterJob(job: {
+    id: string; options: ConverterOptions; items: Array<{
+      id: string; ordinal: number; sourceKind: "session" | "upload" | "clipboard";
+      sourceName: string; sourcePath: string; format: string;
+    }>;
+  }): void {
+    const transaction = this.db.transaction(() => {
+      this.db.query(`
+        INSERT INTO converter_jobs (job_id, status, options_json, total_count, completed_count)
+        VALUES (?, 'processing', ?, ?, 0)
+      `).run(job.id, JSON.stringify(job.options), job.items.length);
+      const insert = this.db.query(`
+        INSERT INTO converter_items
+          (item_id, job_id, ordinal, source_kind, source_name, source_path, output_format, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'processing')
+      `);
+      for (const item of job.items) {
+        insert.run(item.id, job.id, item.ordinal, item.sourceKind, item.sourceName, item.sourcePath, item.format);
+      }
+    });
+    transaction();
+  }
+
+  completeConverterItem(itemId: string, result: {
+    outputName: string; outputPath: string; properties: object;
+  }): void {
+    this.db.query(`
+      UPDATE converter_items SET status = 'completed', output_name = ?, output_path = ?, properties_json = ?, error_message = NULL
+      WHERE item_id = ?
+    `).run(result.outputName, result.outputPath, JSON.stringify(result.properties), itemId);
+  }
+
+  failConverterItem(itemId: string, message: string): void {
+    this.db.query("UPDATE converter_items SET status = 'failed', error_message = ? WHERE item_id = ?")
+      .run(message.slice(0, 500), itemId);
+  }
+
+  finishConverterJob(jobId: string): void {
+    const counts = this.db.query<{ total: number; completed: number }, [string]>(`
+      SELECT COUNT(*) AS total, SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed
+      FROM converter_items WHERE job_id = ?
+    `).get(jobId);
+    const completed = counts?.completed ?? 0;
+    const total = counts?.total ?? 0;
+    const status = completed === total ? "completed" : completed ? "partial" : "failed";
+    this.db.query("UPDATE converter_jobs SET status = ?, completed_count = ? WHERE job_id = ?")
+      .run(status, completed, jobId);
+  }
+
+  getConverterOutputPath(jobId: string, itemId: string): string | null {
+    return this.db.query<{ output_path: string | null }, [string, string]>(
+      "SELECT output_path FROM converter_items WHERE job_id = ? AND item_id = ? AND status = 'completed'",
+    ).get(jobId, itemId)?.output_path ?? null;
+  }
+
+  getConverterItem(jobId: string, itemId: string): ConverterJobItem & { outputPath: string | null } | null {
+    const row = this.db.query<{
+      item_id: string; ordinal: number; source_kind: "session" | "upload" | "clipboard"; source_name: string;
+      output_name: string | null; output_path: string | null; output_format: ConverterJobItem["format"];
+      status: "completed" | "failed"; error_message: string | null; properties_json: string | null;
+    }, [string, string]>(`
+      SELECT item_id, ordinal, source_kind, source_name, output_name, output_path, output_format, status, error_message, properties_json
+      FROM converter_items WHERE job_id = ? AND item_id = ?
+    `).get(jobId, itemId);
+    if (!row) return null;
+    let properties = null;
+    try { properties = row.properties_json ? JSON.parse(row.properties_json) : null; } catch { properties = null; }
+    return {
+      id: row.item_id, ordinal: row.ordinal, sourceKind: row.source_kind, sourceName: row.source_name,
+      outputName: row.output_name, outputPath: row.output_path, format: row.output_format,
+      status: row.status, error: row.error_message, properties,
+    };
+  }
+
+  listConverterJobs(): ConverterJob[] {
+    const jobs = this.db.query<{
+      job_id: string; created_at: string; status: ConverterJob["status"]; options_json: string;
+      total_count: number; completed_count: number;
+    }, []>("SELECT job_id, created_at, status, options_json, total_count, completed_count FROM converter_jobs ORDER BY created_at DESC LIMIT 100").all();
+    const items = this.db.query<{
+      item_id: string; job_id: string; ordinal: number; source_kind: "session" | "upload" | "clipboard"; source_name: string;
+      output_name: string | null; output_format: ConverterJobItem["format"]; status: "completed" | "failed";
+      error_message: string | null; properties_json: string | null;
+    }, []>("SELECT item_id, job_id, ordinal, source_kind, source_name, output_name, output_format, status, error_message, properties_json FROM converter_items ORDER BY ordinal").all();
+    return jobs.map((job) => {
+      let options: ConverterOptions;
+      try { options = JSON.parse(job.options_json) as ConverterOptions; } catch { throw new Error("A saved Converter job is invalid."); }
+      return {
+        id: job.job_id, createdAt: job.created_at, status: job.status, totalCount: job.total_count,
+        completedCount: job.completed_count, options,
+        items: items.filter((item) => item.job_id === job.job_id).map((item) => {
+          let properties = null;
+          try { properties = item.properties_json ? JSON.parse(item.properties_json) : null; } catch { properties = null; }
+          return {
+            id: item.item_id, ordinal: item.ordinal, sourceKind: item.source_kind, sourceName: item.source_name,
+            outputName: item.output_name, format: item.output_format, status: item.status,
+            error: item.error_message, properties,
+          };
+        }),
+      };
+    });
+  }
+
+  deleteConverterJob(jobId: string): string[] {
+    const files = this.db.query<{ output_path: string | null; source_path: string }, [string]>(
+      "SELECT output_path, source_path FROM converter_items WHERE job_id = ?",
+    ).all(jobId);
+    this.db.query("DELETE FROM converter_jobs WHERE job_id = ?").run(jobId);
+    return files.flatMap((item) => [item.source_path, item.output_path].filter((path): path is string => Boolean(path)));
   }
 
   getAdminConfigRow(): {

@@ -156,6 +156,27 @@ test("keeps image paste explicit to the reference section", async ({ page }) => 
   await expect(page.locator("#reference-dock")).toBeEnabled();
 });
 
+test("Converter keeps quick conversion simple and exposes per-image rules", async ({ page }) => {
+  await page.getByRole("button", { name: "Converter" }).click();
+  await expect(page.getByRole("heading", { name: "Convert images." })).toBeVisible();
+  const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  await page.locator("#converter-file").setInputFiles([
+    { name: "first.png", mimeType: "image/png", buffer: pixel },
+    { name: "second.png", mimeType: "image/png", buffer: pixel },
+    { name: "third.png", mimeType: "image/png", buffer: pixel },
+  ]);
+  await expect(page.locator(".converter-queue-item")).toHaveCount(3);
+  await page.getByRole("button", { name: "Output rules Optional" }).click();
+  await page.locator("#converter-rule-type").selectOption("nth");
+  await page.locator("#converter-rule-value").fill("3");
+  await page.locator("#converter-rule-format").selectOption("avif");
+  await page.getByRole("button", { name: "Add" }).click();
+  await expect(page.getByText("Every 3rd image → AVIF")).toBeVisible();
+  await expect(page.locator(".converter-queue-item").nth(2).locator("b")).toHaveText("AVIF");
+  await expect(page.getByRole("button", { name: "Convert", exact: true })).toBeEnabled();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
 for (const viewport of [{ width: 1440, height: 840 }, { width: 900, height: 640 }]) {
   test(`layout ${viewport.width}x${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);

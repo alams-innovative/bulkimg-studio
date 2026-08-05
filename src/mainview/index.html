@@ -27,6 +27,8 @@
       <nav class="primary-nav" aria-label="Primary navigation">
         <button id="nav-generator" class="nav-item active" data-view="generator" aria-current="page"
           title="Generator"><i data-lucide="layout-grid"></i><span>Generator</span></button>
+        <button id="nav-converter" class="nav-item" data-view="converter" title="Convert images"><i
+            data-lucide="repeat-2"></i><span>Converter</span></button>
         <button id="nav-sessions" class="nav-item" data-view="sessions" title="Sessions"><i
             data-lucide="clock-3"></i><span>Sessions</span></button>
         <button id="nav-usage" class="nav-item" data-view="usage" title="Usage and limits"><i
@@ -226,6 +228,51 @@
         </section>
       </div>
 
+      <section id="converter-view" class="view-content converter-view hidden" aria-label="Image converter">
+        <div class="converter-tabs segmented" role="tablist" aria-label="Converter section">
+          <button id="converter-tab-workspace" class="active" type="button" role="tab" aria-selected="true">Convert</button>
+          <button id="converter-tab-history" type="button" role="tab" aria-selected="false">History</button>
+        </div>
+        <div id="converter-workspace">
+          <section class="converter-grid">
+            <div class="panel converter-queue-panel">
+              <div class="section-heading"><div><h2>Add images</h2><p>Use session images, upload files, or paste from the clipboard.</p></div></div>
+              <div id="converter-dropzone" class="dropzone converter-dropzone" tabindex="0" role="button" aria-label="Upload images or drop them here"><i data-lucide="image-plus"></i><span><strong>Add images</strong><small>Drop files · Browse · Paste · or Ctrl+V</small></span></div>
+              <div class="input-panel-actions">
+                <button id="converter-from-session" class="secondary-button" type="button"><i data-lucide="clock-3"></i>From session</button>
+                <button id="converter-browse" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse images</button>
+                <button id="converter-paste" class="secondary-button" type="button"><i data-lucide="clipboard-paste"></i>Paste</button>
+                <input id="converter-file" type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/tiff,image/bmp,image/gif,image/svg+xml" multiple hidden />
+              </div>
+              <div id="converter-queue" class="converter-queue" role="list" aria-live="polite"><div class="empty-state"><i data-lucide="images"></i><strong>No images added</strong><small>Choose a source to start a local conversion.</small></div></div>
+            </div>
+            <aside class="panel converter-controls">
+              <div class="section-heading"><div><h2>Convert to</h2><p>Choose one format or set rules per image.</p></div></div>
+              <div id="converter-formats" class="converter-formats" role="group" aria-label="Output format">
+                <button data-converter-format="png" class="active" type="button">PNG</button><button data-converter-format="jpg" type="button">JPG</button><button data-converter-format="webp" type="button">WebP</button><button data-converter-format="avif" type="button">AVIF</button><button data-converter-format="tiff" type="button">TIFF</button><button data-converter-format="bmp" type="button">BMP</button>
+              </div>
+              <button id="converter-rules-toggle" class="secondary-button converter-disclosure" type="button" aria-expanded="false">Output rules <span>Optional</span></button>
+              <div id="converter-rules" class="converter-rules hidden" hidden>
+                <p>Rules apply in order. A manual image choice always wins.</p>
+                <div class="converter-rule-form"><select id="converter-rule-type" aria-label="Output rule type"><option value="nth">Every Nth image</option><option value="odd">Odd images</option><option value="even">Even images</option><option value="range">Image range</option><option value="cycle">Repeat formats</option></select><input id="converter-rule-value" type="text" aria-label="Output rule value" placeholder="3 or 4-8 or PNG,JPG" /><select id="converter-rule-format" aria-label="Output rule format"><option value="png">PNG</option><option value="jpg">JPG</option><option value="webp">WebP</option><option value="avif">AVIF</option><option value="tiff">TIFF</option><option value="bmp">BMP</option></select><button id="converter-add-rule" class="secondary-button" type="button">Add</button></div>
+                <div id="converter-rule-list" class="converter-rule-list"></div>
+              </div>
+              <button id="converter-options-toggle" class="secondary-button converter-disclosure" type="button" aria-expanded="false">Options <span>Optional</span></button>
+              <div id="converter-options" class="converter-options hidden" hidden>
+                <label>Quality<select id="converter-quality"><option value="smallest">Smallest file</option><option value="balanced" selected>Balanced</option><option value="best">Best quality</option></select></label>
+                <div class="converter-size-fields"><label>Width<input id="converter-width" type="number" min="1" placeholder="Original" /></label><label>Height<input id="converter-height" type="number" min="1" placeholder="Original" /></label></div>
+                <label>Resize mode<select id="converter-fit"><option value="inside">Fit inside</option><option value="cover">Crop to fill</option><option value="fill">Stretch</option></select></label>
+                <label>Background for JPG/BMP<input id="converter-background" type="color" value="#ffffff" /></label>
+                <label>File prefix<input id="converter-prefix" type="text" placeholder="Optional" /></label>
+                <label class="mode-option"><input id="converter-strip-metadata" type="checkbox" checked /><span><strong>Remove metadata</strong><small>Keep the output private and lightweight.</small></span></label>
+              </div>
+              <button id="converter-run" class="primary-button" type="button" disabled><span>Convert</span><i data-lucide="arrow-right"></i></button>
+            </aside>
+          </section>
+          <section id="converter-result" class="panel converter-result hidden" hidden aria-live="polite"></section>
+        </div>
+        <section id="converter-history" class="converter-history hidden" hidden aria-live="polite"></section>
+      </section>
       <section id="sessions-view" class="view-content management-view hidden">
         <div class="management-head">
           <p>Runs and waves on this device.</p><button id="refresh-sessions" class="secondary-button" type="button"><i
@@ -445,6 +492,15 @@
     </div>
 
     <div id="key-error" class="warnings hidden" role="alert"></div>
+  </dialog>
+  <dialog id="converter-session-dialog" class="keys-dialog panel converter-session-dialog" aria-labelledby="converter-session-title">
+    <form method="dialog" class="dialog-head"><div><h2 id="converter-session-title">Choose session images</h2><p>Select saved generated images to add to Converter.</p></div><button class="icon-button" aria-label="Close session images" value="cancel"><i data-lucide="x"></i></button></form>
+    <div id="converter-session-list" class="converter-session-list" role="list"></div>
+    <div class="dialog-actions"><button id="converter-session-add" class="primary-button" type="button" disabled>Add selected</button><button class="secondary-button" value="cancel">Cancel</button></div>
+  </dialog>
+  <dialog id="converter-properties-dialog" class="keys-dialog panel converter-properties-dialog" aria-labelledby="converter-properties-title">
+    <form method="dialog" class="dialog-head"><div><h2 id="converter-properties-title">Image properties</h2><p id="converter-properties-subtitle">Local image details</p></div><button class="icon-button" aria-label="Close properties" value="cancel"><i data-lucide="x"></i></button></form>
+    <dl id="converter-properties-list" class="converter-properties-list"></dl>
   </dialog>
   <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Image preview" hidden>
     <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close preview"><i

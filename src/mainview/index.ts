@@ -19,6 +19,7 @@ import {
   ImageOff,
   ImagePlus,
   Images,
+  Info,
   KeyRound,
   Layers3,
   LayoutGrid,
@@ -28,6 +29,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
+  Repeat2,
   Rows3,
   ScrollText,
   Search,
@@ -42,6 +44,12 @@ import type {
   ApiKeyStats,
   AppBootstrap,
   AppRPC,
+  ConverterFormat,
+  ConverterInput,
+  ConverterJob,
+  ConverterOptions,
+  ConverterRule,
+  ConverterSourceImage,
   ExportSummary,
   HistoryItem,
   PromptCell,
@@ -94,6 +102,42 @@ const elements = {
   historyView: byId("history-view"),
   exportsView: byId("exports-view"),
   logsView: byId("logs-view"),
+  converterView: byId("converter-view"),
+  converterTabWorkspace: byId<HTMLButtonElement>("converter-tab-workspace"),
+  converterTabHistory: byId<HTMLButtonElement>("converter-tab-history"),
+  converterWorkspace: byId("converter-workspace"),
+  converterHistory: byId("converter-history"),
+  converterDropzone: byId("converter-dropzone"),
+  converterFile: byId<HTMLInputElement>("converter-file"),
+  converterFromSession: byId<HTMLButtonElement>("converter-from-session"),
+  converterBrowse: byId<HTMLButtonElement>("converter-browse"),
+  converterPaste: byId<HTMLButtonElement>("converter-paste"),
+  converterQueue: byId("converter-queue"),
+  converterFormats: byId("converter-formats"),
+  converterRulesToggle: byId<HTMLButtonElement>("converter-rules-toggle"),
+  converterRules: byId("converter-rules"),
+  converterRuleType: byId<HTMLSelectElement>("converter-rule-type"),
+  converterRuleValue: byId<HTMLInputElement>("converter-rule-value"),
+  converterRuleFormat: byId<HTMLSelectElement>("converter-rule-format"),
+  converterAddRule: byId<HTMLButtonElement>("converter-add-rule"),
+  converterRuleList: byId("converter-rule-list"),
+  converterOptionsToggle: byId<HTMLButtonElement>("converter-options-toggle"),
+  converterOptions: byId("converter-options"),
+  converterQuality: byId<HTMLSelectElement>("converter-quality"),
+  converterWidth: byId<HTMLInputElement>("converter-width"),
+  converterHeight: byId<HTMLInputElement>("converter-height"),
+  converterFit: byId<HTMLSelectElement>("converter-fit"),
+  converterBackground: byId<HTMLInputElement>("converter-background"),
+  converterPrefix: byId<HTMLInputElement>("converter-prefix"),
+  converterStripMetadata: byId<HTMLInputElement>("converter-strip-metadata"),
+  converterRun: byId<HTMLButtonElement>("converter-run"),
+  converterResult: byId("converter-result"),
+  converterSessionDialog: byId<HTMLDialogElement>("converter-session-dialog"),
+  converterSessionList: byId("converter-session-list"),
+  converterSessionAdd: byId<HTMLButtonElement>("converter-session-add"),
+  converterPropertiesDialog: byId<HTMLDialogElement>("converter-properties-dialog"),
+  converterPropertiesSubtitle: byId("converter-properties-subtitle"),
+  converterPropertiesList: byId("converter-properties-list"),
   refreshLogs: byId<HTMLButtonElement>("refresh-logs"),
   copyLogs: byId<HTMLButtonElement>("copy-logs"),
   openLogsFolder: byId<HTMLButtonElement>("open-logs-folder"),
@@ -260,6 +304,12 @@ let logsLines: string[] = [];
 let logsSearchTimer: number | null = null;
 let historyItems: HistoryItem[] = [];
 let historyImageObserver: IntersectionObserver | null = null;
+type ConverterQueueItem = { clientId: string; sourceKind: "session" | "upload" | "clipboard"; name: string; assetId?: string; dataBase64?: string; previewUrl?: string; format?: ConverterFormat };
+let converterQueue: ConverterQueueItem[] = [];
+let converterRules: ConverterRule[] = [];
+let converterJobs: ConverterJob[] = [];
+let converterSessionImages: ConverterSourceImage[] = [];
+let converterTab: "workspace" | "history" = "workspace";
 let lightboxItems: HistoryItem[] = [];
 let lightboxIndex = 0;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
@@ -591,6 +641,7 @@ const slateStackIcons = {
   ImageOff,
   ImagePlus,
   Images,
+  Info,
   KeyRound,
   Layers3,
   LayoutGrid,
@@ -600,6 +651,7 @@ const slateStackIcons = {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
+  Repeat2,
   Rows3,
   ScrollText,
   Search,
@@ -745,13 +797,195 @@ function startElapsedTicker(elapsedMs: number): void {
   }, 1_000);
 }
 
-async function setView(view: "generator" | "sessions" | "usage" | "history" | "exports" | "logs"): Promise<void> {
+function converterDefaultFormat(): ConverterFormat {
+  return (elements.converterFormats.querySelector<HTMLButtonElement>(".active")?.dataset["converterFormat"] ?? "png") as ConverterFormat;
+}
+
+function converterOptions(): ConverterOptions {
+  const positive = (value: string) => {
+    const number = Number(value);
+    return Number.isInteger(number) && number > 0 ? number : null;
+  };
+  return {
+    defaultFormat: converterDefaultFormat(), quality: elements.converterQuality.value as ConverterOptions["quality"],
+    width: positive(elements.converterWidth.value), height: positive(elements.converterHeight.value),
+    fit: elements.converterFit.value as ConverterOptions["fit"], stripMetadata: elements.converterStripMetadata.checked,
+    background: elements.converterBackground.value, prefix: elements.converterPrefix.value.trim(), rules: converterRules,
+    overrides: Object.fromEntries(converterQueue.filter((item) => item.format).map((item) => [item.clientId, item.format!])),
+  };
+}
+
+function effectiveConverterFormat(item: ConverterQueueItem, ordinal: number): ConverterFormat {
+  if (item.format) return item.format;
+  let match: ConverterFormat | null = null;
+  for (const rule of converterRules) {
+    if (rule.type === "nth" && ordinal % rule.every === 0) match = rule.format;
+    if (rule.type === "odd" && ordinal % 2 === 1) match = rule.format;
+    if (rule.type === "even" && ordinal % 2 === 0) match = rule.format;
+    if (rule.type === "range" && ordinal >= rule.start && ordinal <= rule.end) match = rule.format;
+    if (rule.type === "cycle" && rule.formats.length) match = rule.formats[(ordinal - 1) % rule.formats.length] ?? null;
+  }
+  return match ?? converterDefaultFormat();
+}
+
+function renderConverterRules(): void {
+  if (!converterRules.length) {
+    elements.converterRuleList.innerHTML = '<small class="converter-rule-empty">No rules yet. The default format applies to every image.</small>';
+    return;
+  }
+  const suffix = (value: number) => value % 100 >= 11 && value % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[value % 10] ?? "th";
+  const summary = (rule: ConverterRule) => {
+    if (rule.type === "nth") return `Every ${rule.every}${suffix(rule.every)} image → ${rule.format.toUpperCase()}`;
+    if (rule.type === "range") return `Images ${rule.start}–${rule.end} → ${rule.format.toUpperCase()}`;
+    if (rule.type === "cycle") return `Repeat ${rule.formats.map((format) => format.toUpperCase()).join(" → ")}`;
+    return `${rule.type === "odd" ? "Odd" : "Even"} images → ${rule.format.toUpperCase()}`;
+  };
+  elements.converterRuleList.innerHTML = converterRules.map((rule) => `<div class="converter-rule"><span>${escapeHtml(summary(rule))}</span><button type="button" class="icon-button converter-remove-rule" data-rule-id="${rule.id}" aria-label="Remove rule"><i data-lucide="x"></i></button></div>`).join("");
+  elements.converterRuleList.querySelectorAll<HTMLButtonElement>(".converter-remove-rule").forEach((button) => {
+    button.addEventListener("click", () => {
+      converterRules = converterRules.filter((rule) => rule.id !== button.dataset["ruleId"]);
+      renderConverterRules(); renderConverterQueue();
+    });
+  });
+  refreshIcons();
+}
+
+function renderConverterQueue(): void {
+  elements.converterRun.disabled = converterQueue.length === 0;
+  if (!converterQueue.length) {
+    elements.converterQueue.innerHTML = '<div class="empty-state"><i data-lucide="images"></i><strong>No images added</strong><small>Choose a source to start a local conversion.</small></div>';
+    refreshIcons();
+    return;
+  }
+  const formats = ["png", "jpg", "webp", "avif", "tiff", "bmp"] as ConverterFormat[];
+  elements.converterQueue.innerHTML = converterQueue.map((item, index) => {
+    const ordinal = index + 1;
+    const effective = effectiveConverterFormat(item, ordinal);
+    const preview = item.previewUrl ? `<img src="${escapeHtml(item.previewUrl)}" alt="" />` : `<span class="image-placeholder"><i data-lucide="image"></i></span>`;
+    return `<div class="converter-queue-item" role="listitem" data-client-id="${item.clientId}"><div class="converter-thumb">${preview}</div><div><strong>${escapeHtml(item.name)}</strong><small>${item.sourceKind === "session" ? "From session" : item.sourceKind === "clipboard" ? "Pasted image" : "Uploaded image"} · Image ${ordinal}</small></div><label class="sr-only" for="converter-format-${item.clientId}">Output format for ${escapeHtml(item.name)}</label><select id="converter-format-${item.clientId}" class="converter-item-format" data-client-id="${item.clientId}"><option value="">Default (${converterDefaultFormat().toUpperCase()})</option>${formats.map((format) => `<option value="${format}"${item.format === format ? " selected" : ""}>${format.toUpperCase()}</option>`).join("")}</select><b>${effective.toUpperCase()}</b><button type="button" class="icon-button converter-source-properties" data-client-id="${item.clientId}" aria-label="Properties for ${escapeHtml(item.name)}"><i data-lucide="info"></i></button><button type="button" class="icon-button converter-remove-item" data-client-id="${item.clientId}" aria-label="Remove ${escapeHtml(item.name)}"><i data-lucide="x"></i></button></div>`;
+  }).join("");
+  elements.converterQueue.querySelectorAll<HTMLSelectElement>(".converter-item-format").forEach((select) => select.addEventListener("change", () => {
+    const item = converterQueue.find((candidate) => candidate.clientId === select.dataset["clientId"]);
+    if (!item) return;
+    item.format = (select.value || undefined) as ConverterFormat | undefined;
+    renderConverterQueue();
+  }));
+  elements.converterQueue.querySelectorAll<HTMLButtonElement>(".converter-remove-item").forEach((button) => button.addEventListener("click", () => {
+    const item = converterQueue.find((candidate) => candidate.clientId === button.dataset["clientId"]);
+    if (item?.previewUrl?.startsWith("blob:")) URL.revokeObjectURL(item.previewUrl);
+    converterQueue = converterQueue.filter((candidate) => candidate.clientId !== button.dataset["clientId"]);
+    renderConverterQueue();
+  }));
+  elements.converterQueue.querySelectorAll<HTMLButtonElement>(".converter-source-properties").forEach((button) => button.addEventListener("click", () => void showConverterSourceProperties(button.dataset["clientId"]!)));
+  refreshIcons();
+}
+
+async function queueConverterFiles(files: File[], sourceKind: "upload" | "clipboard" = "upload"): Promise<void> {
+  const usable = files.filter((file) => file.size > 0 && file.size <= 50 * 1024 * 1024);
+  if (!usable.length) { showToast("Choose images up to 50 MB each.", true); return; }
+  for (const file of usable.slice(0, 100 - converterQueue.length)) {
+    const dataBase64 = await fileToBase64(file);
+    converterQueue.push({ clientId: crypto.randomUUID(), sourceKind, name: file.name || "image.png", dataBase64, previewUrl: URL.createObjectURL(file) });
+  }
+  renderConverterQueue();
+}
+
+function renderConverterTab(): void {
+  const history = converterTab === "history";
+  elements.converterWorkspace.classList.toggle("hidden", history);
+  elements.converterWorkspace.hidden = history;
+  elements.converterHistory.classList.toggle("hidden", !history);
+  elements.converterHistory.hidden = !history;
+  elements.converterTabWorkspace.classList.toggle("active", !history);
+  elements.converterTabHistory.classList.toggle("active", history);
+  elements.converterTabWorkspace.setAttribute("aria-selected", String(!history));
+  elements.converterTabHistory.setAttribute("aria-selected", String(history));
+  if (history) void loadConverterJobs();
+}
+
+async function loadConverterJobs(): Promise<void> {
+  elements.converterHistory.innerHTML = '<div class="empty-state"><i data-lucide="loader-circle"></i><strong>Loading conversions…</strong></div>';
+  refreshIcons();
+  try { converterJobs = await app.rpc!.request.listConverterJobs({}); renderConverterHistory(); }
+  catch (error) { elements.converterHistory.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load Converter History.")}</div>`; }
+}
+
+function renderConverterHistory(): void {
+  if (!converterJobs.length) {
+    elements.converterHistory.innerHTML = '<div class="panel empty-state"><i data-lucide="images"></i><strong>No conversions yet</strong><small>Converted images stay here until you remove them.</small></div>';
+    refreshIcons(); return;
+  }
+  elements.converterHistory.innerHTML = converterJobs.map((job) => `<article class="panel converter-job" data-job-id="${job.id}"><header><div><strong>${job.completedCount}/${job.totalCount} converted</strong><small>${escapeHtml(new Date(job.createdAt).toLocaleString())} · ${job.status}</small></div><div class="button-row"><button class="secondary-button converter-save-job" type="button" data-job-id="${job.id}"><i data-lucide="download"></i>Save all</button><button class="secondary-button danger-button converter-delete-job" type="button" data-job-id="${job.id}"><i data-lucide="trash-2"></i>Remove</button></div></header><div class="converter-result-grid">${job.items.map((item) => `<div class="converter-output-card" data-job-id="${job.id}" data-item-id="${item.id}"><div class="converter-output-preview"><span class="image-placeholder"><i data-lucide="image"></i></span></div><strong>${escapeHtml(item.outputName ?? item.sourceName)}</strong><small>${item.format.toUpperCase()} · ${item.status}</small><div><button class="icon-button converter-copy-output" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Copy image"><i data-lucide="copy"></i></button><button class="icon-button converter-save-output" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Save image"><i data-lucide="download"></i></button><button class="icon-button converter-properties" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Image properties"><i data-lucide="info"></i></button></div></div>`).join("")}</div></article>`).join("");
+  wireConverterActions(elements.converterHistory);
+  elements.converterHistory.querySelectorAll<HTMLElement>(".converter-output-card").forEach((card) => void loadConverterPreview(card));
+  refreshIcons();
+}
+
+async function loadConverterPreview(card: HTMLElement): Promise<void> {
+  const jobId = card.dataset["jobId"]; const itemId = card.dataset["itemId"];
+  if (!jobId || !itemId) return;
+  try {
+    const { dataUrl } = await app.rpc!.request.getConverterOutput({ jobId, itemId });
+    const preview = card.querySelector(".converter-output-preview");
+    if (preview) preview.innerHTML = `<img src="${escapeHtml(dataUrl)}" alt="Converted image" />`;
+  } catch { /* failed source is shown by its status */ }
+}
+
+function wireConverterActions(container: HTMLElement): void {
+  container.querySelectorAll<HTMLButtonElement>(".converter-copy-output").forEach((button) => button.addEventListener("click", async () => {
+    try { await app.rpc!.request.copyConverterOutput({ jobId: button.dataset["jobId"]!, itemId: button.dataset["itemId"]! }); showToast("Image copied to clipboard."); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Could not copy image.", true); }
+  }));
+  container.querySelectorAll<HTMLButtonElement>(".converter-save-output").forEach((button) => button.addEventListener("click", async () => {
+    try { const result = await app.rpc!.request.saveConverterOutputs({ jobId: button.dataset["jobId"]!, itemIds: [button.dataset["itemId"]!] }); if (result.saved) showToast("Image saved."); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Could not save image.", true); }
+  }));
+  container.querySelectorAll<HTMLButtonElement>(".converter-properties").forEach((button) => button.addEventListener("click", () => void showConverterProperties(button.dataset["jobId"]!, button.dataset["itemId"]!)));
+  container.querySelectorAll<HTMLButtonElement>(".converter-save-job").forEach((button) => button.addEventListener("click", async () => {
+    const job = converterJobs.find((candidate) => candidate.id === button.dataset["jobId"]); if (!job) return;
+    try { const result = await app.rpc!.request.saveConverterOutputs({ jobId: job.id, itemIds: job.items.filter((item) => item.status === "completed").map((item) => item.id) }); if (result.saved) showToast(`${result.saved} images saved.`); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Could not save images.", true); }
+  }));
+  container.querySelectorAll<HTMLButtonElement>(".converter-delete-job").forEach((button) => button.addEventListener("click", async () => {
+    if (!window.confirm("Remove this Converter History item and its internal copies? Saved files will stay untouched.")) return;
+    try { await app.rpc!.request.deleteConverterJob({ jobId: button.dataset["jobId"]! }); await loadConverterJobs(); showToast("Conversion removed from history."); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Could not remove conversion.", true); }
+  }));
+}
+
+async function showConverterProperties(jobId: string, itemId: string): Promise<void> {
+  try {
+    const properties = await app.rpc!.request.getConverterProperties({ jobId, itemId });
+    elements.converterPropertiesSubtitle.textContent = properties.name;
+    const rows: Array<[string, string]> = [["Format", properties.format.toUpperCase()], ["Size", `${properties.width} × ${properties.height}px`], ["File size", `${(properties.sizeBytes / 1024 / 1024).toFixed(2)} MB`], ["Colour space", properties.colorSpace ?? "—"], ["Channels", String(properties.channels ?? "—")], ["Bit depth", properties.bitDepth ?? "—"], ["Transparency", properties.hasAlpha ? "Yes" : "No"], ["DPI", properties.density ? String(properties.density) : "—"], ["Metadata", properties.hasExif ? "EXIF present" : "None"], ["ICC profile", properties.hasIcc ? "Present" : "None"]];
+    elements.converterPropertiesList.innerHTML = rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+    elements.converterPropertiesDialog.showModal();
+  } catch (error) { showToast(error instanceof Error ? error.message : "Could not read image properties.", true); }
+}
+
+async function showConverterSourceProperties(clientId: string): Promise<void> {
+  const item = converterQueue.find((candidate) => candidate.clientId === clientId);
+  if (!item) return;
+  const input: ConverterInput = item.sourceKind === "session"
+    ? { clientId: item.clientId, sourceKind: "session", assetId: item.assetId!, name: item.name }
+    : { clientId: item.clientId, sourceKind: item.sourceKind, name: item.name, dataBase64: item.dataBase64! };
+  try {
+    const properties = await app.rpc!.request.getConverterSourceProperties({ input });
+    elements.converterPropertiesSubtitle.textContent = properties.name;
+    const rows: Array<[string, string]> = [["Format", properties.format.toUpperCase()], ["Size", `${properties.width} × ${properties.height}px`], ["File size", `${(properties.sizeBytes / 1024 / 1024).toFixed(2)} MB`], ["Colour space", properties.colorSpace ?? "—"], ["Channels", String(properties.channels ?? "—")], ["Bit depth", properties.bitDepth ?? "—"], ["Transparency", properties.hasAlpha ? "Yes" : "No"], ["DPI", properties.density ? String(properties.density) : "—"], ["Metadata", properties.hasExif ? "EXIF present" : "None"], ["ICC profile", properties.hasIcc ? "Present" : "None"]];
+    elements.converterPropertiesList.innerHTML = rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
+    elements.converterPropertiesDialog.showModal();
+  } catch (error) { showToast(error instanceof Error ? error.message : "Could not read image properties.", true); }
+}
+
+async function setView(view: "generator" | "converter" | "sessions" | "usage" | "history" | "exports" | "logs"): Promise<void> {
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
     const active = button.dataset["view"] === view;
     button.classList.toggle("active", active);
     if (active) button.setAttribute("aria-current", "page"); else button.removeAttribute("aria-current");
   });
   elements.generatorView.classList.toggle("hidden", view !== "generator");
+  elements.converterView.classList.toggle("hidden", view !== "converter");
   elements.sessionsView.classList.toggle("hidden", view !== "sessions");
   elements.usageView.classList.toggle("hidden", view !== "usage");
   elements.historyView.classList.toggle("hidden", view !== "history");
@@ -760,6 +994,7 @@ async function setView(view: "generator" | "sessions" | "usage" | "history" | "e
   elements.headerStats.classList.toggle("hidden", view !== "generator");
   const titles = {
     generator: "Generate images.",
+    converter: "Convert images.",
     sessions: "Sessions",
     usage: "Usage & limits",
     history: "History",
@@ -768,6 +1003,7 @@ async function setView(view: "generator" | "sessions" | "usage" | "history" | "e
   } as const;
   elements.pageTitle.textContent = titles[view];
   if (view === "sessions") await loadSessions();
+  if (view === "converter") { renderConverterQueue(); renderConverterRules(); if (converterTab === "history") await loadConverterJobs(); }
   if (view === "usage") await loadUsage();
   if (view === "history") await loadHistory();
   if (view === "exports") await loadExports();
@@ -2172,7 +2408,80 @@ elements.themeToggle.addEventListener("click", () => {
 });
 
 document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
-  button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "sessions" | "usage" | "history" | "exports" | "logs"));
+  button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "converter" | "sessions" | "usage" | "history" | "exports" | "logs"));
+});
+elements.converterTabWorkspace.addEventListener("click", () => { converterTab = "workspace"; renderConverterTab(); });
+elements.converterTabHistory.addEventListener("click", () => { converterTab = "history"; renderConverterTab(); });
+elements.converterFormats.querySelectorAll<HTMLButtonElement>("[data-converter-format]").forEach((button) => button.addEventListener("click", () => {
+  elements.converterFormats.querySelectorAll("button").forEach((candidate) => candidate.classList.toggle("active", candidate === button));
+  renderConverterQueue();
+}));
+function toggleConverterSection(button: HTMLButtonElement, section: HTMLElement): void {
+  const expanded = button.getAttribute("aria-expanded") !== "true";
+  button.setAttribute("aria-expanded", String(expanded)); section.classList.toggle("hidden", !expanded); section.hidden = !expanded;
+}
+elements.converterRulesToggle.addEventListener("click", () => toggleConverterSection(elements.converterRulesToggle, elements.converterRules));
+elements.converterOptionsToggle.addEventListener("click", () => toggleConverterSection(elements.converterOptionsToggle, elements.converterOptions));
+elements.converterBrowse.addEventListener("click", () => elements.converterFile.click());
+elements.converterDropzone.addEventListener("click", () => elements.converterFile.click());
+elements.converterDropzone.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); elements.converterFile.click(); } });
+elements.converterFile.addEventListener("change", () => { void queueConverterFiles(Array.from(elements.converterFile.files ?? [])); elements.converterFile.value = ""; });
+["dragenter", "dragover"].forEach((name) => elements.converterDropzone.addEventListener(name, (event) => { event.preventDefault(); elements.converterDropzone.classList.add("dragging"); }));
+["dragleave", "drop"].forEach((name) => elements.converterDropzone.addEventListener(name, (event) => { event.preventDefault(); elements.converterDropzone.classList.remove("dragging"); }));
+elements.converterDropzone.addEventListener("drop", (event) => void queueConverterFiles(Array.from(event.dataTransfer?.files ?? [])));
+elements.converterPaste.addEventListener("click", async () => {
+  elements.converterPaste.disabled = true;
+  try {
+    const result = await app.rpc!.request.readClipboardImages({ maxCount: Math.max(1, 100 - converterQueue.length) });
+    if (result.error || !result.images.length) throw new Error(result.error || "Clipboard has no image.");
+    for (const image of result.images) converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "clipboard", name: image.filename || "clipboard.png", dataBase64: image.dataBase64, previewUrl: `data:${image.mimeType};base64,${image.dataBase64}` });
+    renderConverterQueue();
+  } catch (error) { showToast(error instanceof Error ? error.message : "Could not paste image.", true); }
+  finally { elements.converterPaste.disabled = false; }
+});
+elements.converterFromSession.addEventListener("click", async () => {
+  elements.converterSessionList.innerHTML = '<div class="empty-state"><i data-lucide="loader-circle"></i><strong>Loading session images…</strong></div>'; refreshIcons();
+  elements.converterSessionDialog.showModal();
+  try {
+    converterSessionImages = await app.rpc!.request.listConverterSessionImages({});
+    if (!converterSessionImages.length) { elements.converterSessionList.innerHTML = '<div class="empty-state"><i data-lucide="images"></i><strong>No session images yet</strong><small>Generate images first, then they will be available here.</small></div>'; refreshIcons(); return; }
+    elements.converterSessionList.innerHTML = converterSessionImages.map((image) => `<label class="converter-session-item"><input type="checkbox" value="${image.assetId}" /><span><strong>${escapeHtml(image.name)}</strong><small>${escapeHtml(new Date(image.createdAt).toLocaleString())}</small></span></label>`).join("");
+    elements.converterSessionList.querySelectorAll<HTMLInputElement>("input").forEach((input) => input.addEventListener("change", () => { elements.converterSessionAdd.disabled = !elements.converterSessionList.querySelector("input:checked"); }));
+  } catch (error) { elements.converterSessionList.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load session images.")}</div>`; }
+});
+elements.converterSessionAdd.addEventListener("click", () => {
+  const selectedIds = new Set([...elements.converterSessionList.querySelectorAll<HTMLInputElement>("input:checked")].map((input) => input.value));
+  for (const image of converterSessionImages.filter((candidate) => selectedIds.has(candidate.assetId))) converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "session", assetId: image.assetId, name: image.name });
+  elements.converterSessionDialog.close(); elements.converterSessionAdd.disabled = true; renderConverterQueue();
+});
+elements.converterAddRule.addEventListener("click", () => {
+  const type = elements.converterRuleType.value; const value = elements.converterRuleValue.value.trim(); const format = elements.converterRuleFormat.value as ConverterFormat;
+  let rule: ConverterRule | null = null;
+  if (type === "nth") { const every = Number(value); if (Number.isInteger(every) && every > 0) rule = { id: crypto.randomUUID(), type: "nth", every, format }; }
+  if (type === "odd" || type === "even") rule = { id: crypto.randomUUID(), type, format };
+  if (type === "range") { const match = value.match(/^(\d+)\s*-\s*(\d+)$/); if (match && Number(match[1]) > 0 && Number(match[2]) >= Number(match[1])) rule = { id: crypto.randomUUID(), type: "range", start: Number(match[1]), end: Number(match[2]), format }; }
+  if (type === "cycle") { const formats = value.split(/[,\s]+/).map((candidate) => candidate.toLowerCase()).filter((candidate): candidate is ConverterFormat => ["png", "jpg", "webp", "avif", "tiff", "bmp"].includes(candidate)); if (formats.length) rule = { id: crypto.randomUUID(), type: "cycle", formats }; }
+  if (!rule) { showToast(type === "range" ? "Enter a range like 4-8." : type === "cycle" ? "Enter formats like PNG,JPG,WebP." : "Enter a number greater than zero.", true); return; }
+  converterRules.push(rule); elements.converterRuleValue.value = ""; renderConverterRules(); renderConverterQueue();
+});
+elements.converterRun.addEventListener("click", async () => {
+  if (!converterQueue.length) return;
+  elements.converterRun.disabled = true; elements.converterRun.setAttribute("aria-busy", "true");
+  try {
+    const inputs: ConverterInput[] = converterQueue.map((item) => item.sourceKind === "session"
+      ? { clientId: item.clientId, sourceKind: "session", assetId: item.assetId!, name: item.name }
+      : { clientId: item.clientId, sourceKind: item.sourceKind, name: item.name, dataBase64: item.dataBase64! });
+    const job = await app.rpc!.request.convertImages({ inputs, options: converterOptions() });
+    converterJobs = [job, ...converterJobs.filter((candidate) => candidate.id !== job.id)];
+    elements.converterResult.hidden = false; elements.converterResult.classList.remove("hidden");
+    elements.converterResult.innerHTML = `<div class="converter-result-head"><div><h2>Conversion complete</h2><p>${job.completedCount} of ${job.totalCount} images are ready. Copy or save whenever you want.</p></div><div class="button-row"><button id="converter-result-copy-files" class="secondary-button" type="button"><i data-lucide="copy"></i>Copy files</button><button id="converter-result-save-all" class="secondary-button" type="button"><i data-lucide="download"></i>Save all</button><button id="converter-result-history" class="secondary-button" type="button">View history</button></div></div><div class="converter-result-grid">${job.items.map((item) => `<div class="converter-output-card" data-job-id="${job.id}" data-item-id="${item.id}"><div class="converter-output-preview"><span class="image-placeholder"><i data-lucide="image"></i></span></div><strong>${escapeHtml(item.outputName ?? item.sourceName)}</strong><small>${item.format.toUpperCase()} · ${item.status}</small><div><button class="icon-button converter-copy-output" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Copy image"><i data-lucide="copy"></i></button><button class="icon-button converter-save-output" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Save image"><i data-lucide="download"></i></button><button class="icon-button converter-properties" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Image properties"><i data-lucide="info"></i></button></div></div>`).join("")}</div>`;
+    wireConverterActions(elements.converterResult); elements.converterResult.querySelectorAll<HTMLElement>(".converter-output-card").forEach((card) => void loadConverterPreview(card));
+    byId<HTMLButtonElement>("converter-result-copy-files").addEventListener("click", async () => { try { await app.rpc!.request.copyConverterFiles({ jobId: job.id, itemIds: job.items.filter((item) => item.status === "completed").map((item) => item.id) }); showToast("Converted files copied to clipboard."); } catch (error) { showToast(error instanceof Error ? error.message : "Could not copy files.", true); } });
+    byId<HTMLButtonElement>("converter-result-save-all").addEventListener("click", async () => { const result = await app.rpc!.request.saveConverterOutputs({ jobId: job.id, itemIds: job.items.filter((item) => item.status === "completed").map((item) => item.id) }); if (result.saved) showToast(`${result.saved} images saved.`); });
+    byId<HTMLButtonElement>("converter-result-history").addEventListener("click", () => { converterTab = "history"; renderConverterTab(); });
+    refreshIcons(); showToast(`${job.completedCount} image${job.completedCount === 1 ? "" : "s"} converted.`);
+  } catch (error) { showToast(error instanceof Error ? error.message : "Could not convert images.", true); }
+  finally { elements.converterRun.disabled = converterQueue.length === 0; elements.converterRun.removeAttribute("aria-busy"); }
 });
 elements.csvTab.addEventListener("click", () => setTab("csv"));
 elements.manualTab.addEventListener("click", () => setTab("manual"));
@@ -2765,6 +3074,14 @@ elements.lightbox.addEventListener("click", (event) => {
   if (event.target === elements.lightbox) closeLightbox();
 });
 window.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && document.querySelector("[data-view='converter']")?.classList.contains("active")) {
+    const target = event.target as HTMLElement | null;
+    if (!target || !["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
+      event.preventDefault();
+      elements.converterPaste.click();
+      return;
+    }
+  }
   if (elements.lightbox.hidden) return;
   if (event.key === "Escape") closeLightbox();
   if (event.key === "ArrowLeft") void showLightboxAt(lightboxIndex - 1);
