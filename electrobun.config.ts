@@ -13,6 +13,9 @@ export default {
   build: {
     bun: {
       entrypoint: "src/bun/index.ts",
+      // Sharp loads its Windows binary at runtime, so it must remain external
+      // and travel with its native package instead of being folded into index.js.
+      external: ["sharp"],
     },
     views: {
       mainview: {
@@ -23,6 +26,10 @@ export default {
       "src/mainview/index.html": "views/mainview/index.html",
       "src/mainview/index.css": "views/mainview/index.css",
       "assets": "views/assets",
+      "node_modules/sharp": "bun/node_modules/sharp",
+      "node_modules/@img": "bun/node_modules/@img",
+      "node_modules/detect-libc": "bun/node_modules/detect-libc",
+      "node_modules/semver": "bun/node_modules/semver",
     },
     win: {
       bundleCEF: false,
