@@ -118,6 +118,8 @@ button.history-image:disabled{cursor:default}
 .input-panel-actions,.reference-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .reference-actions{margin-top:6px}
 .input-panel-actions .secondary-button,.reference-actions .secondary-button{min-height:34px;padding:0 10px;font-size:12px}
+.paste-armed{outline:2px solid var(--steel);outline-offset:2px;border-radius:var(--r2)}
+#csv-panel.paste-armed .dropzone,#reference-control.paste-armed .reference-dock{border-color:var(--steel);background:color-mix(in srgb,var(--hover) 70%,var(--muted))}
 
 .key-type-tab .tab-count{margin-left:6px;min-width:18px;padding:1px 6px;border-radius:99px;background:var(--muted);font:600 10px "JetBrains Mono",monospace;color:var(--text3)}
 .key-type-tab.active .tab-count{background:var(--raised);color:var(--text)}

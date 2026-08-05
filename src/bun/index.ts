@@ -77,7 +77,10 @@ await pricingService.load();
 const batchEngine = new BatchEngine(database, keyVault, fxService, historyService, pricingService, dataDirectory, diagnosticLog);
 const exportService = new ExportService(database, dataDirectory);
 const recovered = batchEngine.recoverOnStartup();
-if (recovered > 0) console.log(`Recovered ${recovered} session(s) after restart.`);
+if (recovered > 0) {
+  console.log(`Recovered ${recovered} session(s) after restart.`);
+  void diagnosticLog.write("startup_recover", { recovered });
+}
 
 const brand = await readJson(assetRoots.map((root) => join(root, "brand", "theme.json")), fallbackBrand);
 const models = await readJson(assetRoots.map((root) => join(root, "config", "models.json")), {
@@ -89,6 +92,21 @@ const models = await readJson(assetRoots.map((root) => join(root, "config", "mod
 });
 
 const ADMIN_WARNING = "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works with your normal API keys.";
+
+async function logged<T>(event: string, fields: Record<string, unknown>, work: () => T | Promise<T>): Promise<T> {
+  try {
+    const result = await work();
+    void diagnosticLog.write(event, { ok: true, ...fields });
+    return result;
+  } catch (error) {
+    void diagnosticLog.write(event, {
+      ok: false,
+      ...fields,
+      message: error instanceof Error ? error.message.slice(0, 240) : "error",
+    });
+    throw error;
+  }
+}
 
 const rpc = BrowserView.defineRPC<AppRPC>({
   maxRequestTime: 120_000,
@@ -116,20 +134,28 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         };
       },
       getSettings: () => database.getAppSettings(),
-      setSettings: (partial) => database.setAppSettings(partial),
-      importCSV: ({ csvText, sourceName }) => parseCSV(csvText, sourceName),
-      parseManualPrompts: ({ text }) => parseManualPrompts(text),
-      pickCsvFile: async () => {
+      setSettings: (partial) => logged("settings_update", { keys: Object.keys(partial) }, () => database.setAppSettings(partial)),
+      importCSV: ({ csvText, sourceName }) => logged("import_csv", {
+        sourceName,
+        bytes: csvText.length,
+      }, () => parseCSV(csvText, sourceName)),
+      parseManualPrompts: ({ text }) => logged("parse_manual", {
+        chars: text.length,
+      }, () => parseManualPrompts(text)),
+      pickCsvFile: async () => logged("pick_csv_file", {}, async () => {
         const path = await pickOpenFile({
           title: "Import weekly CSV calendar",
           filter: "*.csv",
           filterLabel: "CSV files",
         });
-        if (!path) return null;
+        if (!path) {
+          void diagnosticLog.write("pick_csv_file", { ok: true, cancelled: true });
+          return null;
+        }
         const csvText = await Bun.file(path).text();
         const sourceName = path.split(/[/\\]/).pop() || "calendar.csv";
         return { csvText, sourceName };
-      },
+      }),
       submitBatchRun: (input) => batchEngine.submit(input),
       pollBatchStatus: ({ sessionId }) => batchEngine.poll(sessionId),
       getSessionDetail: async ({ sessionId, refresh }) => {
@@ -140,43 +166,52 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       retryFailedPrompts: ({ sessionId }) => batchEngine.retryFailed(sessionId),
       resumeRun: (params) => batchEngine.resumeRun(params),
       estimateRunCost: async (input) => batchEngine.estimate(input, await fxService.getUsdPkrRate()),
-      uploadReferenceImage: async ({ dataBase64, filename, mimeType }) => {
+      uploadReferenceImage: async ({ dataBase64, filename, mimeType }) => logged("reference_upload", {
+        filename,
+        mimeType,
+        bytes: Math.floor((dataBase64.length * 3) / 4),
+      }, async () => {
         const bytes = Buffer.from(dataBase64, "base64");
         return batchEngine.uploadReference(new Uint8Array(bytes), filename, mimeType);
-      },
-      removeReferenceImage: ({ fileId }) => batchEngine.removeReference(fileId),
+      }),
+      removeReferenceImage: ({ fileId }) => logged("reference_remove", { fileId }, () => batchEngine.removeReference(fileId)),
       listApiKeys: () => keyVault.listSafe(),
-      addApiKey: ({ label, key }) => keyVault.add(label, key),
-      setApiKeyActive: ({ id, isActive }) => {
+      addApiKey: ({ label, key }) => logged("api_key_add", { label: label.trim() || "OpenAI key" }, () => keyVault.add(label, key)),
+      setApiKeyActive: ({ id, isActive }) => logged("api_key_toggle", { id, isActive }, () => {
         database.setKeyActive(id, isActive);
         keyVault.invalidateKey(id);
-        return { success: true };
-      },
-      deleteApiKey: ({ id }) => {
+        return { success: true as const };
+      }),
+      deleteApiKey: ({ id }) => logged("api_key_delete", { id }, () => {
         database.deleteKey(id);
         keyVault.invalidateKey(id);
-        return { success: true };
-      },
-      setAdminKey: async ({ key, projectId }) => {
+        return { success: true as const };
+      }),
+      setAdminKey: async ({ key, projectId }) => logged("admin_key_set", {
+        hasKey: Boolean(key.trim()),
+        hasProject: Boolean(projectId?.trim()),
+      }, async () => {
         await keyVault.setAdminKey(key, projectId);
         const row = database.getAdminConfigRow();
         if (row.encrypted_key && row.project_id) await keyVault.refreshAdminRateLimits();
         return adminView(database);
-      },
-      clearAdminKey: () => {
+      }),
+      clearAdminKey: () => logged("admin_key_clear", {}, () => {
         keyVault.clearAdminKey();
         return adminView(database);
-      },
-      setAdminProjectId: async ({ projectId }) => {
+      }),
+      setAdminProjectId: async ({ projectId }) => logged("admin_project_set", {
+        projectId: projectId.slice(0, 40),
+      }, async () => {
         database.setAdminProjectId(projectId.trim());
         await keyVault.refreshAdminRateLimits();
         return adminView(database);
-      },
-      refreshRateLimits: async () => {
+      }),
+      refreshRateLimits: async () => logged("admin_limits_refresh", {}, async () => {
         await keyVault.refreshAdminRateLimits();
         return adminView(database);
-      },
-      listAdminProjects: () => keyVault.listAdminProjects(),
+      }),
+      listAdminProjects: () => logged("admin_projects_list", {}, () => keyVault.listAdminProjects()),
       listSessions: () => database.listSessions(),
       listRuns: () => database.listRuns(),
       getRunDetail: ({ runId }) => {
@@ -189,24 +224,29 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       downloadHistoryAsset: ({ assetId }) => ({ filePath: historyService.download(assetId) }),
       revealHistoryAsset: ({ assetId }) => ({ filePath: historyService.revealAsset(assetId) }),
       revealHistorySessionFolder: ({ sessionId }) => ({ directory: historyService.revealSessionFolder(sessionId) }),
-      deleteHistoryItem: ({ promptId }) => {
+      deleteHistoryItem: ({ promptId }) => logged("history_delete_item", { promptId }, () => {
         historyService.deletePrompt(promptId);
-        return { success: true };
-      },
-      clearHistory: () => historyService.clear(),
+        return { success: true as const };
+      }),
+      clearHistory: () => logged("history_clear", {}, () => historyService.clear()),
       listExports: () => exportService.list(),
       revealExportsFolder: () => ({ directory: exportService.revealFolder() }),
-      exportSessionZip: async ({ sessionId, pickPath }) => ({
+      exportSessionZip: async ({ sessionId, pickPath }) => logged("export_session", { sessionId }, async () => ({
         filePath: await exportService.export(sessionId, { pickPath: Boolean(pickPath) }),
-      }),
-      exportRunZip: async ({ runId, pickPath }) => ({
+      })),
+      exportRunZip: async ({ runId, pickPath }) => logged("export_run", { runId }, async () => ({
         filePath: await exportService.exportRun(runId, { pickPath: Boolean(pickPath) }),
-      }),
+      })),
       getDiagnosticLogs: ({ limit, query, event }) => diagnosticLog.read({ limit, query, event }),
       revealLogsFolder: () => {
         const directory = diagnosticLog.logDirectory;
         Bun.spawn(["explorer.exe", directory], { stdout: "ignore", stderr: "ignore" });
         return { directory };
+      },
+      writeDiagnosticLog: async ({ event, fields }) => {
+        const safeEvent = (event || "ui_event").replace(/[^\w.-]/g, "_").slice(0, 64);
+        await diagnosticLog.write(safeEvent, fields ?? {});
+        return { success: true as const };
       },
     },
     messages: {},

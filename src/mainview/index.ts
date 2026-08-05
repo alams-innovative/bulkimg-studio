@@ -1046,9 +1046,123 @@ function referenceFileError(file: File): string | null {
         : "";
   const mimeType = file.type || fallbackMimeType;
   if (!supportedTypes.has(mimeType)) return "Choose PNG, JPEG, or WebP reference images.";
-  if (file.size === 0) return `${file.name || "That image"} is empty.`;
+  if (file.size === 0) return null; // skip empty clipboard placeholders without toast spam
   if (file.size > referenceLimitBytes()) return "Each reference can be up to 50 MB.";
   return null;
+}
+
+function fileLooksLikeImage(file: File): boolean {
+  return file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name);
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Could not read image data."));
+        return;
+      }
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(new Error("Could not read image data."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function logUi(event: string, fields: Record<string, unknown> = {}): void {
+  void app.rpc?.request.writeDiagnosticLog({ event, fields }).catch(() => undefined);
+}
+
+function looksLikeCsvText(text: string): { ok: true } | { ok: false; reason: string } {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: false, reason: "Clipboard text is empty." };
+  if (trimmed.length > 10 * 1024 * 1024) return { ok: false, reason: "Pasted text is larger than 10 MB." };
+  const lines = trimmed.split(/\r?\n/).filter((line) => line.length > 0);
+  if (lines.length < 1) return { ok: false, reason: "Clipboard text is empty." };
+  const sample = lines.slice(0, 30);
+  const delimiterCounts = {
+    comma: sample.filter((line) => line.includes(",")).length,
+    tab: sample.filter((line) => line.includes("\t")).length,
+    semi: sample.filter((line) => line.includes(";")).length,
+  };
+  const maxDelim = Math.max(delimiterCounts.comma, delimiterCounts.tab, delimiterCounts.semi);
+  if (maxDelim === 0 && lines.length < 2) {
+    return { ok: false, reason: "That paste does not look like CSV. Copy spreadsheet cells or a .csv file and try again." };
+  }
+  // Reject pure HTML clipboard noise
+  if (/^<!DOCTYPE html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
+    return { ok: false, reason: "Clipboard has HTML, not CSV. Copy from Excel/Sheets or a .csv file." };
+  }
+  return { ok: true };
+}
+
+type PasteArmMode = "csv" | "images";
+let pasteArm: { mode: PasteArmMode; until: number; timer: number | null } | null = null;
+
+function clearPasteArm(): void {
+  if (pasteArm?.timer != null) window.clearTimeout(pasteArm.timer);
+  pasteArm = null;
+  elements.csvPanel.classList.remove("paste-armed");
+  elements.referenceControl.classList.remove("paste-armed");
+}
+
+function armPaste(mode: PasteArmMode): void {
+  clearPasteArm();
+  const timer = window.setTimeout(() => {
+    clearPasteArm();
+    showToast("Paste timed out. Click Paste again, then press Ctrl+V.", true);
+  }, 12_000);
+  pasteArm = { mode, until: Date.now() + 12_000, timer };
+  if (mode === "csv") {
+    elements.csvPanel.classList.add("paste-armed");
+    dropzone?.focus?.();
+    showToast("Ready — press Ctrl+V now to paste CSV text or a file.");
+  } else {
+    elements.referenceControl.classList.add("paste-armed");
+    elements.referenceDock.focus();
+    showToast("Ready — press Ctrl+V now to paste images.");
+  }
+  logUi("ui_paste_arm", { mode });
+}
+
+/** Extract usable files from a Windows paste/drop DataTransfer (skips 0-byte placeholders). */
+async function filesFromDataTransfer(transfer: DataTransfer | null | undefined, kind: "image" | "csv" | "any"): Promise<File[]> {
+  if (!transfer) return [];
+  const found: File[] = [];
+  const seen = new Set<string>();
+  const push = (file: File | null) => {
+    if (!file || file.size <= 0) return;
+    if (kind === "image" && !fileLooksLikeImage(file)) return;
+    if (kind === "csv" && !(file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv" || file.type === "text/plain")) return;
+    const key = `${file.name}|${file.size}|${file.type}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    found.push(file);
+  };
+
+  for (const item of [...transfer.items]) {
+    if (item.kind !== "file") continue;
+    if (kind === "image" && item.type && !item.type.startsWith("image/") && item.type !== "") continue;
+    push(item.getAsFile());
+  }
+  for (const file of [...transfer.files]) push(file);
+
+  // Drop zero-byte and re-check by reading first 4 bytes when size reported wrong
+  const usable: File[] = [];
+  for (const file of found) {
+    if (file.size > 0) {
+      usable.push(file);
+      continue;
+    }
+    try {
+      const head = await file.slice(0, 8).arrayBuffer();
+      if (head.byteLength > 0) usable.push(file);
+    } catch { /* skip */ }
+  }
+  return usable;
 }
 
 function referenceMimeType(file: File): string {
@@ -1109,25 +1223,40 @@ async function attachReferenceFiles(files: File[]): Promise<void> {
     showToast("You can attach at most 16 reference images.", true);
     return;
   }
-  const accepted = files.slice(0, remaining);
-  if (files.length > accepted.length) showToast("You can attach at most 16 reference images.", true);
+  const nonEmpty = files.filter((file) => file.size > 0);
+  if (!nonEmpty.length) {
+    showToast("No usable image data found. Copy a real PNG/JPEG/WebP and press Ctrl+V.", true);
+    logUi("ui_reference_paste", { ok: false, reason: "empty_files", attempted: files.length });
+    return;
+  }
+  const accepted = nonEmpty.slice(0, remaining);
+  if (nonEmpty.length > accepted.length) showToast("You can attach at most 16 reference images.", true);
   elements.referenceBadge.textContent = "Uploading";
+  setHidden(elements.referenceBadge, false);
   elements.referenceDock.setAttribute("aria-busy", "true");
   elements.referenceDock.disabled = true;
   let uploaded = 0;
+  let skippedEmpty = files.length - nonEmpty.length;
+  let skippedInvalid = 0;
   for (const file of accepted) {
     const validationError = referenceFileError(file);
+    if (validationError === null && file.size === 0) {
+      skippedEmpty += 1;
+      continue;
+    }
     if (validationError) {
+      skippedInvalid += 1;
       showToast(validationError, true);
       continue;
     }
     try {
-      const buffer = new Uint8Array(await file.arrayBuffer());
-      let binary = "";
-      const chunk = 0x8000;
-      for (let i = 0; i < buffer.length; i += chunk) binary += String.fromCharCode(...buffer.subarray(i, i + chunk));
+      const dataBase64 = await fileToBase64(file);
+      if (!dataBase64 || dataBase64.length < 8) {
+        skippedEmpty += 1;
+        continue;
+      }
       const result = await app.rpc!.request.uploadReferenceImage({
-        dataBase64: btoa(binary),
+        dataBase64,
         filename: file.name || `clipboard-${Date.now()}.png`,
         mimeType: referenceMimeType(file),
       });
@@ -1135,6 +1264,7 @@ async function attachReferenceFiles(files: File[]): Promise<void> {
       uploaded += 1;
     } catch (error) {
       showToast(error instanceof Error ? error.message : `Could not upload ${file.name || "the reference image"}.`, true);
+      logUi("ui_reference_upload_error", { name: file.name, message: error instanceof Error ? error.message : "error" });
     }
   }
   elements.referenceDock.removeAttribute("aria-busy");
@@ -1143,7 +1273,10 @@ async function attachReferenceFiles(files: File[]): Promise<void> {
   if (uploaded) {
     showToast(`${uploaded} reference image${uploaded === 1 ? "" : "s"} added.`);
     void refreshEstimate();
+  } else if (skippedEmpty && !skippedInvalid) {
+    showToast("Clipboard image was empty. Try copying the image again, then Ctrl+V.", true);
   }
+  logUi("ui_reference_attach", { uploaded, skippedEmpty, skippedInvalid, attempted: files.length });
 }
 
 function releaseReferencesToSession(): void {
@@ -1975,41 +2108,68 @@ elements.referenceControl.addEventListener("drop", (event) => {
   if (files.length) void attachReferenceFiles(files);
 });
 window.addEventListener("paste", (event) => {
-  const itemFiles = [...(event.clipboardData?.items ?? [])]
-    .filter((entry) => entry.kind === "file")
-    .map((entry) => entry.getAsFile())
-    .filter((file): file is File => Boolean(file));
-  const clipboardFiles = [...(event.clipboardData?.files ?? [])];
-  const allFiles = [...itemFiles, ...clipboardFiles].filter((file, index, all) =>
-    all.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size && candidate.type === file.type) === index,
-  );
-  const imageFiles = allFiles.filter((file) => file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name));
-  const csvFiles = allFiles.filter((file) => file.name.toLowerCase().endsWith(".csv") || file.type === "text/csv");
+  void (async () => {
+    const transfer = event.clipboardData;
+    const armed = pasteArm && Date.now() < pasteArm.until ? pasteArm.mode : null;
+    const wantsCsv = armed === "csv" || (!armed && !elements.csvPanel.classList.contains("hidden") && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement));
+    const wantsImages = armed === "images" || !wantsCsv;
 
-  // Prefer CSV when focused on CSV import
-  if (csvFiles.length && !elements.csvPanel.classList.contains("hidden")) {
-    event.preventDefault();
-    void importCsvFile(csvFiles[0]!);
-    return;
-  }
-  // CSV text paste into CSV panel
-  const text = event.clipboardData?.getData("text/plain")?.trim() ?? "";
-  if (text && !elements.csvPanel.classList.contains("hidden") && !imageFiles.length
-    && (text.includes(",") || text.includes("\t")) && text.includes("\n")
-    && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) {
-    event.preventDefault();
-    void app.rpc!.request.importCSV({ csvText: text, sourceName: "clipboard.csv" })
-      .then((matrix) => {
-        applyMatrix(matrix);
-        showToast("Loaded CSV from pasted text.");
-      })
-      .catch((error) => showToast(error instanceof Error ? error.message : "Could not paste CSV", true));
-    return;
-  }
-  if (imageFiles.length && !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement)) {
-    event.preventDefault();
-    void attachReferenceFiles(imageFiles);
-  }
+    // Prefer files from the paste event (Ctrl+V on Windows) — no clipboard permission hang.
+    if (wantsImages) {
+      const imageFiles = await filesFromDataTransfer(transfer, "image");
+      if (imageFiles.length) {
+        event.preventDefault();
+        clearPasteArm();
+        logUi("ui_paste_images", { count: imageFiles.length, via: armed ? "armed" : "ctrl_v" });
+        await attachReferenceFiles(imageFiles);
+        return;
+      }
+    }
+
+    if (wantsCsv) {
+      const csvFiles = await filesFromDataTransfer(transfer, "csv");
+      if (csvFiles.length) {
+        event.preventDefault();
+        clearPasteArm();
+        logUi("ui_paste_csv_file", { name: csvFiles[0]!.name, size: csvFiles[0]!.size });
+        await importCsvFile(csvFiles[0]!);
+        return;
+      }
+      const text = transfer?.getData("text/plain")?.trim() ?? "";
+      if (text && (armed === "csv" || !(event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement))) {
+        const check = looksLikeCsvText(text);
+        if (!check.ok) {
+          if (armed === "csv") {
+            event.preventDefault();
+            clearPasteArm();
+            showToast(check.reason, true);
+            logUi("ui_paste_csv_invalid", { reason: check.reason });
+          }
+          return;
+        }
+        event.preventDefault();
+        clearPasteArm();
+        try {
+          applyMatrix(await app.rpc!.request.importCSV({ csvText: text, sourceName: "clipboard.csv" }));
+          showToast("Loaded CSV from paste.");
+          logUi("ui_paste_csv_text", { chars: text.length, ok: true });
+        } catch (error) {
+          showToast(error instanceof Error ? error.message : "That paste is not a valid CSV for BulkImg.", true);
+          logUi("ui_paste_csv_text", { ok: false, message: error instanceof Error ? error.message : "error" });
+        }
+      } else if (armed === "csv") {
+        event.preventDefault();
+        clearPasteArm();
+        showToast("Nothing usable to paste. Copy CSV text or a .csv file, then try again.", true);
+        logUi("ui_paste_csv_empty", {});
+      }
+    } else if (armed === "images") {
+      event.preventDefault();
+      clearPasteArm();
+      showToast("No image found in clipboard. Copy a PNG/JPEG/WebP, then Ctrl+V.", true);
+      logUi("ui_paste_images_empty", {});
+    }
+  })();
 });
 
 elements.runButton.addEventListener("click", async () => {
@@ -2266,76 +2426,14 @@ elements.keysDialog.addEventListener("cancel", () => {
   adminEditingKey = false;
 });
 
-async function readClipboardFiles(kinds: "image" | "csv" | "any" = "any"): Promise<File[]> {
-  const files: File[] = [];
-  try {
-    if (typeof navigator.clipboard?.read === "function") {
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        for (const type of item.types) {
-          if (kinds === "image" && !type.startsWith("image/")) continue;
-          if (kinds === "csv" && type !== "text/csv" && type !== "text/plain" && !type.includes("spreadsheet")) continue;
-          try {
-            const blob = await item.getType(type);
-            const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : type.includes("jpeg") || type.includes("jpg") ? "jpg" : kinds === "csv" ? "csv" : "bin";
-            files.push(new File([blob], `clipboard.${ext}`, { type: blob.type || type }));
-          } catch { /* type unavailable */ }
-        }
-      }
-    }
-  } catch {
-    // Clipboard item read may be blocked; text/path fallbacks below.
-  }
-  return files;
-}
-
 async function pasteCsvFromClipboard(): Promise<void> {
-  elements.pasteCsv.disabled = true;
-  try {
-    const files = await readClipboardFiles("csv");
-    const csvFile = files.find((file) => file.name.toLowerCase().endsWith(".csv") || file.type.includes("csv") || file.type === "text/plain");
-    if (csvFile && csvFile.type !== "text/plain") {
-      await importCsvFile(csvFile);
-      return;
-    }
-    let text = "";
-    try {
-      text = (await navigator.clipboard.readText()).trim();
-    } catch {
-      showToast("Could not read the clipboard. Try Ctrl+V on the CSV drop zone.", true);
-      return;
-    }
-    if (!text) {
-      showToast("Clipboard is empty. Copy a CSV file or CSV text first.", true);
-      return;
-    }
-    if (!text.includes(",") && !text.includes("\t") && !text.includes("\n")) {
-      showToast("Clipboard does not look like CSV. Copy the file or spreadsheet text and try again.", true);
-      return;
-    }
-    applyMatrix(await app.rpc!.request.importCSV({ csvText: text, sourceName: "clipboard.csv" }));
-    showToast("Loaded CSV from clipboard.");
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "Could not paste CSV", true);
-  } finally {
-    elements.pasteCsv.disabled = false;
-  }
+  // WebView2 often blocks navigator.clipboard.read* (hangs or throws).
+  // Arm Ctrl+V paste instead — that path uses the paste event and works on Windows.
+  armPaste("csv");
 }
 
 async function pasteReferencesFromClipboard(): Promise<void> {
-  elements.pasteReference.disabled = true;
-  try {
-    let files = await readClipboardFiles("image");
-    if (!files.length) {
-      showToast("No images in clipboard. Copy images, then paste, or use Ctrl+V.", true);
-      return;
-    }
-    await attachReferenceFiles(files);
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : "Could not paste images", true);
-  } finally {
-    elements.pasteReference.disabled = false;
-  }
+  armPaste("images");
 }
 
 elements.pasteCsv.addEventListener("click", () => void pasteCsvFromClipboard());

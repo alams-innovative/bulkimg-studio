@@ -51,10 +51,10 @@
                 </div>
               </div>
               <div id="csv-panel" class="input-panel" role="tabpanel" aria-labelledby="csv-tab">
-                <label class="dropzone" for="csv-file"><input id="csv-file" type="file" accept=".csv,text/csv" /><i data-lucide="upload-cloud"></i><span><strong>Choose a CSV</strong><small>Browse, drop, or paste · up to 10 MB</small></span></label>
+                <label class="dropzone" for="csv-file" tabindex="0"><input id="csv-file" type="file" accept=".csv,text/csv" /><i data-lucide="upload-cloud"></i><span><strong>Choose a CSV</strong><small>Click Paste, then Ctrl+V · or drop a file · up to 10 MB</small></span></label>
                 <div class="input-panel-actions">
                   <button id="pick-csv-native" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse</button>
-                  <button id="paste-csv" class="secondary-button" type="button"><i data-lucide="clipboard-paste"></i>Paste</button>
+                  <button id="paste-csv" class="secondary-button" type="button" title="Then press Ctrl+V"><i data-lucide="clipboard-paste"></i>Paste (Ctrl+V)</button>
                 </div>
               </div>
               <div id="manual-panel" class="input-panel hidden" role="tabpanel" aria-labelledby="manual-tab">
@@ -99,7 +99,7 @@
                 <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small id="reference-hint">Optional · browse, drop, or paste · up to 16 · 50 MB each</small></span><b id="reference-badge" class="hidden" hidden>0/16</b></button>
                 <div class="reference-actions">
                   <button id="pick-reference" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Browse images</button>
-                  <button id="paste-reference" class="secondary-button" type="button"><i data-lucide="clipboard-paste"></i>Paste images</button>
+                  <button id="paste-reference" class="secondary-button" type="button" title="Then press Ctrl+V"><i data-lucide="clipboard-paste"></i>Paste (Ctrl+V)</button>
                 </div>
                 <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
                 <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images" hidden></div>

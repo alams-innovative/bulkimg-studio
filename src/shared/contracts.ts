@@ -350,6 +350,10 @@ export type AppRPC = {
         response: DiagnosticLogView;
       };
       revealLogsFolder: { params: {}; response: { directory: string } };
+      writeDiagnosticLog: {
+        params: { event: string; fields?: Record<string, unknown> };
+        response: { success: true };
+      };
     };
     messages: {};
   };
