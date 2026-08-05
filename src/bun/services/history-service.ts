@@ -2,7 +2,7 @@ import { createReadStream, copyFileSync, existsSync, mkdirSync, unlinkSync } fro
 import { createInterface } from "node:readline";
 import { basename, extname, join, resolve } from "node:path";
 import type { AppDatabase, SessionPromptRecord } from "../database";
-import type { SanitizedProviderError } from "../../shared/contracts";
+import type { ImageTokenUsage, SanitizedProviderError } from "../../shared/contracts";
 import type { DirectImageResult } from "./openai-client";
 
 type BatchOutputLine = {
@@ -12,7 +12,12 @@ type BatchOutputLine = {
     request_id?: string;
     body?: {
       data?: Array<{ b64_json?: string; url?: string }>;
-      usage?: { input_tokens?: number; output_tokens?: number };
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        input_tokens_details?: { text_tokens?: number; image_tokens?: number };
+        output_tokens_details?: { text_tokens?: number; image_tokens?: number };
+      };
       error?: { message?: string };
     };
   };
@@ -122,7 +127,7 @@ export class HistoryService {
     model: string,
     keyId: string | null,
     jsonl: string,
-    usageCost: (inputTokens: number, outputTokens: number) => number,
+    usageCost: (usage: ImageTokenUsage) => number,
     onProgress?: (progress: BatchPersistResult) => void | Promise<void>,
   ): Promise<BatchPersistResult> {
     return this.persistBatchLines(sessionId, model, keyId, jsonl.split(/\r?\n/).filter(Boolean), usageCost, onProgress);
@@ -134,7 +139,7 @@ export class HistoryService {
     model: string,
     keyId: string | null,
     filePath: string,
-    usageCost: (inputTokens: number, outputTokens: number) => number,
+    usageCost: (usage: ImageTokenUsage) => number,
     onProgress?: (progress: BatchPersistResult) => void | Promise<void>,
   ): Promise<BatchPersistResult> {
     if (!existsSync(filePath)) throw new Error("Batch output file is missing.");
@@ -161,7 +166,7 @@ export class HistoryService {
     model: string,
     keyId: string | null,
     lines: string[],
-    usageCost: (inputTokens: number, outputTokens: number) => number,
+    usageCost: (usage: ImageTokenUsage) => number,
     onProgress?: (progress: BatchPersistResult) => void | Promise<void>,
   ): Promise<BatchPersistResult> {
     const prompts = this.database.getSessionPrompts(sessionId);
@@ -179,7 +184,7 @@ export class HistoryService {
     keyId: string | null,
     rawLine: string,
     prompts: SessionPromptRecord[],
-    usageCost: (inputTokens: number, outputTokens: number) => number,
+    usageCost: (usage: ImageTokenUsage) => number,
     result: BatchPersistResult,
   ): Promise<void> {
     let line: BatchOutputLine;
@@ -202,9 +207,20 @@ export class HistoryService {
       result.failed += 1;
       return;
     }
-    const inputTokens = line.response?.body?.usage?.input_tokens ?? 0;
-    const outputTokens = line.response?.body?.usage?.output_tokens ?? 0;
-    const costUsd = usageCost(inputTokens, outputTokens);
+    const providerUsage = line.response?.body?.usage;
+    const inputTokens = providerUsage?.input_tokens ?? 0;
+    const outputTokens = providerUsage?.output_tokens ?? 0;
+    const usage: ImageTokenUsage = {
+      inputTokens,
+      outputTokens,
+      inputTextTokens: providerUsage?.input_tokens_details?.text_tokens ?? inputTokens,
+      inputImageTokens: providerUsage?.input_tokens_details?.image_tokens ?? 0,
+      cachedTextInputTokens: 0,
+      cachedImageInputTokens: 0,
+      outputImageTokens: providerUsage?.output_tokens_details?.image_tokens ?? outputTokens,
+      outputTextTokens: providerUsage?.output_tokens_details?.text_tokens ?? 0,
+    };
+    const costUsd = usageCost(usage);
     if (await this.persistOne({
       sessionId, model, keyId, prompt, sourceKey: `${sessionId}:${line.custom_id}`,
       costUsd, result: { b64Json: data.b64_json ?? null, url: data.url ?? null, inputTokens, outputTokens },

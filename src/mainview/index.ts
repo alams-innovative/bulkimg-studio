@@ -47,15 +47,18 @@ import type {
   PromptCell,
   PromptGroup,
   PromptMatrix,
+  PricingView,
   RunMode,
   RunSummary,
   SessionDetail,
   SessionPromptOutcome,
   SessionSummary,
   SessionTelemetry,
+  UsageSummary,
+  UsageTotals,
 } from "../shared/contracts";
 import { APP_LIMITS } from "../shared/contracts";
-import type { OutputFormatId } from "../shared/output-formats";
+import { OUTPUT_FORMATS, type OutputFormatId } from "../shared/output-formats";
 
 const rpc = Electroview.defineRPC<AppRPC>({
   maxRequestTime: 120_000,
@@ -87,6 +90,7 @@ const elements = {
   headerStats: byId("header-stats"),
   generatorView: byId("generator-view"),
   sessionsView: byId("sessions-view"),
+  usageView: byId("usage-view"),
   historyView: byId("history-view"),
   exportsView: byId("exports-view"),
   logsView: byId("logs-view"),
@@ -189,6 +193,17 @@ const elements = {
   retryButton: byId<HTMLButtonElement>("retry-button"),
   refreshSessions: byId<HTMLButtonElement>("refresh-sessions"),
   sessionList: byId("session-list"),
+  usageRange: byId<HTMLSelectElement>("usage-range"),
+  refreshUsage: byId<HTMLButtonElement>("refresh-usage"),
+  usageStatus: byId("usage-status"),
+  usageSummaryGrid: byId("usage-summary-grid"),
+  usageModeComparison: byId("usage-mode-comparison"),
+  usageBatchDiscount: byId("usage-batch-discount"),
+  usageLimits: byId("usage-limits"),
+  usageRefreshLimits: byId<HTMLButtonElement>("usage-refresh-limits"),
+  usageOpenKeys: byId<HTMLButtonElement>("usage-open-keys"),
+  usagePricingMeta: byId("usage-pricing-meta"),
+  usagePricing: byId("usage-pricing"),
   refreshHistory: byId<HTMLButtonElement>("refresh-history"),
   clearHistory: byId<HTMLButtonElement>("clear-history"),
   historySearch: byId<HTMLInputElement>("history-search"),
@@ -255,6 +270,8 @@ let activeKeyCount = 0;
 let matrixView: "list" | "cards" = localStorage.getItem("bulkimg-prompt-view") === "cards" ? "cards" : "list";
 let lastTelemetryStatus: SessionTelemetry["status"] | null = null;
 let selectionSyncToken = 0;
+let bootstrapData: AppBootstrap | null = null;
+let pricingView: PricingView | null = null;
 let appLimits: {
   maxReferences: number;
   maxReferenceBytes: number;
@@ -728,7 +745,7 @@ function startElapsedTicker(elapsedMs: number): void {
   }, 1_000);
 }
 
-async function setView(view: "generator" | "sessions" | "history" | "exports" | "logs"): Promise<void> {
+async function setView(view: "generator" | "sessions" | "usage" | "history" | "exports" | "logs"): Promise<void> {
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
     const active = button.dataset["view"] === view;
     button.classList.toggle("active", active);
@@ -736,6 +753,7 @@ async function setView(view: "generator" | "sessions" | "history" | "exports" | 
   });
   elements.generatorView.classList.toggle("hidden", view !== "generator");
   elements.sessionsView.classList.toggle("hidden", view !== "sessions");
+  elements.usageView.classList.toggle("hidden", view !== "usage");
   elements.historyView.classList.toggle("hidden", view !== "history");
   elements.exportsView.classList.toggle("hidden", view !== "exports");
   elements.logsView.classList.toggle("hidden", view !== "logs");
@@ -743,12 +761,14 @@ async function setView(view: "generator" | "sessions" | "history" | "exports" | 
   const titles = {
     generator: "Generate images.",
     sessions: "Sessions",
+    usage: "Usage & limits",
     history: "History",
     exports: "Exports",
     logs: "Logs",
   } as const;
   elements.pageTitle.textContent = titles[view];
   if (view === "sessions") await loadSessions();
+  if (view === "usage") await loadUsage();
   if (view === "history") await loadHistory();
   if (view === "exports") await loadExports();
   if (view === "logs") await loadLogs();
@@ -1372,6 +1392,166 @@ async function loadKeys(): Promise<void> {
   syncActionState();
 }
 
+function usageRangeBounds(value: string): { startAt: string | null; endAt: string } {
+  const end = new Date();
+  if (value === "all") return { startAt: null, endAt: end.toISOString() };
+  const days = value === "7d" ? 7 : value === "90d" ? 90 : 30;
+  const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);
+  return { startAt: start.toISOString(), endAt: end.toISOString() };
+}
+
+function money(value: number, decimals = 3): string {
+  return `$${value.toFixed(decimals)}`;
+}
+
+function usageKpi(label: string, value: string, detail: string): string {
+  return `<article class="usage-kpi"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(detail)}</small></article>`;
+}
+
+function renderUsageSummary(summary: UsageSummary): void {
+  const totalTokens = summary.total.inputTokens + summary.total.outputTokens;
+  elements.usageSummaryGrid.innerHTML = [
+    usageKpi("Requests", formatNumber(summary.total.requestCount), `${formatNumber(summary.total.completedCount)} completed`),
+    usageKpi("Images", formatNumber(summary.total.completedCount), `${formatNumber(summary.total.failedCount)} failed`),
+    usageKpi("Tokens", formatNumber(totalTokens), `in ${formatNumber(summary.total.inputTokens)} · out ${formatNumber(summary.total.outputTokens)}`),
+    usageKpi("Tracked cost", money(summary.total.costUsd), `PKR ${summary.total.costPkr.toFixed(2)} · this app`),
+  ].join("");
+
+  const modes: Array<[string, UsageTotals]> = [["Direct", summary.direct], ["Batch", summary.batch]];
+  elements.usageModeComparison.innerHTML = modes.map(([label, totals]) => {
+    const tokens = totals.inputTokens + totals.outputTokens;
+    return `<article class="usage-mode-card">
+      <div class="usage-mode-title"><strong>${label}</strong><span>${formatNumber(totals.requestCount)} requests</span></div>
+      <div class="usage-mode-value">${money(totals.costUsd)}</div>
+      <div class="usage-stat-list">
+        <div><span>Completed</span><strong>${formatNumber(totals.completedCount)}</strong></div>
+        <div><span>Tokens</span><strong>${formatNumber(tokens)}</strong></div>
+        <div><span>Input / output</span><strong>${formatNumber(totals.inputTokens)} / ${formatNumber(totals.outputTokens)}</strong></div>
+      </div>
+    </article>`;
+  }).join("");
+  enter(elements.usageSummaryGrid, 0, 4);
+  elements.usageModeComparison.querySelectorAll<HTMLElement>(".usage-mode-card").forEach((card, index) => {
+    enter(card, index * 0.04, 4);
+  });
+}
+
+function renderUsageLimits(): void {
+  const data = bootstrapData;
+  if (!data) return;
+  const local: Array<[string, string]> = [
+    ["Direct prompts", `up to ${formatNumber(data.limits.directPromptLimit)}`],
+    ["Batch prompts", `up to ${formatNumber(data.limits.batchPromptLimit)}`],
+    ["Reference images", `up to ${formatNumber(data.limits.maxReferences)}`],
+    ["Reference size", formatBytes(data.limits.maxReferenceBytes)],
+    ["Prompt length", `${formatNumber(data.limits.maxPromptChars)} chars`],
+  ];
+  const localHtml = `<div class="usage-limit-group"><h4>App limits</h4>${local.map(([label, value]) =>
+    `<div class="usage-limit-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>`;
+
+  const provider = data.admin?.rateLimits;
+  const probe = data.rateHeaderProbe;
+  const providerRows: string[] = [];
+  if (provider) {
+    providerRows.push(
+      `<div class="usage-limit-row"><span>Project images / min</span><strong>${provider.maxImagesPerMinute == null ? "—" : formatNumber(provider.maxImagesPerMinute)}</strong></div>`,
+      `<div class="usage-limit-row"><span>Project requests / min</span><strong>${provider.maxRequestsPerMinute == null ? "—" : formatNumber(provider.maxRequestsPerMinute)}</strong></div>`,
+      `<div class="usage-limit-row"><span>Project tokens / min</span><strong>${provider.maxTokensPerMinute == null ? "—" : formatNumber(provider.maxTokensPerMinute)}</strong></div>`,
+      `<div class="usage-limit-row"><span>Batch queued tokens / day</span><strong>${provider.batchDayMaxInputTokens == null ? "—" : formatNumber(provider.batchDayMaxInputTokens)}</strong></div>`,
+    );
+  }
+  if (probe && (probe.limitRequests != null || probe.limitTokens != null || probe.limitImages != null)) {
+    const reset = [probe.resetRequests ? `requests reset ${probe.resetRequests}` : "", probe.resetTokens ? `tokens reset ${probe.resetTokens}` : ""]
+      .filter(Boolean).join(" · ");
+    providerRows.push(
+      `<div class="usage-limit-row"><span>Latest request window</span><strong>${probe.remainingRequests == null ? "—" : formatNumber(probe.remainingRequests)} / ${probe.limitRequests == null ? "—" : formatNumber(probe.limitRequests)} req</strong></div>`,
+      `<div class="usage-limit-row"><span>Latest token window</span><strong>${probe.remainingTokens == null ? "—" : formatNumber(probe.remainingTokens)} / ${probe.limitTokens == null ? "—" : formatNumber(probe.limitTokens)} tok</strong></div>`,
+      reset ? `<small class="usage-limit-note">${escapeHtml(reset)}</small>` : "",
+    );
+  }
+  const scope = provider
+    ? `Project ${data.admin?.projectId ?? "configured"} · fetched ${formatDate(provider.fetchedAt)}`
+    : probe?.capturedAt
+      ? `Latest API response · captured ${formatDate(probe.capturedAt)}`
+      : !data.admin?.configured
+        ? "No Admin key configured"
+        : !data.admin.projectId
+          ? "Admin key saved · no project selected"
+          : "Project limits not loaded yet";
+  const providerEmpty = !data.admin?.configured
+    ? "Add an Admin key in API keys to load project limits. Generation keys still track this app’s usage."
+    : !data.admin.projectId
+      ? "Select a Project in the Admin tab, then refresh limits."
+      : (data.admin.lastError ?? "Refresh limits to load the selected project snapshot.");
+  const providerHtml = `<div class="usage-limit-group"><h4>Provider limits <small>${escapeHtml(scope)}</small></h4>${
+    providerRows.length ? providerRows.join("") : `<p class="usage-limit-empty">${escapeHtml(providerEmpty)}</p>`
+  }</div>`;
+  elements.usageLimits.innerHTML = localHtml + providerHtml;
+}
+
+function renderPricing(): void {
+  const pricing = pricingView;
+  if (!pricing) return;
+  elements.usagePricingMeta.textContent = `${pricing.version} · ${pricing.source}`;
+  const perMillion = (rate: number) => `${money(rate * 1_000_000, rate * 1_000_000 < 1 ? 2 : 0)} / 1M`;
+  const tokenRows: Array<[string, number]> = [
+    ["Text input", pricing.textInputTokenUsd],
+    ["Image input", pricing.imageInputTokenUsd],
+    ["Cached text input", pricing.cachedTextInputTokenUsd],
+    ["Cached image input", pricing.cachedImageInputTokenUsd],
+    ["Image output", pricing.imageOutputTokenUsd],
+  ];
+  const formats: Array<keyof PricingView["imageEstimatesUsd"]> = ["square", "portrait", "landscape", "story"];
+  elements.usagePricing.innerHTML = `
+    <div class="usage-pricing-tokens">${tokenRows.map(([label, rate]) =>
+      `<div class="usage-price-row"><span>${label}</span><strong>${perMillion(rate)}</strong></div>`).join("")}</div>
+    <div class="usage-image-prices">
+      <div class="usage-price-row usage-price-heading"><span>Format · ratio · resolution</span><strong>Low · Medium · High</strong></div>
+      ${formats.map((key) => {
+        const rates = pricing.imageEstimatesUsd[key];
+        const format = OUTPUT_FORMATS[key];
+        return `<div class="usage-price-row"><span>${format.label} · ${format.ratio} · ${format.size}</span><strong>${money(rates.low)} · ${money(rates.medium)} · ${money(rates.high)}</strong></div>`;
+      }).join("")}
+      <small class="usage-limit-note">Reference input estimate: ${money(pricing.referenceInputEstimateUsd)} each · Batch discount: ${Math.round(pricing.batchDiscount * 100)}%</small>
+    </div>
+    <div class="usage-pricing-notes">
+      <div><strong>Cached prompts</strong><span>OpenAI may classify eligible repeated input as cached. This app displays the cached rate, but does not force caching.</span></div>
+      <div><strong>Reference images</strong><span>Used in edit requests through the attached reference files. Their returned image-input tokens are part of actual usage; the per-reference amount above is only a pre-run estimate.</span></div>
+    </div>
+    <div class="usage-pricing-examples">
+      <h4>Cost examples</h4>
+      <div class="usage-example"><strong>1 prompt · no references</strong><span>1 text input + 1 generated image output</span><em>Direct and Batch use different rates</em></div>
+      <div class="usage-example"><strong>15 prompts · 4 references</strong><span>4 references are uploaded once, then used across 15 requests = up to 60 image-input uses</span><em>Batch applies 50% to the token bill; caching only lowers it when OpenAI reports cached tokens</em></div>
+    </div>`;
+  enter(elements.usagePricing, 0.08, 4);
+}
+
+async function loadUsage(): Promise<void> {
+  elements.refreshUsage.disabled = true;
+  elements.refreshUsage.setAttribute("aria-busy", "true");
+  elements.usageStatus.textContent = "Loading local usage…";
+  elements.usageSummaryGrid.innerHTML = '<div class="usage-loading">Reading this app’s local ledger…</div>';
+  try {
+    const [summary, latestBootstrap] = await Promise.all([
+      app.rpc!.request.getUsageSummary(usageRangeBounds(elements.usageRange.value)),
+      app.rpc!.request.getBootstrap({}),
+    ]);
+    bootstrapData = latestBootstrap;
+    pricingView = latestBootstrap.pricing;
+    renderUsageSummary(summary);
+    renderUsageLimits();
+    renderPricing();
+    const rangeLabel = elements.usageRange.options[elements.usageRange.selectedIndex]?.textContent ?? "selected range";
+    elements.usageStatus.textContent = `${rangeLabel} · updated ${formatDate(summary.generatedAt)}`;
+  } catch (error) {
+    elements.usageStatus.textContent = error instanceof Error ? error.message : "Could not load usage.";
+    elements.usageSummaryGrid.innerHTML = '<div class="empty-state"><strong>Usage unavailable</strong><small>Try refreshing the local ledger.</small></div>';
+  } finally {
+    elements.refreshUsage.disabled = false;
+    elements.refreshUsage.removeAttribute("aria-busy");
+  }
+}
+
 async function loadSessions(): Promise<void> {
   elements.refreshSessions.disabled = true;
   elements.refreshSessions.setAttribute("aria-busy", "true");
@@ -1921,6 +2101,8 @@ async function importCsvFile(file: File): Promise<void> {
 
 async function bootstrap(): Promise<void> {
   const data: AppBootstrap = await app.rpc!.request.getBootstrap({});
+  bootstrapData = data;
+  pricingView = data.pricing;
   document.title = `${data.brand.appName} ${data.brand.version}`;
   elements.brandName.textContent = data.brand.appName;
   elements.brandVersion.textContent = data.brand.version;
@@ -1960,6 +2142,8 @@ async function bootstrap(): Promise<void> {
     elements.rateLimitsLine.textContent = "Org limits optional — Admin key in API keys.";
     elements.rateLimitsLine.dataset["level"] = "soft";
   }
+  renderPricing();
+  renderUsageLimits();
   renderReferenceImages();
   updateWaveUi();
   syncEstimateChrome(selected.size);
@@ -1988,7 +2172,7 @@ elements.themeToggle.addEventListener("click", () => {
 });
 
 document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
-  button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "sessions" | "history" | "exports" | "logs"));
+  button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "sessions" | "usage" | "history" | "exports" | "logs"));
 });
 elements.csvTab.addEventListener("click", () => setTab("csv"));
 elements.manualTab.addEventListener("click", () => setTab("manual"));
@@ -2554,6 +2738,23 @@ elements.exportButton.addEventListener("click", async () => {
   }
 });
 elements.refreshSessions.addEventListener("click", () => void loadSessions());
+elements.refreshUsage.addEventListener("click", () => void loadUsage());
+elements.usageRange.addEventListener("change", () => void loadUsage());
+elements.usageRefreshLimits.addEventListener("click", async () => {
+  elements.usageRefreshLimits.disabled = true;
+  try {
+    const admin = await app.rpc!.request.refreshRateLimits({});
+    if (bootstrapData) bootstrapData = { ...bootstrapData, admin };
+    applyAdminView(admin);
+    renderUsageLimits();
+    showToast(admin.rateLimits ? "Provider limits refreshed." : (admin.lastError ?? "Provider limits are unavailable."), !admin.rateLimits);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not refresh provider limits", true);
+  } finally {
+    elements.usageRefreshLimits.disabled = false;
+  }
+});
+elements.usageOpenKeys.addEventListener("click", () => elements.manageKeys.click());
 elements.refreshHistory.addEventListener("click", () => void loadHistory());
 elements.historySearch.addEventListener("input", () => renderHistory(false));
 elements.historyFilter.addEventListener("change", () => renderHistory(false));

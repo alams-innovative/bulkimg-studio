@@ -13,6 +13,9 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 const channel = Bun.argv[2] ?? "stable";
+if (channel !== "stable" && channel !== "canary") {
+  throw new Error(`Unsupported release channel: ${channel}. Use stable or canary.`);
+}
 const projectRoot = resolve(import.meta.dir, "..");
 const platformName = `${channel}-win-x64`;
 const buildDir = join(projectRoot, "build", platformName);
@@ -112,6 +115,62 @@ try {
   copyFileSync(setupExe, join(zipStaging, basename(setupExe)));
   copyFileSync(setupMetadata, join(zipInstallerDir, basename(setupMetadata)));
   copyFileSync(setupArchive, join(zipInstallerDir, basename(setupArchive)));
+  writeFileSync(
+    join(zipStaging, "INSTALL.txt"),
+    [
+      "BulkImg Studio Windows Installer",
+      "",
+      "1. Keep this folder together.",
+      "2. Run Install-BulkImgStudio.cmd to install and open the app automatically.",
+      `3. To install without opening the app, run ${basename(setupExe)} instead.`,
+      "4. The installer places BulkImg Studio in your user application directory.",
+      "5. Future launches use the Start menu entry.",
+      "",
+      "The .installer folder is required by the Electrobun setup program.",
+      "Do not distribute the setup executable without that folder.",
+      "",
+    ].join("\r\n"),
+  );
+  writeFileSync(
+    join(zipStaging, "Install-BulkImgStudio.ps1"),
+    [
+      "$ErrorActionPreference = 'Stop'",
+      `$channel = '${channel}'`,
+      "$root = Split-Path -Parent $MyInvocation.MyCommand.Path",
+      "$setup = Get-ChildItem -LiteralPath $root -Filter '*-Setup.exe' | Select-Object -First 1",
+      "if (-not $setup) { throw 'The Electrobun setup executable was not found.' }",
+      "$processFilter = \"*\\com.bulkimg.studio\\$channel\\*\"",
+      "Get-CimInstance Win32_Process | Where-Object {",
+      "  $_.ExecutablePath -and $_.ExecutablePath -like $processFilter",
+      "} | ForEach-Object {",
+      "  Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue",
+      "}",
+      "Start-Sleep -Milliseconds 800",
+      "$result = Start-Process -FilePath $setup.FullName -WorkingDirectory $root -Wait -PassThru",
+      "if ($result.ExitCode -ne 0) { throw \"Installer exited with code $($result.ExitCode).\" }",
+      "$appDir = Join-Path $env:LOCALAPPDATA \"com.bulkimg.studio\\$channel\\app\"",
+      "$launcher = Join-Path $appDir 'bin\\launcher.exe'",
+      "for ($attempt = 0; $attempt -lt 60; $attempt++) {",
+      "  if (Test-Path -LiteralPath $launcher) {",
+      "    Start-Process -FilePath $launcher -WorkingDirectory (Split-Path -Parent $launcher)",
+      "    exit 0",
+      "  }",
+      "  Start-Sleep -Milliseconds 500",
+      "}",
+      "throw \"Installation completed, but the app launcher was not found at $launcher.\"",
+      "",
+    ].join("\r\n"),
+  );
+  writeFileSync(
+    join(zipStaging, "Install-BulkImgStudio.cmd"),
+    [
+      "@echo off",
+      "setlocal",
+      `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-BulkImgStudio.ps1"`,
+      "exit /b %ERRORLEVEL%",
+      "",
+    ].join("\r\n"),
+  );
 
   const buildZip = join(buildDir, `${basename(setupExe, ".exe").replaceAll(" ", "")}.zip`);
   run("powershell.exe", [
@@ -124,7 +183,8 @@ try {
   copyFileSync(buildZip, join(artifactsDir, `${platformName}-BulkImgStudio-Setup.zip`));
   copyFileSync(rebuiltArchive, join(artifactsDir, `${platformName}-BulkImgStudio.tar.zst`));
 
-  console.log(`Finalized GUI-subsystem installer: ${buildZip}`);
+  console.log(`Finalized GUI-subsystem installer package: ${buildZip}`);
+  console.log("Install by extracting the ZIP and running Install-BulkImgStudio.cmd.");
   console.log(`Installer package size: ${(statSync(buildZip).size / 1024 / 1024).toFixed(2)} MB`);
 } finally {
   rmSync(scratch, { recursive: true, force: true });

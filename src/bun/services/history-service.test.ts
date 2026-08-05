@@ -50,7 +50,7 @@ describe("HistoryService batch JSONL persist", () => {
       "gpt-image-2",
       null,
       filePath,
-      (input, output) => input + output,
+      (usage) => usage.inputTokens + usage.outputTokens,
       (partial) => { progress.push(partial.saved); },
     );
 

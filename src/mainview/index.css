@@ -611,6 +611,7 @@ svg {
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden
 }
@@ -1020,6 +1021,340 @@ textarea {
 .management-head h2,
 .management-head p {
   margin: 0
+}
+
+.usage-head {
+  align-items: center
+}
+
+.usage-range-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text3);
+  font-size: 11px
+}
+
+.usage-range-label select {
+  min-height: 32px
+}
+
+.usage-status {
+  min-height: 18px;
+  padding: 12px 2px 4px;
+  color: var(--text3);
+  font: 500 10px "JetBrains Mono"
+}
+
+.usage-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 6px 0 12px
+}
+
+.usage-kpi,
+.usage-card {
+  background: var(--muted);
+  border: 1px solid var(--subtle);
+  border-radius: var(--r2)
+}
+
+.usage-kpi {
+  min-width: 0;
+  padding: 13px
+}
+
+.usage-kpi span,
+.usage-kpi small {
+  display: block;
+  color: var(--text3);
+  font-size: 11px
+}
+
+.usage-kpi strong {
+  display: block;
+  margin: 5px 0 3px;
+  font: 700 21px Manrope, sans-serif;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap
+}
+
+.usage-kpi small {
+  font: 500 10px "JetBrains Mono";
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis
+}
+
+.usage-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(300px, .9fr);
+  gap: 10px;
+  margin-bottom: 10px
+}
+
+.usage-card {
+  padding: 15px
+}
+
+.usage-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px
+}
+
+.usage-card-head h3,
+.usage-card-head p {
+  margin: 0
+}
+
+.usage-card-head h3 {
+  font: 700 15px Manrope, sans-serif
+}
+
+.usage-card-head p {
+  margin-top: 3px;
+  color: var(--text3);
+  font-size: 11px
+}
+
+.usage-badge {
+  padding: 4px 7px;
+  border: 1px solid var(--subtle);
+  border-radius: 99px;
+  color: var(--text3);
+  font: 500 10px "JetBrains Mono";
+  white-space: nowrap
+}
+
+.usage-mode-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px
+}
+
+.usage-mode-card {
+  padding: 11px;
+  border: 1px solid var(--subtle);
+  border-radius: var(--r1);
+  background: var(--surface)
+}
+
+.usage-mode-title,
+.usage-stat-list div,
+.usage-limit-row,
+.usage-price-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px
+}
+
+.usage-mode-title {
+  color: var(--text2);
+  font-size: 11px
+}
+
+.usage-mode-title span {
+  color: var(--text3);
+  font: 500 10px "JetBrains Mono"
+}
+
+.usage-mode-value {
+  margin: 12px 0 10px;
+  font: 700 19px Manrope, sans-serif
+}
+
+.usage-stat-list {
+  display: grid;
+  gap: 5px
+}
+
+.usage-stat-list div {
+  color: var(--text3);
+  font-size: 10px
+}
+
+.usage-stat-list strong {
+  color: var(--text2);
+  font: 500 10px "JetBrains Mono"
+}
+
+.usage-limit-group + .usage-limit-group {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--subtle)
+}
+
+.usage-limit-group h4 {
+  margin: 0 0 7px;
+  color: var(--text2);
+  font: 700 11px Manrope, sans-serif
+}
+
+.usage-limit-group h4 small {
+  display: block;
+  margin-top: 3px;
+  color: var(--text3);
+  font: 500 9px "JetBrains Mono";
+  font-weight: 400
+}
+
+.usage-limit-row {
+  min-height: 25px;
+  color: var(--text3);
+  font-size: 10px
+}
+
+.usage-limit-row strong {
+  color: var(--text2);
+  font: 500 10px "JetBrains Mono";
+  text-align: right
+}
+
+.usage-limit-note,
+.usage-limit-empty,
+.usage-meta {
+  color: var(--text3);
+  font-size: 10px
+}
+
+.usage-limit-note {
+  display: block;
+  margin-top: 7px;
+  font-family: "JetBrains Mono"
+}
+
+.usage-limit-empty {
+  margin: 0;
+  line-height: 1.5
+}
+
+.usage-meta {
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right
+}
+
+.pricing-card {
+  margin-bottom: 4px
+}
+
+.usage-pricing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 14px
+}
+
+.usage-pricing-tokens,
+.usage-image-prices {
+  display: grid;
+  align-content: start;
+  gap: 4px
+}
+
+.usage-price-row {
+  min-height: 27px;
+  padding: 0 8px;
+  background: var(--surface);
+  border-radius: 5px;
+  color: var(--text3);
+  font-size: 10px
+}
+
+.usage-price-row strong {
+  color: var(--text2);
+  font: 500 10px "JetBrains Mono";
+  text-align: right
+}
+
+.usage-price-heading {
+  background: transparent;
+  padding: 0 8px 2px
+}
+
+.usage-pricing-notes {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 2px
+}
+
+.usage-pricing-notes div {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--subtle);
+  border-radius: var(--r1);
+  background: var(--surface)
+}
+
+.usage-pricing-notes strong {
+  color: var(--text2);
+  font-size: 10px
+}
+
+.usage-pricing-notes span {
+  color: var(--text3);
+  font-size: 10px;
+  line-height: 1.45
+}
+
+.usage-pricing-examples {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+  margin-top: 2px
+}
+
+.usage-pricing-examples h4 {
+  margin: 0 0 1px;
+  color: var(--text2);
+  font: 700 11px Manrope, sans-serif
+}
+
+.usage-example {
+  display: grid;
+  grid-template-columns: minmax(170px, .8fr) minmax(0, 1.5fr) minmax(150px, .8fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--subtle);
+  border-radius: var(--r1);
+  background: var(--surface)
+}
+
+.usage-example strong {
+  color: var(--text2);
+  font-size: 10px
+}
+
+.usage-example span,
+.usage-example em {
+  color: var(--text3);
+  font-size: 10px;
+  font-style: normal;
+  line-height: 1.4
+}
+
+.usage-example em {
+  color: var(--silver);
+  font-family: "JetBrains Mono";
+  font-size: 9px
+}
+
+.usage-loading {
+  grid-column: 1 / -1;
+  padding: 20px;
+  color: var(--text3);
+  text-align: center
 }
 
 .button-row {
@@ -1686,7 +2021,8 @@ textarea {
 }
 
 .prompt-matrix.view-cards .prompt-text {
-  -webkit-line-clamp: 3
+  -webkit-line-clamp: 3;
+  line-clamp: 3
 }
 
 .prompt-matrix.view-cards .check-dot {
@@ -2800,4 +3136,64 @@ button.history-image:disabled {
 
 .quick-actions button:disabled {
   opacity: .42
+}
+
+@media(max-width:1100px) {
+  .usage-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+  }
+
+  .usage-columns {
+    grid-template-columns: 1fr
+  }
+}
+
+@media(max-width:640px) {
+  .usage-head {
+    align-items: stretch;
+    flex-direction: column
+  }
+
+  .usage-head .button-row {
+    justify-content: space-between
+  }
+
+  .usage-summary-grid,
+  .usage-mode-comparison,
+  .usage-pricing,
+  .usage-pricing-notes,
+  .usage-pricing-examples {
+    grid-template-columns: 1fr
+  }
+
+  .usage-meta {
+    max-width: 42%
+  }
+
+  .usage-example {
+    grid-template-columns: 1fr
+  }
+}
+
+#usage-view {
+  overflow-y: auto;
+  scrollbar-gutter: stable
+}
+
+#usage-view::-webkit-scrollbar {
+  width: 10px
+}
+
+#usage-view::-webkit-scrollbar-track {
+  background: transparent
+}
+
+#usage-view::-webkit-scrollbar-thumb {
+  background: var(--graphite);
+  border: 3px solid var(--surface);
+  border-radius: 99px
+}
+
+#usage-view::-webkit-scrollbar-thumb:hover {
+  background: var(--steel)
 }

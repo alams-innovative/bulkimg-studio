@@ -73,4 +73,34 @@ describe("database migrations and job state", () => {
     expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(4);
     migrated.db.close();
   });
+
+  test("aggregates app-scoped usage by mode without counting capped lists", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bulkimg-usage-test-"));
+    temporaryDirectories.push(directory);
+    const database = new AppDatabase(directory);
+    database.createSession("usage-direct", {
+      ...input("direct"),
+      prompts: [
+        { promptText: "One", week: "Week 1", scheduleDate: "2026-08-01", themeColumn: "Brand" },
+        { promptText: "Two", week: "Week 1", scheduleDate: "2026-08-02", themeColumn: "Brand" },
+      ],
+    }, 280);
+    const directPrompts = database.getSessionPrompts("usage-direct");
+    database.completePrompt(directPrompts[0]!.prompt_id, { inputTokens: 100, outputTokens: 200, costUsd: 0.01 });
+    database.failPrompt(directPrompts[1]!.prompt_id, { message: "failed", category: "provider", httpStatus: 500, requestId: null, retryAt: null });
+
+    database.createSession("usage-batch", input("batch"), 280);
+    const batchPrompt = database.getSessionPrompts("usage-batch")[0]!;
+    database.completePrompt(batchPrompt.prompt_id, { inputTokens: 300, outputTokens: 400, costUsd: 0.02 });
+
+    const summary = database.getUsageSummary({
+      startAt: "2020-01-01T00:00:00.000Z",
+      endAt: "2030-01-01T00:00:00.000Z",
+    });
+    expect(summary.scope).toBe("this_app");
+    expect(summary.direct).toMatchObject({ requestCount: 2, completedCount: 1, failedCount: 1, inputTokens: 100, outputTokens: 200, costUsd: 0.01 });
+    expect(summary.batch).toMatchObject({ requestCount: 1, completedCount: 1, inputTokens: 300, outputTokens: 400, costUsd: 0.02 });
+    expect(summary.total).toMatchObject({ requestCount: 3, completedCount: 2, failedCount: 1, inputTokens: 400, outputTokens: 600, costUsd: 0.03 });
+    database.db.close();
+  });
 });

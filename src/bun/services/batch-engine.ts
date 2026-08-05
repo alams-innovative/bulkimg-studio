@@ -7,7 +7,7 @@ import { OpenAIClient, OpenAIError, sanitizedError, type BatchObject } from "./o
 import type { HistoryService } from "./history-service";
 import type { PricingService } from "./pricing-service";
 import type {
-  CostEstimate, OutputFormatId, QualityTier, RunMode, SessionDetail, SessionStatus,
+  CostEstimate, ImageTokenUsage, OutputFormatId, QualityTier, RunMode, SessionDetail, SessionStatus,
   SessionTelemetry, SubmitRunInput,
 } from "../../shared/contracts";
 import { APP_LIMITS } from "../../shared/contracts";
@@ -226,8 +226,8 @@ export class BatchEngine {
     throw lastError instanceof Error ? lastError : new Error("No API key is currently available.");
   }
 
-  private usageCost(inputTokens: number, outputTokens: number, mode: RunMode): number {
-    return this.pricing.costFromUsage({ model: "gpt-image-2", mode, inputTokens, outputTokens });
+  private usageCost(usage: ImageTokenUsage, mode: RunMode): number {
+    return this.pricing.costFromUsage({ model: "gpt-image-2", mode, ...usage });
   }
 
   private outputPath(sessionId: string): string {
@@ -449,7 +449,7 @@ export class BatchEngine {
           this.noteRateHeaders(selected.result);
           if (controller.signal.aborted || this.database.isSessionCancelled(sessionId)) return;
           this.database.assignSessionKey(sessionId, selected.keyId);
-          const costUsd = this.usageCost(selected.result.inputTokens, selected.result.outputTokens, "direct");
+          const costUsd = this.usageCost(selected.result.tokenUsage, "direct");
           const saved = await this.history.persistDirect({
             sessionId, model: input.model, keyId: selected.keyId, prompt, result: selected.result, costUsd,
           });
@@ -665,7 +665,7 @@ export class BatchEngine {
           ctx.model,
           keyId,
           outputPath,
-          (inputTokens, outputTokens) => this.usageCost(inputTokens, outputTokens, "batch"),
+          (usage) => this.usageCost(usage, "batch"),
           (progress) => {
             if (this.database.isSessionCancelled(sessionId)) return;
             const aggregate = this.database.aggregatePromptUsage(sessionId);

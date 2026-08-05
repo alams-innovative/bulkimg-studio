@@ -1,8 +1,8 @@
-import type { FailureCategory, RateLimitHeaderProbe, RateLimitSnapshot, SanitizedProviderError, SubmitRunInput } from "../../shared/contracts";
+import type { FailureCategory, ImageTokenUsage, RateLimitHeaderProbe, RateLimitSnapshot, SanitizedProviderError, SubmitRunInput } from "../../shared/contracts";
 import { outputSize } from "../../shared/output-formats";
 
 const DEFAULT_API_BASE = Bun.env["OPENAI_BASE_URL"] ?? "https://api.openai.com/v1";
-const APP_VERSION = "1.0.2-beta";
+const APP_VERSION = "1.0.3";
 const SHORT_TIMEOUT_MS = 15_000;
 const IMAGE_TIMEOUT_MS = 180_000;
 const FILE_DOWNLOAD_TIMEOUT_MS = 600_000;
@@ -21,6 +21,7 @@ export type DirectImageResult = {
   url: string | null;
   inputTokens: number;
   outputTokens: number;
+  tokenUsage: ImageTokenUsage;
   requestId: string | null;
   rateHeaders?: RateLimitHeaderProbe;
 };
@@ -63,6 +64,11 @@ function parseRateHeaders(headers: Headers): RateLimitHeaderProbe {
     remainingTokens: num("x-ratelimit-remaining-tokens"),
     limitImages: num("x-ratelimit-limit-images"),
     remainingImages: num("x-ratelimit-remaining-images"),
+    resetRequests: headers.get("x-ratelimit-reset-requests"),
+    resetTokens: headers.get("x-ratelimit-reset-tokens"),
+    limitProjectTokens: num("x-ratelimit-limit-project-tokens"),
+    remainingProjectTokens: num("x-ratelimit-remaining-project-tokens"),
+    resetProjectTokens: headers.get("x-ratelimit-reset-project-tokens"),
     capturedAt: new Date().toISOString(),
   };
 }
@@ -295,7 +301,12 @@ export class OpenAIClient {
     if (!prompt) throw new Error("Prompt " + (index + 1) + " was not found.");
     type ImageResponse = {
       data?: Array<{ b64_json?: string; url?: string }>;
-      usage?: { input_tokens?: number; output_tokens?: number };
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        input_tokens_details?: { text_tokens?: number; image_tokens?: number };
+        output_tokens_details?: { text_tokens?: number; image_tokens?: number };
+      };
     };
     const images = referenceImages(input);
     const response = await this.request<ImageResponse>(
@@ -309,12 +320,29 @@ export class OpenAIClient {
       },
       IMAGE_TIMEOUT_MS,
     );
+    const usage = response.data.usage;
+    const inputTokens = usage?.input_tokens ?? 0;
+    const outputTokens = usage?.output_tokens ?? 0;
+    const inputTextTokens = usage?.input_tokens_details?.text_tokens ?? inputTokens;
+    const inputImageTokens = usage?.input_tokens_details?.image_tokens ?? 0;
+    const outputImageTokens = usage?.output_tokens_details?.image_tokens ?? outputTokens;
+    const outputTextTokens = usage?.output_tokens_details?.text_tokens ?? 0;
     return {
       index,
       b64Json: response.data.data?.[0]?.b64_json ?? null,
       url: response.data.data?.[0]?.url ?? null,
-      inputTokens: response.data.usage?.input_tokens ?? 0,
-      outputTokens: response.data.usage?.output_tokens ?? 0,
+      inputTokens,
+      outputTokens,
+      tokenUsage: {
+        inputTokens,
+        outputTokens,
+        inputTextTokens,
+        inputImageTokens,
+        cachedTextInputTokens: 0,
+        cachedImageInputTokens: 0,
+        outputImageTokens,
+        outputTextTokens,
+      },
       requestId: response.requestId,
       rateHeaders: response.rateHeaders,
     };

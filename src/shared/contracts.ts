@@ -91,6 +91,11 @@ export type RateLimitHeaderProbe = {
   remainingTokens: number | null;
   limitImages: number | null;
   remainingImages: number | null;
+  resetRequests: string | null;
+  resetTokens: string | null;
+  limitProjectTokens: number | null;
+  remainingProjectTokens: number | null;
+  resetProjectTokens: string | null;
   capturedAt: string;
 };
 
@@ -133,6 +138,52 @@ export type CostEstimate = {
   fxRate: number;
   pricingVersion: string;
   isEstimate: true;
+};
+
+export type ImageTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  inputTextTokens: number;
+  inputImageTokens: number;
+  cachedTextInputTokens: number;
+  cachedImageInputTokens: number;
+  outputImageTokens: number;
+  outputTextTokens: number;
+};
+
+export type PricingView = {
+  version: string;
+  source: string;
+  batchDiscount: number;
+  imageEstimatesUsd: Record<OutputFormatId, Record<QualityTier, number>>;
+  referenceInputEstimateUsd: number;
+  textInputTokenUsd: number;
+  imageInputTokenUsd: number;
+  cachedTextInputTokenUsd: number;
+  cachedImageInputTokenUsd: number;
+  imageOutputTokenUsd: number;
+};
+
+export type UsageTotals = {
+  requestCount: number;
+  completedCount: number;
+  failedCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  costPkr: number;
+};
+
+export type UsageSummary = {
+  scope: "this_app";
+  range: {
+    startAt: string | null;
+    endAt: string;
+  };
+  generatedAt: string;
+  total: UsageTotals;
+  direct: UsageTotals;
+  batch: UsageTotals;
 };
 
 export type ApiKeyStats = {
@@ -275,6 +326,7 @@ export type AppBootstrap = {
   admin: AdminConfigView;
   adminWarning: string | null;
   rateHeaderProbe: RateLimitHeaderProbe | null;
+  pricing: PricingView;
   limits: {
     maxReferences: number;
     maxReferenceBytes: number;
@@ -316,6 +368,10 @@ export type AppRPC = {
           referenceCount: number;
         };
         response: CostEstimate;
+      };
+      getUsageSummary: {
+        params: { startAt?: string | null; endAt?: string | null };
+        response: UsageSummary;
       };
       uploadReferenceImage: {
         params: { dataBase64: string; filename: string; mimeType: string };

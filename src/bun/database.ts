@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type {
   ApiKeyStats, AppSettings, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RateLimitSnapshot,
   RunMode, RunPhase, RunSummary, SanitizedProviderError, SessionPromptOutcome, SessionStatus,
-  SessionSummary, SessionTelemetry, SubmitRunInput,
+  SessionSummary, SessionTelemetry, SubmitRunInput, UsageSummary, UsageTotals,
 } from "../shared/contracts";
 import { APP_LIMITS } from "../shared/contracts";
 import { isOutputFormatId, legacySizeToFormat, outputSize } from "../shared/output-formats";
@@ -1041,6 +1041,76 @@ export class AppDatabase {
       inputTokens: row?.input_tokens ?? 0,
       outputTokens: row?.output_tokens ?? 0,
       costUsd: row?.cost_usd ?? 0,
+    };
+  }
+
+  getUsageSummary(range: { startAt?: string | null; endAt?: string | null } = {}): UsageSummary {
+    const endAt = range.endAt ?? new Date().toISOString();
+    const startAt = range.startAt ?? null;
+    const rows = this.db.query<{
+      run_mode: RunMode;
+      request_count: number;
+      completed_count: number;
+      failed_count: number;
+      input_tokens: number;
+      output_tokens: number;
+      cost_usd: number;
+      cost_pkr: number;
+    }, [string | null, string | null, string]>(`
+      SELECT s.run_mode,
+        COUNT(p.prompt_id) AS request_count,
+        SUM(CASE WHEN p.status = 'completed' THEN 1 ELSE 0 END) AS completed_count,
+        SUM(CASE WHEN p.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+        COALESCE(SUM(p.input_tokens), 0) AS input_tokens,
+        COALESCE(SUM(p.output_tokens), 0) AS output_tokens,
+        COALESCE(SUM(p.cost_usd), 0) AS cost_usd,
+        COALESCE(SUM(p.cost_usd * COALESCE(s.fx_rate, 0)), 0) AS cost_pkr
+      FROM session_prompts p
+      JOIN batch_sessions s ON s.session_id = p.session_id
+      WHERE (? IS NULL OR datetime(s.start_time) >= datetime(?))
+        AND datetime(s.start_time) < datetime(?)
+      GROUP BY s.run_mode
+    `).all(startAt, startAt, endAt);
+
+    const empty = (): UsageTotals => ({
+      requestCount: 0,
+      completedCount: 0,
+      failedCount: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      costPkr: 0,
+    });
+    const fromRow = (row: typeof rows[number]): UsageTotals => ({
+      requestCount: Number(row.request_count) || 0,
+      completedCount: Number(row.completed_count) || 0,
+      failedCount: Number(row.failed_count) || 0,
+      inputTokens: Number(row.input_tokens) || 0,
+      outputTokens: Number(row.output_tokens) || 0,
+      costUsd: Number(row.cost_usd) || 0,
+      costPkr: Number(row.cost_pkr) || 0,
+    });
+    const add = (left: UsageTotals, right: UsageTotals): UsageTotals => ({
+      requestCount: left.requestCount + right.requestCount,
+      completedCount: left.completedCount + right.completedCount,
+      failedCount: left.failedCount + right.failedCount,
+      inputTokens: left.inputTokens + right.inputTokens,
+      outputTokens: left.outputTokens + right.outputTokens,
+      costUsd: left.costUsd + right.costUsd,
+      costPkr: left.costPkr + right.costPkr,
+    });
+    const direct = rows.find((row) => row.run_mode === "direct");
+    const batch = rows.find((row) => row.run_mode === "batch");
+    const directTotals = direct ? fromRow(direct) : empty();
+    const batchTotals = batch ? fromRow(batch) : empty();
+
+    return {
+      scope: "this_app",
+      range: { startAt, endAt },
+      generatedAt: new Date().toISOString(),
+      total: add(directTotals, batchTotals),
+      direct: directTotals,
+      batch: batchTotals,
     };
   }
 

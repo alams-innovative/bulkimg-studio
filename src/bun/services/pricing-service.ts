@@ -1,19 +1,24 @@
 import { join } from "node:path";
-import type { OutputFormatId, QualityTier, RunMode } from "../../shared/contracts";
+import type { OutputFormatId, PricingView, QualityTier, RunMode } from "../../shared/contracts";
 
 type FormatRates = Record<OutputFormatId, Record<QualityTier, number>>;
 
 type PricingConfig = {
   version: string;
+  source: string;
   batchDiscount: number;
   imageEstimatesUsd: FormatRates;
   referenceInputEstimateUsd: number;
-  inputTokenUsd: number;
-  outputTokenUsd: number;
+  textInputTokenUsd: number;
+  imageInputTokenUsd: number;
+  cachedTextInputTokenUsd: number;
+  cachedImageInputTokenUsd: number;
+  imageOutputTokenUsd: number;
 };
 
 const FALLBACK: PricingConfig = {
   version: "gpt-image-2-2026-08-03",
+  source: "reviewed fallback",
   batchDiscount: 0.5,
   imageEstimatesUsd: {
     square: { low: 0.006, medium: 0.053, high: 0.211 },
@@ -22,8 +27,11 @@ const FALLBACK: PricingConfig = {
     story: { low: 0.005, medium: 0.041, high: 0.165 },
   },
   referenceInputEstimateUsd: 0.002,
-  inputTokenUsd: 0.00001,
-  outputTokenUsd: 0.00004,
+  textInputTokenUsd: 0.000005,
+  imageInputTokenUsd: 0.000008,
+  cachedTextInputTokenUsd: 0.00000125,
+  cachedImageInputTokenUsd: 0.000002,
+  imageOutputTokenUsd: 0.00003,
 };
 
 export class PricingService {
@@ -34,9 +42,18 @@ export class PricingService {
   async load(): Promise<void> {
     for (const root of this.assetRoots) {
       try {
-        const candidate = await Bun.file(join(root, "config", "pricing.json")).json() as Partial<PricingConfig>;
+        const candidate = await Bun.file(join(root, "config", "pricing.json")).json() as Partial<PricingConfig> & {
+          inputTokenUsd?: number;
+          outputTokenUsd?: number;
+        };
         if (candidate.version && candidate.imageEstimatesUsd) {
-          this.config = { ...FALLBACK, ...candidate } as PricingConfig;
+          this.config = {
+            ...FALLBACK,
+            ...candidate,
+            source: candidate.source ?? "assets/config/pricing.json",
+            textInputTokenUsd: candidate.textInputTokenUsd ?? candidate.inputTokenUsd ?? FALLBACK.textInputTokenUsd,
+            imageOutputTokenUsd: candidate.imageOutputTokenUsd ?? candidate.outputTokenUsd ?? FALLBACK.imageOutputTokenUsd,
+          };
           return;
         }
       } catch {
@@ -46,6 +63,21 @@ export class PricingService {
   }
 
   get version(): string { return this.config.version; }
+
+  getView(): PricingView {
+    return {
+      version: this.config.version,
+      source: this.config.source,
+      batchDiscount: this.config.batchDiscount,
+      imageEstimatesUsd: this.config.imageEstimatesUsd,
+      referenceInputEstimateUsd: this.config.referenceInputEstimateUsd,
+      textInputTokenUsd: this.config.textInputTokenUsd,
+      imageInputTokenUsd: this.config.imageInputTokenUsd,
+      cachedTextInputTokenUsd: this.config.cachedTextInputTokenUsd,
+      cachedImageInputTokenUsd: this.config.cachedImageInputTokenUsd,
+      imageOutputTokenUsd: this.config.imageOutputTokenUsd,
+    };
+  }
 
   estimateUsd(params: {
     model: string;
@@ -67,9 +99,24 @@ export class PricingService {
     mode: RunMode;
     inputTokens: number;
     outputTokens: number;
+    inputTextTokens?: number;
+    inputImageTokens?: number;
+    cachedTextInputTokens?: number;
+    cachedImageInputTokens?: number;
+    outputImageTokens?: number;
   }): number {
     if (params.model !== "gpt-image-2") throw new Error("Only GPT Image 2 is supported.");
-    const subtotal = params.inputTokens * this.config.inputTokenUsd + params.outputTokens * this.config.outputTokenUsd;
+    const inputTextTokens = params.inputTextTokens ?? params.inputTokens;
+    const inputImageTokens = params.inputImageTokens ?? 0;
+    const cachedTextInputTokens = params.cachedTextInputTokens ?? 0;
+    const cachedImageInputTokens = params.cachedImageInputTokens ?? 0;
+    const outputImageTokens = params.outputImageTokens ?? params.outputTokens;
+    const subtotal =
+      Math.max(0, inputTextTokens - cachedTextInputTokens) * this.config.textInputTokenUsd
+      + cachedTextInputTokens * this.config.cachedTextInputTokenUsd
+      + Math.max(0, inputImageTokens - cachedImageInputTokens) * this.config.imageInputTokenUsd
+      + cachedImageInputTokens * this.config.cachedImageInputTokenUsd
+      + outputImageTokens * this.config.imageOutputTokenUsd;
     return params.mode === "batch" ? subtotal * this.config.batchDiscount : subtotal;
   }
 }

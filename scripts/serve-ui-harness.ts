@@ -44,7 +44,7 @@ const telemetryBase = {
 
 const mocks: Record<string, (params: any) => any> = {
   getBootstrap: () => ({
-    brand: { appName: "BulkImg Studio", version: "1.0.2-beta" },
+    brand: { appName: "BulkImg Studio", version: "1.0.3" },
     models: { defaultModel: "gpt-image-2", models: [{ id: "gpt-image-2", label: "GPT Image 2", enabled: true }] },
     keyCount: 1,
     platform: "win32-x64",
@@ -53,6 +53,23 @@ const mocks: Record<string, (params: any) => any> = {
     admin: { configured: false, projectId: null, keyHint: null, rateLimits: null, lastError: null },
     adminWarning: "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works.",
     rateHeaderProbe: null,
+    pricing: {
+      version: "gpt-image-2-2026-08-03",
+      source: "OpenAI API pricing categories; image estimates from the GPT Image calculator",
+      batchDiscount: 0.5,
+      imageEstimatesUsd: {
+        square: { low: 0.006, medium: 0.053, high: 0.211 },
+        portrait: { low: 0.005, medium: 0.041, high: 0.165 },
+        landscape: { low: 0.005, medium: 0.041, high: 0.165 },
+        story: { low: 0.005, medium: 0.041, high: 0.165 },
+      },
+      referenceInputEstimateUsd: 0.002,
+      textInputTokenUsd: 0.000005,
+      imageInputTokenUsd: 0.000008,
+      cachedTextInputTokenUsd: 0.00000125,
+      cachedImageInputTokenUsd: 0.000002,
+      imageOutputTokenUsd: 0.00003,
+    },
     limits: {
       maxReferences: APP_LIMITS.maxReferences,
       maxReferenceBytes: APP_LIMITS.maxReferenceBytes,
@@ -66,6 +83,14 @@ const mocks: Record<string, (params: any) => any> = {
   parseManualPrompts: ({ text }: { text: string }) => promptMatrix(text),
   importCSV: ({ csvText, sourceName }: { csvText: string; sourceName: string }) => parseCSV(csvText, sourceName),
   estimateRunCost: ({ promptCount }: { promptCount: number }) => ({ costUsd: promptCount * 0.053, costPkr: promptCount * 0.053 * 278, fxRate: 278, pricingVersion: "test", isEstimate: true }),
+  getUsageSummary: () => ({
+    scope: "this_app",
+    range: { startAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), endAt: new Date().toISOString() },
+    generatedAt: new Date().toISOString(),
+    total: { requestCount: 48, completedCount: 42, failedCount: 6, inputTokens: 4_800, outputTokens: 52_000, costUsd: 1.12, costPkr: 311.36 },
+    direct: { requestCount: 8, completedCount: 7, failedCount: 1, inputTokens: 800, outputTokens: 9_000, costUsd: 0.34, costPkr: 94.52 },
+    batch: { requestCount: 40, completedCount: 35, failedCount: 5, inputTokens: 4_000, outputTokens: 43_000, costUsd: 0.78, costPkr: 216.84 },
+  }),
   listApiKeys: () => [{ id: "key-1", label: "Test key", keyHint: "••••test", provider: "OpenAI", isActive: true, isRateLimited: false, rateLimitedUntil: null, createdAt: new Date().toISOString(), lastUsedAt: null, totalRequests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, costPkr: 0, currentSessionId: null, currentModel: null, currentRunMode: null, currentStatus: null, currentPrompts: 0, currentCompleted: 0 }],
   submitBatchRun: ({ prompts, mode, format, quality }: any) => ({
     ...telemetryBase,
@@ -259,7 +284,7 @@ const mocks: Record<string, (params: any) => any> = {
   ],
   getDiagnosticLogs: () => ({
     lines: [
-      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.2-beta"}',
+      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.3"}',
       '{"ts":"2026-08-04T06:01:12.000Z","event":"session_created","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","mode":"batch"}',
       '{"ts":"2026-08-04T06:02:40.000Z","event":"batch_poll","status":"processing","completed":42,"total":100}',
       '{"ts":"2026-08-04T06:03:10.000Z","event":"batch_download_error","category":"timeout","message":"Download stalled; will retry"}',

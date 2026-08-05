@@ -14,12 +14,12 @@ import { pickOpenFile, readClipboardCsv, readClipboardImages } from "./services/
 import { cleanupStaleTemporaryFiles, DiagnosticLog } from "./services/diagnostics";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.2-beta supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.0.3 supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.2-beta",
+  version: "1.0.3",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -69,7 +69,7 @@ const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
 void diagnosticLog.write("startup", {
   cleanedFiles,
-  version: "1.0.2-beta",
+  version: "1.0.3",
   userData: dataDirectory,
   pid: process.pid,
 });
@@ -133,6 +133,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           admin,
           adminWarning: admin.configured ? null : ADMIN_WARNING,
           rateHeaderProbe: headerProbe(database),
+          pricing: pricingService.getView(),
           limits: {
             maxReferences: APP_LIMITS.maxReferences,
             maxReferenceBytes: APP_LIMITS.maxReferenceBytes,
@@ -142,6 +143,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
           },
         };
       },
+      getUsageSummary: ({ startAt, endAt }) => database.getUsageSummary({ startAt, endAt }),
       getSettings: () => database.getAppSettings(),
       setSettings: (partial) => logged("settings_update", { keys: Object.keys(partial) }, () => database.setAppSettings(partial)),
       importCSV: ({ csvText, sourceName }) => logged("import_csv", {

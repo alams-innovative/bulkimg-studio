@@ -1,6 +1,6 @@
 {
   "name": "bulkimg-studio",
-  "version": "1.0.2-beta",
+  "version": "1.0.3",
   "private": true,
   "type": "module",
   "description": "Windows-first batch AI image generation studio built with Electrobun and Bun.",
@@ -9,6 +9,11 @@
     "dev": "electrobun dev --watch",
     "build": "electrobun build --env=stable && bun run scripts/finalize-windows-build.ts stable",
     "build:canary": "electrobun build --env=canary && bun run scripts/finalize-windows-build.ts canary",
+    "build:release": "bun run check && bun test && bun run build",
+    "install:stable": "bun run scripts/install-and-launch.ts stable",
+    "install:canary": "bun run scripts/install-and-launch.ts canary",
+    "open:stable": "bun run scripts/open-installed.ts stable",
+    "open:canary": "bun run scripts/open-installed.ts canary",
     "check": "tsc --noEmit",
     "test": "bun test src",
     "test:ui": "playwright test"

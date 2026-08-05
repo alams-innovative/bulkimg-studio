@@ -19,7 +19,7 @@
           <img class="brand-logo-light"
             src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
           <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
-              id="brand-version">1.0.2-beta</small></span>
+              id="brand-version">1.0.3</small></span>
         </div>
         <button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
           title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
@@ -29,6 +29,8 @@
           title="Generator"><i data-lucide="layout-grid"></i><span>Generator</span></button>
         <button id="nav-sessions" class="nav-item" data-view="sessions" title="Sessions"><i
             data-lucide="clock-3"></i><span>Sessions</span></button>
+        <button id="nav-usage" class="nav-item" data-view="usage" title="Usage and limits"><i
+            data-lucide="database"></i><span>Usage</span></button>
         <button id="nav-history" class="nav-item" data-view="history" title="History"><i
             data-lucide="images"></i><span>History</span></button>
         <button id="nav-exports" class="nav-item" data-view="exports" title="Exports"><i
@@ -230,6 +232,55 @@
               data-lucide="refresh-cw"></i>Refresh</button>
         </div>
         <div id="session-list" class="data-list" aria-live="polite"></div>
+      </section>
+      <section id="usage-view" class="view-content management-view hidden">
+        <div class="management-head usage-head">
+          <div>
+            <h2>Usage &amp; limits</h2>
+            <p>This app only — local requests, tokens, and calculated cost.</p>
+          </div>
+          <div class="button-row">
+            <label class="usage-range-label">Range
+              <select id="usage-range" aria-label="Usage date range">
+                <option value="7d">7 days</option>
+                <option value="30d" selected>30 days</option>
+                <option value="90d">90 days</option>
+                <option value="all">All time</option>
+              </select>
+            </label>
+            <button id="refresh-usage" class="secondary-button" type="button"><i
+                data-lucide="refresh-cw"></i>Refresh</button>
+          </div>
+        </div>
+        <div id="usage-status" class="usage-status" role="status" aria-live="polite"></div>
+        <div id="usage-summary-grid" class="usage-summary-grid" aria-live="polite"></div>
+        <div class="usage-columns">
+          <section class="usage-card">
+            <div class="usage-card-head">
+              <div><h3>Direct vs Batch</h3><p>Tracked generation requests in this range.</p></div>
+              <span id="usage-batch-discount" class="usage-badge">Batch —</span>
+            </div>
+            <div id="usage-mode-comparison" class="usage-mode-comparison"></div>
+          </section>
+          <section class="usage-card">
+            <div class="usage-card-head">
+              <div><h3>Limits</h3><p>App caps and the latest scoped provider snapshot.</p></div>
+              <div class="button-row">
+                <button id="usage-refresh-limits" class="secondary-button" type="button"><i
+                    data-lucide="refresh-cw"></i>Refresh</button>
+                <button id="usage-open-keys" class="secondary-button" type="button">API keys</button>
+              </div>
+            </div>
+            <div id="usage-limits" class="usage-limits"></div>
+          </section>
+        </div>
+        <section class="usage-card pricing-card">
+          <div class="usage-card-head">
+            <div><h3>Pricing reference</h3><p>Official token categories plus local image estimates.</p></div>
+            <span id="usage-pricing-meta" class="usage-meta"></span>
+          </div>
+          <div id="usage-pricing" class="usage-pricing"></div>
+        </section>
       </section>
       <section id="history-view" class="view-content management-view hidden">
         <div class="management-head">

@@ -1,6 +1,6 @@
 # BulkImg Studio
 
-BulkImg Studio 1.0.2-beta is a Windows-first Electrobun application for preparing and submitting high-volume AI image generation runs from weekly CSV calendars or manual prompts.
+BulkImg Studio 1.0.3 is a Windows-first Electrobun application for preparing and submitting high-volume AI image generation runs from weekly CSV calendars or manual prompts.
 
 ## What is included
 
@@ -18,12 +18,6 @@ BulkImg Studio 1.0.2-beta is a Windows-first Electrobun application for preparin
 ## Requirements
 
 - Windows 10 or Windows 11, x64 or ARM64
-- Bun 1.3.14 or newer. On CPUs without AVX2, install the official baseline build:
-
-  ```powershell
-  winget install --id Oven-sh.Bun.Baseline --exact
-  ```
-
 - Microsoft Edge WebView2 Runtime (normally included with supported Windows versions)
 
 ## Development
@@ -35,22 +29,35 @@ bun test
 bun run dev
 ```
 
-Create a stable Windows installer with:
+Build and validate the stable Windows release package with:
 
 ```powershell
-bun run build
+bun run build:release
 ```
+
+The package is written to `artifacts/stable-win-x64-BulkImgStudio-Setup.zip`. Extract the ZIP while keeping
+the `.installer` folder beside the installer files, then run `Install-BulkImgStudio.cmd`. It runs the
+Electrobun setup, waits for installation to finish, starts BulkImg Studio, and creates the Start-menu
+entry. Run the `*-Setup.exe` directly when you want to install without opening the app. The repository's
+local install-and-launch command also starts the installed app automatically:
+
+```powershell
+bun run install:stable
+bun run open:stable
+```
+
+The packaged application includes its runtime; Bun is required only for development and building.
 
 ## Security and configuration
 
 Do not place OpenAI keys in `.env`. Add keys through the app so they are encrypted by the Bun process and never returned to the webview. The device encryption key and SQLite database live in Electrobun's per-user application-data directory.
 
-Brand text, colors, and asset paths are in `assets/brand/theme.json`; the model registry is in `assets/config/models.json`. Replace the SVG logo and add a production `assets/brand/app_icon.ico` before a signed release.
+Brand text, colors, and asset paths are in `assets/brand/theme.json`; the model registry is in `assets/config/models.json`.
 
 ## Documentation
 
 - `docs/SYSTEM_SPECIFICATION.md` — full product/spec target
 - `docs/ARCHITECTURE.md` — process boundary and source map
-- `docs/RELEASE.md` — 1.0.0-beta build, signing, and smoke checklist
+- `docs/RELEASE.md` — Windows release build and smoke checklist
 
 Brand assets live in `assets/brand/` (`theme.json`, `logo.svg`, `app_icon.ico`). Model and pricing registries are in `assets/config/`.

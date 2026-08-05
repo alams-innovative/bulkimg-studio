@@ -14,7 +14,30 @@ describe("pricing service", () => {
     const pricing = new PricingService([]);
     expect(pricing.costFromUsage({
       model: "gpt-image-2", mode: "batch", inputTokens: 1_000, outputTokens: 500,
-    })).toBeCloseTo(0.015);
+    })).toBeCloseTo(0.01, 6);
+  });
+
+  test("prices image input separately from text and image output tokens", () => {
+    const pricing = new PricingService([]);
+    expect(pricing.costFromUsage({
+      model: "gpt-image-2",
+      mode: "direct",
+      inputTokens: 1_000,
+      outputTokens: 500,
+      inputTextTokens: 600,
+      inputImageTokens: 400,
+      outputImageTokens: 500,
+    })).toBeCloseTo(0.0212, 6);
+  });
+
+  test("exposes token categories for the usage view", () => {
+    const pricing = new PricingService([]);
+    expect(pricing.getView()).toMatchObject({
+      batchDiscount: 0.5,
+      textInputTokenUsd: 0.000005,
+      imageInputTokenUsd: 0.000008,
+      imageOutputTokenUsd: 0.00003,
+    });
   });
 
   test("adds the compact reference allowance to pre-run estimates", () => {

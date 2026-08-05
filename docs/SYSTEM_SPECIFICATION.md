@@ -1,6 +1,6 @@
 # BulkImg Studio - System Architecture & Development Specification
 
-**Target Version:** 1.0.2-beta
+**Target Version:** 1.0.3
 
 **Target OS:** Windows 10 & Windows 11 (x64 / ARM64)
 **Framework:** Electrobun (Bun Native Process + Windows Native WebView2)
@@ -27,7 +27,7 @@ BulkImg Studio is an enterprise-grade, high-throughput Windows desktop applicati
 - **Platform Constraint:** WINDOWS 10 / WINDOWS 11 ONLY. Do not write Linux/macOS specific code, scripts, or path handlers.
 - **Windows Webview:** Uses Windows WebView2. Web context uses standard web APIs, CSS backdrops, and modern ESM bundle targets.
 - **Main Process:** Bun runtime. Local database engine is `bun:sqlite`. File operations use native Bun streaming APIs (`Bun.file`, `Bun.write`).
-- **Versioning Standard:** Strict Semantic Versioning MAJOR.MINOR.PATCH with an optional prerelease label. Build/package and UI surfaces use `1.0.2-beta`. Do not use floating tags like `latest` in release targets.
+- **Versioning Standard:** Strict Semantic Versioning MAJOR.MINOR.PATCH with an optional prerelease label. Build/package and UI surfaces use `1.0.3`. Do not use floating tags like `latest` in release targets.
 
 ---
 
@@ -40,7 +40,7 @@ Brand configuration file located at `/assets/brand/theme.json`:
 ```json
 {
   "appName": "BulkImg Studio",
-  "version": "1.0.2-beta",
+  "version": "1.0.3",
   "logoPath": "/assets/brand/logo.svg",
   "iconPath": "/assets/brand/app_icon.ico",
   "accentColor": "#38bdf8",

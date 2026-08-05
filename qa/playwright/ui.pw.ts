@@ -13,6 +13,17 @@ test("generator remains accessible and keyboard operable", async ({ page }) => {
   await expect(page.locator(":focus")).toBeVisible();
 });
 
+test("usage page shows app-scoped totals, limits, modes, and pricing", async ({ page }) => {
+  await page.getByRole("button", { name: "Usage" }).click();
+  await expect(page.locator("#usage-view").getByRole("heading", { name: "Usage & limits" })).toBeVisible();
+  await expect(page.getByText("This app only — local requests, tokens, and calculated cost.")).toBeVisible();
+  await expect(page.locator("#usage-summary-grid .usage-kpi")).toHaveCount(4);
+  await expect(page.getByRole("heading", { name: "Direct vs Batch" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pricing reference" })).toBeVisible();
+  await expect(page.getByText("Add an Admin key in API keys to load project limits. Generation keys still track this app’s usage.")).toBeVisible();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
 test("renders at most 100 rows and selects across 1,000 prompts", async ({ page }) => {
   await page.getByRole("tab", { name: "Manual" }).click();
   await page.getByLabel("Manual prompts").fill(Array.from({ length: 1_000 }, (_, index) => `Prompt ${index + 1}`).join("\n"));

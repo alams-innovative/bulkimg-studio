@@ -33,17 +33,43 @@ describe("OpenAI image payloads", () => {
       port: 0,
       async fetch(request) {
         received = await request.json() as typeof received;
-        return Response.json({ data: [{ b64_json: "image-data" }], usage: { input_tokens: 10, output_tokens: 20 } });
+        return Response.json({
+          data: [{ b64_json: "image-data" }],
+          usage: {
+            input_tokens: 10,
+            output_tokens: 20,
+            input_tokens_details: { text_tokens: 6, image_tokens: 4 },
+            output_tokens_details: { image_tokens: 20 },
+          },
+        }, {
+          headers: {
+            "x-ratelimit-limit-requests": "60",
+            "x-ratelimit-remaining-requests": "59",
+            "x-ratelimit-reset-requests": "1s",
+            "x-ratelimit-limit-project-tokens": "1000",
+            "x-ratelimit-remaining-project-tokens": "900",
+            "x-ratelimit-reset-project-tokens": "3s",
+          },
+        });
       },
     });
     try {
       const client = new OpenAIClient("sk-test-key-1234567890", `http://127.0.0.1:${server.port}`);
-      await client.generateOne({
+      const result = await client.generateOne({
         prompts: [{ promptText: "Combine them", week: "", scheduleDate: "", themeColumn: "" }],
         model: "gpt-image-2", mode: "direct", format: "square", quality: "medium",
         referenceImageFileIds: ["file-one", "file-two"],
       }, 0);
       expect(received.images).toEqual([{ file_id: "file-one" }, { file_id: "file-two" }]);
+      expect(result.tokenUsage).toMatchObject({ inputTextTokens: 6, inputImageTokens: 4, outputImageTokens: 20 });
+      expect(result.rateHeaders).toMatchObject({
+        limitRequests: 60,
+        remainingRequests: 59,
+        resetRequests: "1s",
+        limitProjectTokens: 1000,
+        remainingProjectTokens: 900,
+        resetProjectTokens: "3s",
+      });
     } finally { server.stop(true); }
   });
 });
