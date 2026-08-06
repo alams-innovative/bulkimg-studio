@@ -2895,9 +2895,7 @@ button:disabled {
   z-index: 80;
   display: grid;
   place-items: center;
-  grid-template-columns: 48px 1fr 48px;
-  gap: 8px;
-  padding: 24px;
+  padding: 24px 84px;
   background: rgba(8, 10, 14, .88)
 }
 
@@ -2916,7 +2914,7 @@ button:disabled {
 .lightbox-content {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(230px, 300px);
-  width: min(92vw, 1220px);
+  width: min(100%, 1220px);
   max-height: 88vh;
   border: 1px solid rgba(255, 255, 255, .14);
   border-radius: 10px;
@@ -2942,6 +2940,10 @@ button:disabled {
 }
 
 .lightbox-frame figcaption strong { color: #fff; font-size: 12px }
+.lightbox-caption { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2 }
+.lightbox-caption.expanded { display: block; max-height: 20vh; overflow: auto }
+.lightbox-prompt-toggle { justify-self: start; padding: 0; border: 0; background: transparent; color: var(--accentText); font: inherit; font-size: 11px; cursor: pointer }
+.lightbox-prompt-toggle:hover { color: #fff }
 
 .lightbox-details {
   overflow: auto;
@@ -2994,10 +2996,17 @@ button:disabled {
   .lightbox-content { grid-template-columns: minmax(0, 1fr) 240px }
 }
 
+.lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%) }
+.lightbox-nav.prev { left: 24px }
+.lightbox-nav.next { right: 24px }
+.lightbox-nav:disabled { cursor: default; opacity: .32 }
+
 @media(max-width:760px) {
-  .lightbox { grid-template-columns: 36px 1fr 36px; padding: 10px; gap: 4px }
+  .lightbox { padding: 10px 52px }
   .lightbox-content { grid-template-columns: 1fr; max-height: 92vh }
   .lightbox-details { max-height: 210px; border-top: 1px solid rgba(255, 255, 255, .12); border-left: 0 }
+  .lightbox-nav.prev { left: 8px }
+  .lightbox-nav.next { right: 8px }
 }
 
 .run-group {

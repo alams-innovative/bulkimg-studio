@@ -276,6 +276,7 @@ const elements = {
   lightboxImage: byId<HTMLImageElement>("lightbox-image"),
   lightboxCount: byId("lightbox-count"),
   lightboxCaption: byId("lightbox-caption"),
+  lightboxPromptToggle: byId<HTMLButtonElement>("lightbox-prompt-toggle"),
   lightboxDetails: byId("lightbox-details"),
   lightboxClose: byId<HTMLButtonElement>("lightbox-close"),
   lightboxPrev: byId<HTMLButtonElement>("lightbox-prev"),
@@ -346,6 +347,7 @@ let clipboardHistoryTargetExpiresAt = 0;
 let waveSizes: number[] = [];
 let lightboxItems: HistoryItem[] = [];
 let lightboxIndex = 0;
+let lightboxPromptExpanded = false;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
 let referenceImages: ReferenceImage[] = [];
 let referencePasteInFlight = false;
@@ -2312,6 +2314,8 @@ function closeLightbox(): void {
   elements.lightboxImage.removeAttribute("src");
   elements.lightboxCount.textContent = "Image 0 of 0";
   elements.lightboxCaption.textContent = "";
+  elements.lightboxCaption.classList.remove("expanded");
+  elements.lightboxPromptToggle.textContent = "Show prompt";
   elements.lightboxDetails.innerHTML = "";
 }
 
@@ -2327,16 +2331,21 @@ async function openLightbox(items: HistoryItem[], index: number): Promise<void> 
 
 async function showLightboxAt(index: number): Promise<void> {
   if (!lightboxItems.length) return;
-  lightboxIndex = ((index % lightboxItems.length) + lightboxItems.length) % lightboxItems.length;
+  lightboxIndex = Math.max(0, Math.min(index, lightboxItems.length - 1));
   const item = lightboxItems[lightboxIndex]!;
   elements.lightbox.classList.remove("hidden");
   elements.lightbox.hidden = false;
   elements.lightboxCount.textContent = `Image ${lightboxIndex + 1} of ${lightboxItems.length}`;
   elements.lightboxCaption.textContent = item.promptText;
+  lightboxPromptExpanded = false;
+  elements.lightboxCaption.classList.remove("expanded");
+  elements.lightboxPromptToggle.textContent = "Show prompt";
+  elements.lightboxPrev.disabled = lightboxIndex === 0;
+  elements.lightboxNext.disabled = lightboxIndex === lightboxItems.length - 1;
   elements.lightboxImage.alt = item.promptText;
   const session = librarySessions.get(item.sessionId);
   const selected = librarySelectedPromptIds.has(item.promptId);
-  elements.lightboxDetails.innerHTML = `<div class="lightbox-detail-head"><span class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span><button type="button" class="secondary-button lightbox-select" data-prompt-id="${escapeHtml(item.promptId)}"><i data-lucide="${selected ? "check" : "square"}"></i>${selected ? "Selected" : "Select image"}</button></div><section><h3>Image details</h3><dl><div><dt>Theme</dt><dd>${escapeHtml(item.themeColumn || item.week || "Manual")}</dd></div><div><dt>Format</dt><dd>${escapeHtml(session ? `${session.format} · ${session.quality}` : item.model)}</dd></div><div><dt>Cost</dt><dd>$${item.costUsd.toFixed(3)}</dd></div></dl></section><section><h3>Session</h3><dl><div><dt>Progress</dt><dd>${session ? `${session.completedCount} of ${session.totalPrompts} images` : "Saved image"}</dd></div><div><dt>Mode</dt><dd>${escapeHtml(item.runMode)}</dd></div><div><dt>Created</dt><dd>${escapeHtml(formatDate(item.createdAt))}</dd></div></dl></section>`;
+  elements.lightboxDetails.innerHTML = `<div class="lightbox-detail-head"><span class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span><button type="button" class="secondary-button lightbox-select" data-prompt-id="${escapeHtml(item.promptId)}"><i data-lucide="${selected ? "check" : "images"}"></i>${selected ? "Selected" : "Select image"}</button></div><section><h3>Image details</h3><dl><div><dt>Image</dt><dd>${lightboxIndex + 1} of ${lightboxItems.length}</dd></div><div><dt>Week</dt><dd>${escapeHtml(item.week || "Not set")}</dd></div><div><dt>Theme</dt><dd>${escapeHtml(item.themeColumn || "Manual")}</dd></div><div><dt>Format</dt><dd>${escapeHtml(session ? `${session.format} · ${session.quality}` : item.model)}</dd></div><div><dt>Cost</dt><dd>$${item.costUsd.toFixed(3)}</dd></div></dl></section><section><h3>Session</h3><dl><div><dt>Progress</dt><dd>${session ? `${session.completedCount} of ${session.totalPrompts} images` : "Saved image"}</dd></div><div><dt>Mode</dt><dd>${escapeHtml(item.runMode)}</dd></div><div><dt>Created</dt><dd>${escapeHtml(formatDate(item.createdAt))}</dd></div></dl></section>`;
   elements.lightboxDetails.querySelector<HTMLButtonElement>(".lightbox-select")?.addEventListener("click", () => {
     if (librarySelectedPromptIds.has(item.promptId)) librarySelectedPromptIds.delete(item.promptId);
     else librarySelectedPromptIds.add(item.promptId);
@@ -3487,6 +3496,11 @@ elements.libraryDeleteSelected.addEventListener("click", async () => {
 elements.lightboxClose.addEventListener("click", () => closeLightbox());
 elements.lightboxPrev.addEventListener("click", () => void showLightboxAt(lightboxIndex - 1));
 elements.lightboxNext.addEventListener("click", () => void showLightboxAt(lightboxIndex + 1));
+elements.lightboxPromptToggle.addEventListener("click", () => {
+  lightboxPromptExpanded = !lightboxPromptExpanded;
+  elements.lightboxCaption.classList.toggle("expanded", lightboxPromptExpanded);
+  elements.lightboxPromptToggle.textContent = lightboxPromptExpanded ? "Hide prompt" : "Show prompt";
+});
 elements.lightbox.addEventListener("click", (event) => {
   if (event.target === elements.lightbox) closeLightbox();
 });
