@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -119,9 +119,15 @@ describe("History reveal helpers", () => {
       sourceKey: "source-reveal-1",
     });
 
-    const revealed = history.revealAsset(assetId);
-    expect(revealed.toLowerCase()).toContain("history");
-    expect(history.revealSessionFolder("session-reveal").toLowerCase()).toContain("session-reveal");
-    expect(() => history.revealSessionFolder("..\\windows")).toThrow(/managed history/i);
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => ({}) as never);
+    try {
+      const revealed = history.revealAsset(assetId);
+      expect(revealed.toLowerCase()).toContain("history");
+      expect(history.revealSessionFolder("session-reveal").toLowerCase()).toContain("session-reveal");
+      expect(() => history.revealSessionFolder("..\\windows")).toThrow(/managed history/i);
+      expect(spawn).toHaveBeenCalledTimes(2);
+    } finally {
+      spawn.mockRestore();
+    }
   });
 });

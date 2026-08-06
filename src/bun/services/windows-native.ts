@@ -16,7 +16,7 @@ function powershell(script: string): Promise<{ stdout: string; exitCode: number;
     "Bypass",
     "-EncodedCommand",
     encoded,
-  ], { stdout: "pipe", stderr: "pipe" });
+  ], { stdout: "pipe", stderr: "pipe", windowsHide: true });
   return Promise.all([
     new Response(proc.stdout).text(),
     new Response(proc.stderr).text(),

@@ -483,6 +483,7 @@ export type AppRPC = {
       revealExportsFolder: { params: {}; response: { directory: string } };
       exportSessionZip: { params: { sessionId: string; pickPath?: boolean }; response: { filePath: string | null } };
       exportRunZip: { params: { runId: string; pickPath?: boolean }; response: { filePath: string | null } };
+      exportSelectedHistoryZip: { params: { assetIds: string[]; pickPath?: boolean }; response: { filePath: string | null } };
       getDiagnosticLogs: {
         params: { limit?: number; query?: string; event?: string };
         response: DiagnosticLogView;

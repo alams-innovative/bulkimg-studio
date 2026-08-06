@@ -257,6 +257,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       exportRunZip: async ({ runId, pickPath }) => logged("export_run", { runId }, async () => ({
         filePath: await exportService.exportRun(runId, { pickPath: Boolean(pickPath) }),
       })),
+      exportSelectedHistoryZip: async ({ assetIds, pickPath }) => logged("export_history_selected", { count: assetIds.length }, async () => ({
+        filePath: await exportService.exportSelectedHistory(assetIds, { pickPath: Boolean(pickPath) }),
+      })),
       getDiagnosticLogs: ({ limit, query, event }) => diagnosticLog.read({ limit, query, event }),
       revealLogsFolder: () => {
         const directory = diagnosticLog.logDirectory;
@@ -279,11 +282,13 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return result;
       },
       readClipboardImages: async ({ maxCount }) => {
+        const startedAt = performance.now();
         const result = await readClipboardImages(maxCount ?? APP_LIMITS.maxReferences);
         await diagnosticLog.write("clipboard_images", {
           ok: result.images.length > 0 && !result.error,
           count: result.images.length,
           error: result.error,
+          durationMs: Math.round(performance.now() - startedAt),
         });
         return result;
       },

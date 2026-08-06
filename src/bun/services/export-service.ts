@@ -129,6 +129,36 @@ export class ExportService {
     return filePath;
   }
 
+  async exportSelectedHistory(assetIds: string[], options?: { pickPath?: boolean }): Promise<string | null> {
+    const uniqueIds = [...new Set(assetIds.filter(Boolean))];
+    if (!uniqueIds.length) throw new Error("Choose at least one image to download.");
+    const timestamp = new Date().toISOString().replaceAll(":", "-").replace("T", "_").slice(0, 19);
+    const root = `BulkImg_Selected_${timestamp}`;
+    const files: Record<string, Uint8Array> = {};
+    let imageCount = 0;
+    for (const assetId of uniqueIds) {
+      const asset = this.database.getAsset(assetId);
+      if (!asset || !existsSync(asset.file_path)) continue;
+      const filename = imageCount ? `${imageCount + 1}_${asset.image_filename}` : asset.image_filename;
+      files[`${root}/images/${filename}`] = new Uint8Array(await Bun.file(asset.file_path).arrayBuffer());
+      imageCount += 1;
+    }
+    if (!imageCount) throw new Error("The selected images are no longer available locally.");
+    files[`${root}/README.md`] = strToU8(`# BulkImg Studio selected images\r\n\r\n- Images: ${imageCount}\r\n- Exported: ${new Date().toISOString()}\r\n`);
+    const archive = zipSync(files, { level: 6 });
+    const exportsDirectory = join(this.dataDirectory, "exports");
+    mkdirSync(exportsDirectory, { recursive: true });
+    let filePath = join(exportsDirectory, `${root}.zip`);
+    if (options?.pickPath) {
+      const chosen = await pickSaveFile({ title: "Download selected images", defaultName: `${root}.zip`, filter: "*.zip", filterLabel: "ZIP archive" });
+      if (!chosen) return null;
+      filePath = chosen;
+    }
+    await Bun.write(filePath, archive);
+    void showNotification("BulkImg Studio", `Downloaded ${imageCount} selected image(s) as a ZIP.`);
+    return filePath;
+  }
+
   list() {
     const exportsDirectory = join(this.dataDirectory, "exports");
     mkdirSync(exportsDirectory, { recursive: true });

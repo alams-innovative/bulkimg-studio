@@ -7,6 +7,8 @@ import {
   ArrowRight,
   ArrowUp,
   Check,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
   ClipboardPaste,
   Clock3,
@@ -18,6 +20,7 @@ import {
   FolderOpen,
   ImageOff,
   ImagePlus,
+  Image,
   Images,
   Info,
   KeyRound,
@@ -25,6 +28,7 @@ import {
   LayoutGrid,
   LoaderCircle,
   Moon,
+  MoreHorizontal,
   PackageOpen,
   PanelLeftClose,
   PanelLeftOpen,
@@ -244,6 +248,7 @@ const elements = {
   progressBar: byId("progress-bar"),
   sessionCost: byId("session-cost"),
   exportButton: byId<HTMLButtonElement>("export-button"),
+  previewSession: byId<HTMLButtonElement>("preview-session"),
   retryButton: byId<HTMLButtonElement>("retry-button"),
   refreshSessions: byId<HTMLButtonElement>("refresh-sessions"),
   sessionList: byId("session-list"),
@@ -260,13 +265,18 @@ const elements = {
   usagePricing: byId("usage-pricing"),
   refreshHistory: byId<HTMLButtonElement>("refresh-history"),
   clearHistory: byId<HTMLButtonElement>("clear-history"),
+  libraryDownloadSelected: byId<HTMLButtonElement>("library-download-selected"),
+  libraryDeleteSelected: byId<HTMLButtonElement>("library-delete-selected"),
+  librarySelection: byId("library-selection"),
   historySearch: byId<HTMLInputElement>("history-search"),
   historyFilter: byId<HTMLSelectElement>("history-filter"),
   historyCount: byId("history-count"),
   historyList: byId("history-list"),
   lightbox: byId("lightbox"),
   lightboxImage: byId<HTMLImageElement>("lightbox-image"),
+  lightboxCount: byId("lightbox-count"),
   lightboxCaption: byId("lightbox-caption"),
+  lightboxDetails: byId("lightbox-details"),
   lightboxClose: byId<HTMLButtonElement>("lightbox-close"),
   lightboxPrev: byId<HTMLButtonElement>("lightbox-prev"),
   lightboxNext: byId<HTMLButtonElement>("lightbox-next"),
@@ -308,11 +318,20 @@ let adminEditingKey = false;
 let adminConfiguredState = false;
 let runSubmitInFlight = false;
 const SIDEBAR_STORAGE_KEY = "bulkimg.sidebar.collapsed";
+const LIBRARY_COLLAPSED_GROUPS_STORAGE_KEY = "bulkimg.library.collapsed-groups";
 const TOAST_MS_OK = 4200;
 const TOAST_MS_ERR = 7000;
 let logsLines: string[] = [];
 let logsSearchTimer: number | null = null;
 let historyItems: HistoryItem[] = [];
+let librarySessions = new Map<string, SessionSummary>();
+let libraryRuns = new Map<string, RunSummary>();
+let librarySelectedPromptIds = new Set<string>();
+let collapsedLibraryGroups = new Set<string>();
+try {
+  const stored = JSON.parse(localStorage.getItem(LIBRARY_COLLAPSED_GROUPS_STORAGE_KEY) ?? "[]");
+  if (Array.isArray(stored)) collapsedLibraryGroups = new Set(stored.filter((value): value is string => typeof value === "string"));
+} catch { /* local preference is optional */ }
 let historyImageObserver: IntersectionObserver | null = null;
 type ConverterQueueItem = { clientId: string; sourceKind: "session" | "upload" | "clipboard"; name: string; assetId?: string; dataBase64?: string; previewUrl?: string; format?: ConverterFormat };
 let converterQueue: ConverterQueueItem[] = [];
@@ -322,11 +341,14 @@ let converterSessionImages: ConverterSourceImage[] = [];
 let converterTab: "workspace" | "history" = "workspace";
 let converterSessionLayout: "cards" | "list" = "cards";
 let selectedConverterSessionAssets = new Set<string>();
+let clipboardHistoryTarget: "reference" | "converter" | null = null;
+let clipboardHistoryTargetExpiresAt = 0;
 let waveSizes: number[] = [];
 let lightboxItems: HistoryItem[] = [];
 let lightboxIndex = 0;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
 let referenceImages: ReferenceImage[] = [];
+let referencePasteInFlight = false;
 let estimateTimer: number | null = null;
 let matrixPage = 0;
 let activeKeyCount = 0;
@@ -540,6 +562,7 @@ function syncActionState(): void {
   elements.retryButton.disabled = !canResume;
 
   elements.exportButton.disabled = !session || busy;
+  elements.previewSession.disabled = !session || session.completedCount === 0;
 
   const cells = selectableCells();
   document.querySelectorAll<HTMLButtonElement>("[data-pick]").forEach((button) => {
@@ -667,6 +690,8 @@ const slateStackIcons = {
   ArrowRight,
   ArrowUp,
   Check,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
   ClipboardPaste,
   Clock3,
@@ -677,6 +702,7 @@ const slateStackIcons = {
   FolderOpen,
   ImageOff,
   ImagePlus,
+  Image,
   Images,
   Info,
   KeyRound,
@@ -684,6 +710,7 @@ const slateStackIcons = {
   LayoutGrid,
   LoaderCircle,
   Moon,
+  MoreHorizontal,
   PackageOpen,
   PanelLeftClose,
   PanelLeftOpen,
@@ -1111,7 +1138,7 @@ async function setView(view: "generator" | "converter" | "sessions" | "usage" | 
     converter: "Convert images.",
     sessions: "Sessions",
     usage: "Usage & limits",
-    history: "History",
+    history: "Library",
     exports: "Exports",
     logs: "Logs",
   } as const;
@@ -1570,8 +1597,8 @@ function renderReferenceImages(announcement?: string): void {
   elements.referenceDock.disabled = count >= limit;
   elements.referenceTitle.textContent = count === 0 ? "Add reference images" : count >= limit ? "References ready" : "Add another reference";
   elements.referenceHint.textContent = count === 0
-    ? `Optional · up to ${limit} · 50 MB each`
-    : count >= limit ? "Remove an image to add another" : "Click, drop, or Ctrl+V to add more";
+    ? `Drop, Ctrl+V, or Win+V · up to ${limit} images · 50 MB each`
+    : count >= limit ? "Remove an image to add another" : "Click, drop, Ctrl+V, or Win+V to add more";
   elements.referenceBadge.textContent = `${count}/${limit}`;
   setHidden(elements.referenceBadge, count === 0);
   setHidden(elements.referenceList, count === 0);
@@ -1605,7 +1632,33 @@ function renderReferenceImages(announcement?: string): void {
   });
 }
 
-async function attachReferenceFiles(files: File[]): Promise<void> {
+function setReferencePasteBusy(busy: boolean, label = "Uploading reference image…", hint = "Saving it to this run…"): void {
+  elements.referenceControl.classList.toggle("uploading", busy);
+  elements.referenceDock.toggleAttribute("aria-busy", busy);
+  elements.pasteReference.disabled = busy;
+  elements.pickReference.disabled = busy;
+  if (!busy) {
+    renderReferenceImages();
+    return;
+  }
+  elements.referenceDock.disabled = true;
+  elements.referenceTitle.textContent = label;
+  elements.referenceHint.textContent = hint;
+  elements.referenceBadge.textContent = "Uploading";
+  setHidden(elements.referenceBadge, false);
+  elements.referenceStatus.textContent = label;
+}
+
+async function attachReferenceFiles(files: File[], alreadyInFlight = false): Promise<void> {
+  if (referencePasteInFlight && !alreadyInFlight) {
+    logUi("ui_reference_paste_ignored", { reason: "upload_in_progress", attempted: files.length });
+    return;
+  }
+  const startedAt = performance.now();
+  logUi("ui_reference_attach_start", {
+    attempted: files.length,
+    bytes: files.reduce((total, file) => total + file.size, 0),
+  });
   const limit = referenceLimit();
   const remaining = limit - referenceImages.length;
   if (remaining <= 0) {
@@ -1620,10 +1673,8 @@ async function attachReferenceFiles(files: File[]): Promise<void> {
   }
   const accepted = nonEmpty.slice(0, remaining);
   if (nonEmpty.length > accepted.length) showToast("You can attach at most 16 reference images.", true);
-  elements.referenceBadge.textContent = "Uploading";
-  setHidden(elements.referenceBadge, false);
-  elements.referenceDock.setAttribute("aria-busy", "true");
-  elements.referenceDock.disabled = true;
+  if (!alreadyInFlight) referencePasteInFlight = true;
+  setReferencePasteBusy(true, `Uploading ${accepted.length} reference image${accepted.length === 1 ? "" : "s"}…`);
   let uploaded = 0;
   let skippedEmpty = files.length - nonEmpty.length;
   let skippedInvalid = 0;
@@ -1656,16 +1707,26 @@ async function attachReferenceFiles(files: File[]): Promise<void> {
       logUi("ui_reference_upload_error", { name: file.name, message: error instanceof Error ? error.message : "error" });
     }
   }
-  elements.referenceDock.removeAttribute("aria-busy");
-  elements.referenceFile.value = "";
-  renderReferenceImages(uploaded ? `${uploaded} reference image${uploaded === 1 ? "" : "s"} added. ${referenceImages.length} attached.` : undefined);
-  if (uploaded) {
-    showToast(`${uploaded} reference image${uploaded === 1 ? "" : "s"} added.`);
-    void refreshEstimate();
-  } else if (skippedEmpty && !skippedInvalid) {
-    showToast("Clipboard image was empty. Try copying the image again, then Ctrl+V.", true);
+  try {
+    elements.referenceFile.value = "";
+    renderReferenceImages(uploaded ? `${uploaded} reference image${uploaded === 1 ? "" : "s"} added. ${referenceImages.length} attached.` : undefined);
+    if (uploaded) {
+      showToast(`${uploaded} reference image${uploaded === 1 ? "" : "s"} added.`);
+      void refreshEstimate();
+    } else if (skippedEmpty && !skippedInvalid) {
+      showToast("Clipboard image was empty. Try copying the image again, then Ctrl+V.", true);
+    }
+    logUi("ui_reference_attach", {
+      uploaded,
+      skippedEmpty,
+      skippedInvalid,
+      attempted: files.length,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  } finally {
+    if (!alreadyInFlight) referencePasteInFlight = false;
+    if (!referencePasteInFlight) setReferencePasteBusy(false);
   }
-  logUi("ui_reference_attach", { uploaded, skippedEmpty, skippedInvalid, attempted: files.length });
 }
 
 function releaseReferencesToSession(): void {
@@ -2035,6 +2096,7 @@ function renderSessionDetailHtml(detail: SessionDetail): string {
     <div class="session-phase-grid">${formatPhaseGrid(t)}</div>
     <div class="session-detail-actions">
       <button type="button" class="secondary-button session-live" data-session-id="${t.sessionId}">View live strip</button>
+      ${t.runMode === "batch" && ["pending", "processing"].includes(t.status) ? `<button type="button" class="secondary-button session-check" data-session-id="${t.sessionId}">Check now</button>` : ""}
       ${canResume ? `<button type="button" class="secondary-button session-resume" data-session-id="${t.sessionId}">Resume leftovers</button>` : ""}
       ${["pending", "processing"].includes(t.status) ? `<button type="button" class="secondary-button session-cancel" data-session-id="${t.sessionId}">Cancel</button>` : ""}
       <button type="button" class="secondary-button session-export" data-session-id="${t.sessionId}">Export ZIP</button>
@@ -2045,11 +2107,20 @@ function renderSessionDetailHtml(detail: SessionDetail): string {
   </div>`;
 }
 
-async function toggleSessionDetail(sessionId: string): Promise<void> {
-  const panel = elements.sessionList.querySelector<HTMLElement>(`.session-detail-panel[data-detail-for="${sessionId}"]`);
+async function toggleSessionDetail(sessionId: string, listRoot: ParentNode = elements.sessionList): Promise<void> {
+  if (listRoot === elements.historyList) {
+    const source = historyItems.find((item) => item.sessionId === sessionId && item.hasImage);
+    if (source) {
+      const groupId = source.parentRunId ?? source.sessionId;
+      const images = historyItems.filter((item) => (item.parentRunId ?? item.sessionId) === groupId && item.hasImage);
+      await openLightbox(images, Math.max(0, images.findIndex((item) => item.sessionId === sessionId)));
+      return;
+    }
+  }
+  const panel = listRoot.querySelector<HTMLElement>(`.session-detail-panel[data-detail-for="${sessionId}"]`);
   if (!panel) return;
   const isOpen = !panel.classList.contains("hidden") && !panel.hidden;
-  elements.sessionList.querySelectorAll<HTMLElement>(".session-detail-panel").forEach((node) => {
+  listRoot.querySelectorAll<HTMLElement>(".session-detail-panel").forEach((node) => {
     node.classList.add("hidden");
     node.hidden = true;
     node.innerHTML = "";
@@ -2062,16 +2133,16 @@ async function toggleSessionDetail(sessionId: string): Promise<void> {
     const detail = await app.rpc!.request.getSessionDetail({ sessionId, refresh: false });
     panel.innerHTML = renderSessionDetailHtml(detail);
     refreshIcons();
-    bindSessionListHandlers(panel);
+    bindSessionListHandlers(panel, listRoot);
     enter(panel, 0, 4);
   } catch (error) {
     panel.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load detail")}</div>`;
   }
 }
 
-function bindSessionListHandlers(root: ParentNode = elements.sessionList): void {
+function bindSessionListHandlers(root: ParentNode = elements.sessionList, listRoot: ParentNode = elements.sessionList): void {
   root.querySelectorAll<HTMLButtonElement>(".session-detail").forEach((button) => {
-    button.onclick = () => void toggleSessionDetail(button.dataset["sessionId"]!);
+    button.onclick = () => void toggleSessionDetail(button.dataset["sessionId"]!, listRoot);
   });
   root.querySelectorAll<HTMLButtonElement>(".session-live, .session-open").forEach((button) => {
     button.onclick = async () => {
@@ -2083,13 +2154,15 @@ function bindSessionListHandlers(root: ParentNode = elements.sessionList): void 
   root.querySelectorAll<HTMLButtonElement>(".session-cancel").forEach((button) => {
     button.onclick = async () => {
       await app.rpc!.request.cancelBatchRun({ sessionId: button.dataset["sessionId"]! });
-      await loadSessions();
+      if (listRoot === elements.historyList) await loadHistory();
+      else await loadSessions();
     };
   });
   root.querySelectorAll<HTMLButtonElement>(".session-check").forEach((button) => {
     button.onclick = async () => {
       await app.rpc!.request.getSessionDetail({ sessionId: button.dataset["sessionId"]!, refresh: true });
-      await loadSessions();
+      if (listRoot === elements.historyList) await loadHistory();
+      else await loadSessions();
     };
   });
   root.querySelectorAll<HTMLButtonElement>(".session-resume, .run-resume").forEach((button) => {
@@ -2237,7 +2310,9 @@ function closeLightbox(): void {
   elements.lightbox.classList.add("hidden");
   elements.lightbox.hidden = true;
   elements.lightboxImage.removeAttribute("src");
+  elements.lightboxCount.textContent = "Image 0 of 0";
   elements.lightboxCaption.textContent = "";
+  elements.lightboxDetails.innerHTML = "";
 }
 
 async function openLightbox(items: HistoryItem[], index: number): Promise<void> {
@@ -2256,8 +2331,18 @@ async function showLightboxAt(index: number): Promise<void> {
   const item = lightboxItems[lightboxIndex]!;
   elements.lightbox.classList.remove("hidden");
   elements.lightbox.hidden = false;
+  elements.lightboxCount.textContent = `Image ${lightboxIndex + 1} of ${lightboxItems.length}`;
   elements.lightboxCaption.textContent = item.promptText;
   elements.lightboxImage.alt = item.promptText;
+  const session = librarySessions.get(item.sessionId);
+  const selected = librarySelectedPromptIds.has(item.promptId);
+  elements.lightboxDetails.innerHTML = `<div class="lightbox-detail-head"><span class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span><button type="button" class="secondary-button lightbox-select" data-prompt-id="${escapeHtml(item.promptId)}"><i data-lucide="${selected ? "check" : "square"}"></i>${selected ? "Selected" : "Select image"}</button></div><section><h3>Image details</h3><dl><div><dt>Theme</dt><dd>${escapeHtml(item.themeColumn || item.week || "Manual")}</dd></div><div><dt>Format</dt><dd>${escapeHtml(session ? `${session.format} · ${session.quality}` : item.model)}</dd></div><div><dt>Cost</dt><dd>$${item.costUsd.toFixed(3)}</dd></div></dl></section><section><h3>Session</h3><dl><div><dt>Progress</dt><dd>${session ? `${session.completedCount} of ${session.totalPrompts} images` : "Saved image"}</dd></div><div><dt>Mode</dt><dd>${escapeHtml(item.runMode)}</dd></div><div><dt>Created</dt><dd>${escapeHtml(formatDate(item.createdAt))}</dd></div></dl></section>`;
+  elements.lightboxDetails.querySelector<HTMLButtonElement>(".lightbox-select")?.addEventListener("click", () => {
+    if (librarySelectedPromptIds.has(item.promptId)) librarySelectedPromptIds.delete(item.promptId);
+    else librarySelectedPromptIds.add(item.promptId);
+    updateLibrarySelection();
+    void showLightboxAt(lightboxIndex);
+  });
   try {
     const { dataUrl } = await app.rpc!.request.getHistoryImage({ assetId: item.assetId! });
     elements.lightboxImage.src = dataUrl;
@@ -2270,24 +2355,15 @@ async function showLightboxAt(index: number): Promise<void> {
 
 function renderHistoryCard(item: HistoryItem): string {
   return `<article class="history-card" data-prompt-id="${item.promptId}">
+      <label class="history-select"><input class="library-select-item" type="checkbox" data-prompt-id="${escapeHtml(item.promptId)}" ${librarySelectedPromptIds.has(item.promptId) ? "checked" : ""} /><span class="sr-only">Select this image</span></label>
       <button type="button" class="history-image preview-history" ${item.assetId ? `data-asset-id="${escapeHtml(item.assetId)}" data-prompt-id="${escapeHtml(item.promptId)}"` : "disabled"} aria-label="Preview image">
         <div class="image-placeholder"><i data-lucide="${item.hasImage ? "loader-circle" : "image-off"}" aria-hidden="true"></i><strong>${item.hasImage ? "Loading preview" : "No image saved"}</strong><small>${item.hasImage ? "Stored locally" : "Prompt retained from this session"}</small></div>
       </button>
       <div class="history-card-body">
         <div class="history-card-meta"><span>${formatDate(item.createdAt)}</span><span class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div>
         <p class="history-prompt">${escapeHtml(item.promptText)}</p>
-        <div class="history-details">
-          <div><span>Model</span><strong title="${escapeHtml(item.model)}">${escapeHtml(item.model)}</strong></div>
-          <div><span>Theme / week</span><strong title="${escapeHtml(item.themeColumn)}">${escapeHtml(item.themeColumn || item.week || "Manual")}</strong></div>
-          <div><span>Tokens</span><strong>${formatNumber(item.inputTokens + item.outputTokens)}</strong></div>
-          <div><span>Tracked cost</span><strong>$${item.costUsd.toFixed(3)}</strong></div>
-        </div>
-        <div class="history-actions">
-          <button class="secondary-button preview-history" data-prompt-id="${item.promptId}" ${item.hasImage && item.assetId ? "" : "disabled"}>Preview</button>
-          <button class="secondary-button reveal-history" data-asset-id="${item.assetId ?? ""}" ${item.assetId ? "" : "disabled"}>Show file</button>
-          <button class="secondary-button reveal-session" data-session-id="${item.sessionId}">Open session folder</button>
-          <button class="secondary-button danger-button delete-history" data-prompt-id="${item.promptId}">Delete</button>
-        </div>
+        <p class="history-card-summary" title="${escapeHtml(item.model)} · ${escapeHtml(item.themeColumn || item.week || "Manual")}">${escapeHtml(item.themeColumn || item.week || "Manual")} · $${item.costUsd.toFixed(3)}</p>
+        <details class="action-menu history-card-menu"><summary aria-label="Image options" title="Image options"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Image options</p><button class="menu-action reveal-history" data-asset-id="${item.assetId ?? ""}" ${item.assetId ? "" : "disabled"}><i data-lucide="folder-open"></i>Show file in folder</button><button class="menu-action reveal-session" data-session-id="${item.sessionId}"><i data-lucide="folder-open"></i>Open session folder</button><button class="menu-action danger-button delete-history" data-prompt-id="${item.promptId}"><i data-lucide="trash-2"></i>Delete this image</button></div></details>
       </div>
     </article>`;
 }
@@ -2295,16 +2371,11 @@ function renderHistoryCard(item: HistoryItem): string {
 function renderHistory(animateCards = false): void {
   historyImageObserver?.disconnect();
   const visible = filteredHistoryItems();
+  librarySelectedPromptIds = new Set([...librarySelectedPromptIds].filter((promptId) => historyItems.some((item) => item.promptId === promptId)));
   elements.clearHistory.disabled = historyItems.length === 0;
+  updateLibrarySelection();
   elements.historyCount.textContent = `${visible.length} item${visible.length === 1 ? "" : "s"}`;
-  if (!visible.length) {
-    const query = elements.historySearch.value.trim();
-    elements.historyList.innerHTML = `<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="${query ? "search" : "images"}"></i></span><strong>${query ? "No matching history" : "History is empty"}</strong><small>${query ? "Try a broader search." : "Submitted prompts and generated images will appear here."}</small></div>`;
-    refreshIcons();
-    return;
-  }
-
-  const groups = new Map<string, { title: string; subtitle: string; items: HistoryItem[] }>();
+  const groups = new Map<string, { id: string; title: string; subtitle: string; items: HistoryItem[]; sessions: SessionSummary[]; run?: RunSummary }>();
   for (const item of visible) {
     const key = item.parentRunId ?? item.sessionId;
     const existing = groups.get(key);
@@ -2315,16 +2386,61 @@ function renderHistory(animateCards = false): void {
     const wave = item.waveIndex != null ? ` · wave ${item.waveIndex + 1}` : "";
     groups.set(key, {
       title: item.parentRunId ? `Run ${item.parentRunId.slice(0, 8)}` : `Session ${item.sessionId.slice(0, 8)}`,
-      subtitle: `${item.runMode}${wave}`,
+      subtitle: `${librarySessions.get(item.sessionId)?.status ?? item.status} · ${item.runMode}${wave}`,
       items: [item],
+      id: key,
+      sessions: [],
+      run: item.parentRunId ? libraryRuns.get(item.parentRunId) : undefined,
     });
   }
 
-  elements.historyList.innerHTML = [...groups.values()].map((group) => `
-    <section class="history-group">
-      <header class="history-group-head"><strong>${escapeHtml(group.title)}</strong><span>${escapeHtml(group.subtitle)} · ${group.items.length} item${group.items.length === 1 ? "" : "s"}</span></header>
-      <div class="history-grid-inner">${group.items.map(renderHistoryCard).join("")}</div>
-    </section>`).join("");
+  if (!elements.historySearch.value.trim()) {
+    for (const session of librarySessions.values()) {
+      const key = session.parentRunId ?? session.sessionId;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.sessions.push(session);
+        continue;
+      }
+      const run = session.parentRunId ? libraryRuns.get(session.parentRunId) : undefined;
+      groups.set(key, {
+        id: key,
+        title: session.parentRunId ? `Run ${session.parentRunId.slice(0, 8)}` : `Session ${session.sessionId.slice(0, 8)}`,
+        subtitle: `${session.status} · ${session.runMode}`,
+        items: [],
+        sessions: [session],
+        run,
+      });
+    }
+  }
+
+  if (!groups.size) {
+    const query = elements.historySearch.value.trim();
+    elements.historyList.innerHTML = `<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="${query ? "search" : "images"}"></i></span><strong>${query ? "No matching library items" : "Library is empty"}</strong><small>${query ? "Try a broader search." : "Sessions and generated images will appear here."}</small></div>`;
+    refreshIcons();
+    return;
+  }
+
+  elements.historyList.innerHTML = [...groups.values()].map((group) => {
+    const first = group.items[0];
+    const sessions = group.sessions.length ? group.sessions : group.items.map((item) => librarySessions.get(item.sessionId)).filter((session): session is SessionSummary => Boolean(session));
+    const activeSession = sessions.find((session) => ["pending", "processing"].includes(session.status));
+    const primarySession = activeSession ?? sessions[0] ?? (first ? librarySessions.get(first.sessionId) : undefined);
+    if (!primarySession) return "";
+    const run = group.run;
+    const canResume = sessions.some((session) => session.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(session.status));
+    const canContinue = Boolean(run?.waveStrategy === "guided" && run.sessions.some((session) => session.status === "pending"));
+    const exportAction = run
+      ? `<button type="button" class="secondary-button run-export" data-run-id="${escapeHtml(run.runId)}">Export ZIP</button>`
+      : `<button type="button" class="secondary-button session-export" data-session-id="${escapeHtml(primarySession.sessionId)}">Export ZIP</button>`;
+    const imagesHtml = group.items.length
+      ? `<div class="history-grid-inner">${group.items.map(renderHistoryCard).join("")}</div>`
+      : '<p class="empty-inline">No images saved for this session yet.</p>';
+    return `<section class="history-group">
+      <header class="history-group-head"><button type="button" class="library-group-toggle" data-group-id="${escapeHtml(group.id)}" aria-expanded="${collapsedLibraryGroups.has(group.id) ? "false" : "true"}"><i data-lucide="${collapsedLibraryGroups.has(group.id) ? "chevron-right" : "chevron-down"}" aria-hidden="true"></i><span><strong>${escapeHtml(group.title)}</strong><small>${escapeHtml(group.subtitle)} · ${group.items.length} image${group.items.length === 1 ? "" : "s"}</small></span></button><div class="history-group-actions"><details class="action-menu"><summary aria-label="Run options" title="Run options"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Run options</p>${group.items.length ? `<button type="button" class="menu-action preview-library-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="images"></i>Preview and details</button>` : ""}${exportAction.replace("secondary-button", "menu-action").replace(">Export ZIP<", "><i data-lucide=\"download\"></i>Download all images<")}${group.items.length ? `<button type="button" class="menu-action library-select-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="check"></i>Select all images</button>` : ""}${activeSession ? `<button type="button" class="menu-action session-live" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="images"></i>Open progress</button>${activeSession.runMode === "batch" ? `<button type="button" class="menu-action session-check" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="refresh-cw"></i>Check for updates</button>` : ""}<button type="button" class="menu-action danger-button session-cancel" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="x"></i>Cancel this run</button>` : ""}${canResume ? `<button type="button" class="menu-action ${run ? "run-resume" : "session-resume"}" data-${run ? "run-id" : "session-id"}="${escapeHtml(run?.runId ?? primarySession.sessionId)}"><i data-lucide="refresh-cw"></i>Resume unfinished images</button>` : ""}${canContinue ? `<button type="button" class="menu-action run-continue" data-run-id="${escapeHtml(run!.runId)}"><i data-lucide="images"></i>Continue next batch</button>` : ""}</div></details></div></header>
+      <div class="library-group-content${collapsedLibraryGroups.has(group.id) ? " hidden" : ""}"${collapsedLibraryGroups.has(group.id) ? " hidden" : ""}><div class="session-detail-panel hidden" data-detail-for="${escapeHtml(primarySession.sessionId)}" hidden></div>${imagesHtml}</div>
+    </section>`;
+  }).join("");
   refreshIcons();
   if (animateCards) enterVisibleItems(elements.historyList, ".history-card");
 
@@ -2366,6 +2482,46 @@ function renderHistory(animateCards = false): void {
       if (index >= 0) void openLightbox(items, index);
     });
   });
+  elements.historyList.querySelectorAll<HTMLInputElement>(".library-select-item").forEach((input) => {
+    input.addEventListener("change", () => {
+      const promptId = input.dataset["promptId"];
+      if (!promptId) return;
+      if (input.checked) librarySelectedPromptIds.add(promptId);
+      else librarySelectedPromptIds.delete(promptId);
+      updateLibrarySelection();
+    });
+  });
+  elements.historyList.querySelectorAll<HTMLButtonElement>(".library-select-group").forEach((button) => {
+    button.addEventListener("click", () => {
+      const groupId = button.dataset["groupId"];
+      if (!groupId) return;
+      const items = visible.filter((item) => (item.parentRunId ?? item.sessionId) === groupId);
+      const selectAll = items.some((item) => !librarySelectedPromptIds.has(item.promptId));
+      for (const item of items) {
+        if (selectAll) librarySelectedPromptIds.add(item.promptId);
+        else librarySelectedPromptIds.delete(item.promptId);
+      }
+      renderHistory();
+    });
+  });
+  elements.historyList.querySelectorAll<HTMLButtonElement>(".preview-library-group").forEach((button) => {
+    button.addEventListener("click", () => {
+      const groupId = button.dataset["groupId"];
+      const items = visible.filter((item) => (item.parentRunId ?? item.sessionId) === groupId);
+      if (items.length) void openLightbox(items, 0);
+    });
+  });
+  elements.historyList.querySelectorAll<HTMLButtonElement>(".library-group-toggle").forEach((button) => {
+    button.addEventListener("click", () => {
+      const groupId = button.dataset["groupId"];
+      if (!groupId) return;
+      if (collapsedLibraryGroups.has(groupId)) collapsedLibraryGroups.delete(groupId);
+      else collapsedLibraryGroups.add(groupId);
+      localStorage.setItem(LIBRARY_COLLAPSED_GROUPS_STORAGE_KEY, JSON.stringify([...collapsedLibraryGroups]));
+      renderHistory();
+    });
+  });
+  bindSessionListHandlers(elements.historyList);
   elements.historyList.querySelectorAll<HTMLButtonElement>(".reveal-history").forEach((button) => {
     button.addEventListener("click", async () => {
       const assetId = button.dataset["assetId"];
@@ -2420,7 +2576,14 @@ async function loadHistory(): Promise<void> {
   elements.historyList.innerHTML = '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="loader-circle"></i></span><strong>Loading history…</strong><small>Reading locally stored prompts and images.</small></div>';
   refreshIcons();
   try {
-    historyItems = await app.rpc!.request.listHistory({});
+    const [items, sessions, runs] = await Promise.all([
+      app.rpc!.request.listHistory({}),
+      app.rpc!.request.listSessions({}),
+      app.rpc!.request.listRuns({}).catch(() => [] as RunSummary[]),
+    ]);
+    historyItems = items;
+    librarySessions = new Map(sessions.map((item) => [item.sessionId, item]));
+    libraryRuns = new Map(runs.map((item) => [item.runId, item]));
     renderHistory(true);
   } catch (error) {
     elements.historyList.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load history")}</div>`;
@@ -2538,21 +2701,14 @@ elements.converterRulesToggle.addEventListener("click", () => toggleConverterSec
 elements.converterOptionsToggle.addEventListener("click", () => toggleConverterSection(elements.converterOptionsToggle, elements.converterOptions));
 elements.converterBrowse.addEventListener("click", () => elements.converterFile.click());
 elements.converterDropzone.addEventListener("click", () => elements.converterFile.click());
+elements.converterDropzone.addEventListener("pointerenter", () => armClipboardHistoryTarget("converter"));
+elements.converterDropzone.addEventListener("focusin", () => armClipboardHistoryTarget("converter"));
 elements.converterDropzone.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); elements.converterFile.click(); } });
 elements.converterFile.addEventListener("change", () => { void queueConverterFiles(Array.from(elements.converterFile.files ?? [])); elements.converterFile.value = ""; });
 ["dragenter", "dragover"].forEach((name) => elements.converterDropzone.addEventListener(name, (event) => { event.preventDefault(); elements.converterDropzone.classList.add("dragging"); }));
 ["dragleave", "drop"].forEach((name) => elements.converterDropzone.addEventListener(name, (event) => { event.preventDefault(); elements.converterDropzone.classList.remove("dragging"); }));
 elements.converterDropzone.addEventListener("drop", (event) => void queueConverterFiles(Array.from(event.dataTransfer?.files ?? [])));
-elements.converterPaste.addEventListener("click", async () => {
-  elements.converterPaste.disabled = true;
-  try {
-    const result = await app.rpc!.request.readClipboardImages({ maxCount: Math.max(1, 100 - converterQueue.length) });
-    if (result.error || !result.images.length) throw new Error(result.error || "Clipboard has no image.");
-    for (const image of result.images) converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "clipboard", name: image.filename || "clipboard.png", dataBase64: image.dataBase64, previewUrl: `data:${image.mimeType};base64,${image.dataBase64}` });
-    renderConverterQueue();
-  } catch (error) { showToast(error instanceof Error ? error.message : "Could not paste image.", true); }
-  finally { elements.converterPaste.disabled = false; }
-});
+elements.converterPaste.addEventListener("click", () => void pasteConverterImages("paste_button"));
 elements.converterFromSession.addEventListener("click", () => void loadConverterSessionSources());
 elements.converterSessionCards.addEventListener("click", () => { converterSessionLayout = "cards"; renderConverterSessionSources(); });
 elements.converterSessionListMode.addEventListener("click", () => { converterSessionLayout = "list"; renderConverterSessionSources(); });
@@ -2677,7 +2833,7 @@ elements.waveStrategy.addEventListener("change", () => {
 elements.addWave.addEventListener("click", () => {
   const donor = [...waveSizes].map((size, index) => ({ size, index })).reverse().find(({ size }) => size > 1);
   if (!donor) { showToast("A one-prompt plan cannot be split further.", true); return; }
-  waveSizes[donor.index] -= 1;
+  waveSizes[donor.index] = donor.size - 1;
   waveSizes.push(1);
   updateWaveUi();
 });
@@ -2686,6 +2842,8 @@ elements.quality.addEventListener("change", () => void refreshEstimate());
 elements.size.addEventListener("change", () => void refreshEstimate());
 
 elements.referenceDock.addEventListener("click", () => elements.referenceFile.click());
+elements.referenceControl.addEventListener("pointerenter", () => armClipboardHistoryTarget("reference"));
+elements.referenceControl.addEventListener("focusin", () => armClipboardHistoryTarget("reference"));
 elements.referenceFile.addEventListener("change", () => {
   const files = [...(elements.referenceFile.files ?? [])];
   if (files.length) void attachReferenceFiles(files);
@@ -2733,6 +2891,101 @@ function isCsvPasteTarget(): boolean {
   return false;
 }
 
+function updateLibrarySelection(): void {
+  const count = librarySelectedPromptIds.size;
+  elements.libraryDownloadSelected.disabled = count === 0;
+  elements.libraryDeleteSelected.disabled = count === 0;
+  elements.librarySelection.textContent = count ? `${count} image${count === 1 ? "" : "s"} selected` : "No images selected";
+}
+
+function isReferencePasteTarget(): boolean {
+  const active = document.activeElement;
+  return (active instanceof Node && elements.referenceControl.contains(active))
+    || elements.referenceControl.matches(":hover")
+    || activeClipboardHistoryTarget() === "reference";
+}
+
+function isConverterPasteTarget(): boolean {
+  return (document.querySelector("[data-view='converter']")?.classList.contains("active") ?? false)
+    || activeClipboardHistoryTarget() === "converter";
+}
+
+function armClipboardHistoryTarget(target: "reference" | "converter"): void {
+  clipboardHistoryTarget = target;
+  clipboardHistoryTargetExpiresAt = Date.now() + 30_000;
+}
+
+function activeClipboardHistoryTarget(): "reference" | "converter" | null {
+  if (Date.now() <= clipboardHistoryTargetExpiresAt) return clipboardHistoryTarget;
+  clipboardHistoryTarget = null;
+  return null;
+}
+
+function imageFilesFromTransfer(transfer: DataTransfer | null): File[] {
+  if (!transfer) return [];
+  const files = [...transfer.files];
+  if (!files.length) {
+    for (const item of [...transfer.items]) {
+      if (item.kind !== "file" || !item.type.startsWith("image/")) continue;
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+  }
+  return files
+    .filter((file) => file.size > 0 && (file.type.startsWith("image/") || /\.(png|jpe?g|webp)$/i.test(file.name)))
+    .map((file, index) => file.name ? file : new File([file], `clipboard-${Date.now()}-${index + 1}.png`, { type: file.type || "image/png" }));
+}
+
+async function imageFilesFromBrowserClipboard(maxCount: number): Promise<File[]> {
+  if (!navigator.clipboard?.read) return [];
+  const items = await navigator.clipboard.read();
+  const files: File[] = [];
+  for (const item of items) {
+    const mimeType = item.types.find((type) => type.startsWith("image/"));
+    if (!mimeType) continue;
+    const blob = await item.getType(mimeType);
+    if (blob.size > 0) files.push(new File([blob], `clipboard-${Date.now()}-${files.length + 1}.${mimeType.split("/")[1] || "png"}`, { type: mimeType }));
+    if (files.length >= maxCount) break;
+  }
+  return files;
+}
+
+async function pasteConverterImages(via: string, transfer?: DataTransfer | null): Promise<void> {
+  const startedAt = performance.now();
+  const remaining = Math.max(1, 100 - converterQueue.length);
+  elements.converterPaste.disabled = true;
+  logUi("ui_converter_paste_start", { via, remaining });
+  try {
+    const eventFiles = imageFilesFromTransfer(transfer ?? null);
+    if (eventFiles.length) {
+      await queueConverterFiles(eventFiles, "clipboard");
+      logUi("ui_converter_paste_event", { via, found: eventFiles.length, durationMs: Math.round(performance.now() - startedAt) });
+      return;
+    }
+    try {
+      const files = await imageFilesFromBrowserClipboard(remaining);
+      if (files.length) {
+        await queueConverterFiles(files, "clipboard");
+        logUi("ui_converter_paste_browser", { via, found: files.length, durationMs: Math.round(performance.now() - startedAt) });
+        return;
+      }
+    } catch (error) {
+      logUi("ui_converter_paste_browser", { ok: false, via, message: error instanceof Error ? error.message : "unavailable" });
+    }
+    const result = await app.rpc!.request.readClipboardImages({ maxCount: remaining });
+    if (result.error || !result.images.length) throw new Error(result.error || "Clipboard has no image.");
+    for (const image of result.images) converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "clipboard", name: image.filename || "clipboard.png", dataBase64: image.dataBase64, previewUrl: `data:${image.mimeType};base64,${image.dataBase64}` });
+    renderConverterQueue();
+    logUi("ui_converter_paste_native", { ok: true, via, found: result.images.length, durationMs: Math.round(performance.now() - startedAt) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not paste image.";
+    showToast(message, true);
+    logUi("ui_converter_paste_native", { ok: false, via, message, durationMs: Math.round(performance.now() - startedAt) });
+  } finally {
+    elements.converterPaste.disabled = false;
+  }
+}
+
 /**
  * CSV-only paste. Never reads browser clipboard (no permission prompts, no fake image.png).
  * 1) text plain/csv from the Ctrl+V paste event when present
@@ -2776,10 +3029,21 @@ async function pasteCsvOnly(via: string, transfer?: DataTransfer | null): Promis
 window.addEventListener("paste", (event) => {
   void (async () => {
     if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+    if (isConverterPasteTarget()) {
+      event.preventDefault();
+      await pasteConverterImages("converter_ctrl_v", event.clipboardData);
+      return;
+    }
+    if (isReferencePasteTarget()) {
+      event.preventDefault();
+      const files = imageFilesFromTransfer(event.clipboardData);
+      logUi("ui_reference_paste_event", { found: files.length, via: "reference_hover_ctrl_v" });
+      if (files.length) await attachReferenceFiles(files);
+      else await pasteReferencesFromClipboard("reference_hover_ctrl_v");
+      return;
+    }
     if (!isCsvPasteTarget()) return;
 
-    // Ctrl+V is reserved for CSV text while the CSV panel has focus or pointer context.
-    // Reference images are pasted only through the explicit Paste button in that section.
     event.preventDefault();
     await pasteCsvOnly("csv_hover_ctrl_v", event.clipboardData);
   })();
@@ -3054,24 +3318,41 @@ function base64PreviewUrl(dataBase64: string, mimeType: string): string {
   }
 }
 
-async function pasteReferencesFromClipboard(): Promise<void> {
+async function pasteReferencesFromClipboard(via = "paste_button"): Promise<void> {
+  if (referencePasteInFlight) {
+    logUi("ui_reference_paste_ignored", { reason: "upload_in_progress", via });
+    return;
+  }
+  const startedAt = performance.now();
   const remaining = referenceLimit() - referenceImages.length;
   if (remaining <= 0) {
     showToast("You can attach at most 16 reference images.", true);
     return;
   }
-  elements.pasteReference.disabled = true;
-  elements.referenceDock.setAttribute("aria-busy", "true");
-  logUi("ui_paste_images_click", { remaining });
+  referencePasteInFlight = true;
+  setReferencePasteBusy(true, "Reading clipboard…", "Checking for reference images…");
+  logUi("ui_paste_images_start", { remaining, via });
   try {
     if (!app.rpc) throw new Error("App is not ready yet.");
+    try {
+      const files = await imageFilesFromBrowserClipboard(remaining);
+      if (files.length) {
+        logUi("ui_paste_images_browser", { found: files.length, via });
+        await attachReferenceFiles(files, true);
+        return;
+      }
+      logUi("ui_paste_images_browser", { found: 0, via });
+    } catch (error) {
+      logUi("ui_paste_images_browser", { ok: false, via, message: error instanceof Error ? error.message : "unavailable" });
+    }
     const result = await app.rpc.request.readClipboardImages({ maxCount: remaining });
     if (result.error || !result.images.length) {
       showToast(result.error || "Clipboard has no image.", true);
-      logUi("ui_paste_images_native", { ok: false, error: result.error });
+      logUi("ui_paste_images_native", { ok: false, error: result.error, via });
       return;
     }
     let uploaded = 0;
+    setReferencePasteBusy(true, `Uploading ${result.images.length} reference image${result.images.length === 1 ? "" : "s"}…`);
     for (const image of result.images) {
       if (referenceImages.length >= referenceLimit()) break;
       if (!image.dataBase64 || image.dataBase64.length < 8) continue;
@@ -3104,18 +3385,18 @@ async function pasteReferencesFromClipboard(): Promise<void> {
     } else {
       showToast("Clipboard image was empty or could not be uploaded.", true);
     }
-    logUi("ui_paste_images_native", { ok: uploaded > 0, uploaded, found: result.images.length });
+    logUi("ui_paste_images_native", { ok: uploaded > 0, uploaded, found: result.images.length, via, durationMs: Math.round(performance.now() - startedAt) });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not paste images.";
     showToast(message, true);
-    logUi("ui_paste_images_native", { ok: false, message });
+    logUi("ui_paste_images_native", { ok: false, message, via, durationMs: Math.round(performance.now() - startedAt) });
   } finally {
-    elements.pasteReference.disabled = false;
-    elements.referenceDock.removeAttribute("aria-busy");
+    referencePasteInFlight = false;
+    setReferencePasteBusy(false);
   }
 }
 
-elements.pasteReference.addEventListener("click", () => void pasteReferencesFromClipboard());
+elements.pasteReference.addEventListener("click", () => void pasteReferencesFromClipboard("paste_button"));
 elements.pickReference.addEventListener("click", () => elements.referenceFile.click());
 
 elements.exportButton.addEventListener("click", async () => {
@@ -3134,6 +3415,22 @@ elements.exportButton.addEventListener("click", async () => {
     showToast(error instanceof Error ? error.message : "Could not export session", true);
   } finally {
     elements.exportButton.disabled = false;
+  }
+});
+elements.previewSession.addEventListener("click", async () => {
+  if (!session) return;
+  elements.previewSession.disabled = true;
+  try {
+    const items = (await app.rpc!.request.listHistory({})).filter((item) => item.sessionId === session!.sessionId && item.hasImage);
+    if (!items.length) {
+      showToast("No saved images are ready to preview yet.", true);
+      return;
+    }
+    await openLightbox(items, 0);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not load session preview.", true);
+  } finally {
+    syncActionState();
   }
 });
 elements.refreshSessions.addEventListener("click", () => void loadSessions());
@@ -3157,21 +3454,51 @@ elements.usageOpenKeys.addEventListener("click", () => elements.manageKeys.click
 elements.refreshHistory.addEventListener("click", () => void loadHistory());
 elements.historySearch.addEventListener("input", () => renderHistory(false));
 elements.historyFilter.addEventListener("change", () => renderHistory(false));
+elements.libraryDownloadSelected.addEventListener("click", async () => {
+  const assetIds = historyItems.filter((item) => librarySelectedPromptIds.has(item.promptId) && item.assetId && item.hasImage).map((item) => item.assetId!);
+  if (!assetIds.length) return;
+  elements.libraryDownloadSelected.disabled = true;
+  try {
+    const result = await app.rpc!.request.exportSelectedHistoryZip({ assetIds, pickPath: true });
+    if (result.filePath) {
+      showToast(`${assetIds.length} image${assetIds.length === 1 ? "" : "s"} downloaded as a ZIP.`);
+      await loadExports();
+    }
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not download selected images.", true);
+  } finally {
+    updateLibrarySelection();
+  }
+});
+elements.libraryDeleteSelected.addEventListener("click", async () => {
+  const promptIds = [...librarySelectedPromptIds];
+  if (!promptIds.length || !window.confirm(`Delete ${promptIds.length} selected image${promptIds.length === 1 ? "" : "s"} from this device? The session stays in Library.`)) return;
+  elements.libraryDeleteSelected.disabled = true;
+  try {
+    for (const promptId of promptIds) await app.rpc!.request.deleteHistoryItem({ promptId });
+    librarySelectedPromptIds.clear();
+    await loadHistory();
+    showToast(`${promptIds.length} image${promptIds.length === 1 ? "" : "s"} deleted.`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not delete selected images.", true);
+    updateLibrarySelection();
+  }
+});
 elements.lightboxClose.addEventListener("click", () => closeLightbox());
 elements.lightboxPrev.addEventListener("click", () => void showLightboxAt(lightboxIndex - 1));
 elements.lightboxNext.addEventListener("click", () => void showLightboxAt(lightboxIndex + 1));
 elements.lightbox.addEventListener("click", (event) => {
   if (event.target === elements.lightbox) closeLightbox();
 });
+document.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const activeMenu = target?.closest<HTMLDetailsElement>(".action-menu");
+  document.querySelectorAll<HTMLDetailsElement>(".action-menu[open]").forEach((menu) => {
+    if (menu !== activeMenu) menu.open = false;
+  });
+  if (target?.closest(".menu-action")) activeMenu?.removeAttribute("open");
+});
 window.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "v" && document.querySelector("[data-view='converter']")?.classList.contains("active")) {
-    const target = event.target as HTMLElement | null;
-    if (!target || !["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
-      event.preventDefault();
-      elements.converterPaste.click();
-      return;
-    }
-  }
   if (elements.lightbox.hidden) return;
   if (event.key === "Escape") closeLightbox();
   if (event.key === "ArrowLeft") void showLightboxAt(lightboxIndex - 1);

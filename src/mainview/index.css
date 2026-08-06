@@ -952,6 +952,21 @@ textarea {
   opacity: 1
 }
 
+.reference-control.uploading .reference-dock {
+  background: linear-gradient(100deg, var(--hover) 30%, var(--muted) 50%, var(--hover) 70%);
+  background-size: 240% 100%;
+  animation: reference-uploading 1.1s linear infinite
+}
+
+.reference-control.uploading .reference-dock b {
+  color: var(--text2)
+}
+
+@keyframes reference-uploading {
+  from { background-position: 100% 0 }
+  to { background-position: -140% 0 }
+}
+
 .reference-dock span {
   min-width: 0;
   flex: 1
@@ -1633,17 +1648,37 @@ textarea {
 }
 
 .history-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px
+  display: block
 }
 
 .history-card {
   min-width: 0;
+  position: relative;
   background: var(--muted);
   border: 1px solid var(--subtle);
   border-radius: var(--r2);
-  overflow: hidden
+  overflow: visible
+}
+
+.history-select {
+  position: absolute;
+  z-index: 1;
+  top: 8px;
+  left: 8px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--side) 92%, transparent);
+}
+
+.history-select input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent)
 }
 
 .history-image {
@@ -1651,7 +1686,9 @@ textarea {
   position: relative;
   background: var(--side);
   display: grid;
-  place-items: center
+  place-items: center;
+  overflow: hidden;
+  border-radius: calc(var(--r2) - 1px) calc(var(--r2) - 1px) 0 0
 }
 
 .history-image img {
@@ -1672,7 +1709,8 @@ textarea {
 }
 
 .history-card-body {
-  padding: 11px
+  position: relative;
+  padding: 11px 42px 11px 11px
 }
 
 .history-card-meta {
@@ -1683,39 +1721,23 @@ textarea {
 }
 
 .history-prompt {
-  height: 38px;
+  display: -webkit-box;
+  min-height: 34px;
+  max-height: 34px;
   overflow: hidden;
   margin: 9px 0;
-  font-size: 12px
+  font-size: 12px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2
 }
 
-.history-details {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px
-}
-
-.history-details span,
-.history-details strong {
-  display: block;
-  white-space: nowrap;
+.history-card-summary {
+  margin: 0;
   overflow: hidden;
-  text-overflow: ellipsis
-}
-
-.history-details span {
   color: var(--text3);
-  font-size: 9px
-}
-
-.history-details strong {
-  font-size: 10px
-}
-
-.history-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 10px
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap
 }
 
 .history-actions button {
@@ -2698,24 +2720,140 @@ button:disabled {
 }
 
 .history-group {
-  margin-bottom: 18px
+  margin-bottom: 20px;
+  padding: 0 2px 2px;
+  border: 1px solid var(--subtle);
+  border-radius: var(--r2);
+  background: color-mix(in srgb, var(--muted) 74%, var(--side))
 }
+
+.history-group:has(.action-menu[open]),
+.history-card:has(.action-menu[open]) { z-index: 4 }
 
 .history-group-head {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  align-items: baseline;
-  margin: 0 0 10px;
-  padding-bottom: 6px;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 11px;
   border-bottom: 1px solid var(--subtle)
 }
 
-.history-group-head strong {
-  font: 700 14px Manrope, sans-serif
+.library-group-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left
 }
 
-.history-group-head span {
+.library-group-toggle>i { width: 16px; height: 16px; flex: 0 0 auto; color: var(--text3) }
+.library-group-toggle>span { display: grid; min-width: 0; gap: 2px }
+.library-group-toggle strong { overflow: hidden; font: 700 13px Manrope, sans-serif; text-overflow: ellipsis; white-space: nowrap }
+.library-group-toggle small { overflow: hidden; color: var(--text3); font-size: 11px; text-overflow: ellipsis; white-space: nowrap }
+.library-group-toggle:hover strong { color: var(--accentText) }
+.library-group-content { padding: 12px }
+.library-group-content.hidden { display: none }
+
+.history-group .history-grid-inner {
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px
+}
+
+.history-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end
+}
+
+.history-group-actions .secondary-button {
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 10px
+}
+
+.history-group-actions .icon-button,
+.library-head-actions .icon-button,
+.action-menu>summary {
+  display: grid;
+  width: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  place-items: center
+}
+
+.action-menu {
+  position: relative;
+  display: inline-block
+}
+
+.action-menu>summary {
+  box-sizing: border-box;
+  list-style: none;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  border-radius: var(--r1);
+  color: var(--text2)
+}
+
+.action-menu>summary::-webkit-details-marker { display: none }
+.action-menu>summary:hover { background: var(--hover); color: var(--text) }
+.action-menu-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  min-width: 190px;
+  max-width: min(260px, calc(100vw - 28px));
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--r1);
+  background: var(--raised);
+  box-shadow: 0 12px 28px color-mix(in srgb, #000 32%, transparent)
+}
+
+.action-menu-label {
+  margin: 2px 7px 5px;
+  color: var(--text3);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase
+}
+
+.history-card-menu { position: absolute; right: 10px; bottom: 10px }
+.history-card-menu .action-menu-popover { top: auto; bottom: calc(100% + 6px) }
+.menu-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text2);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.25;
+  text-align: left
+}
+
+.menu-action:disabled { cursor: not-allowed; opacity: .45 }
+
+.menu-action:hover { background: var(--hover); color: var(--text) }
+.menu-action i { width: 14px; height: 14px }
+.menu-action.danger-button { color: var(--danger) }
+
+.history-selection {
   color: var(--text3);
   font-size: 11px
 }
@@ -2769,10 +2907,21 @@ button:disabled {
 }
 
 .lightbox-frame {
-  max-width: min(92vw, 1100px);
+  min-width: 0;
   max-height: 88vh;
   margin: 0;
   text-align: center
+}
+
+.lightbox-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 300px);
+  width: min(92vw, 1220px);
+  max-height: 88vh;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #11161d
 }
 
 .lightbox-frame img {
@@ -2784,11 +2933,39 @@ button:disabled {
 }
 
 .lightbox-frame figcaption {
-  margin-top: 10px;
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
   color: #d7dce2;
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.4
 }
+
+.lightbox-frame figcaption strong { color: #fff; font-size: 12px }
+
+.lightbox-details {
+  overflow: auto;
+  padding: 16px;
+  border-left: 1px solid rgba(255, 255, 255, .12);
+  background: #171e27;
+  color: #d7dce2
+}
+
+.lightbox-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 18px
+}
+
+.lightbox-details .secondary-button { min-height: 32px; padding: 5px 8px; font-size: 11px }
+.lightbox-details section + section { margin-top: 20px }
+.lightbox-details h3 { margin: 0 0 9px; color: #fff; font: 700 13px Manrope, sans-serif }
+.lightbox-details dl { display: grid; gap: 8px; margin: 0 }
+.lightbox-details dl div { display: flex; justify-content: space-between; gap: 12px }
+.lightbox-details dt { color: #9ba8b8; font-size: 11px }
+.lightbox-details dd { margin: 0; color: #fff; font-size: 11px; text-align: right }
 
 .lightbox-close,
 .lightbox-nav {
@@ -2813,6 +2990,14 @@ button:disabled {
   .workspace-grid {
     grid-template-columns: minmax(350px, 1fr) 280px
   }
+
+  .lightbox-content { grid-template-columns: minmax(0, 1fr) 240px }
+}
+
+@media(max-width:760px) {
+  .lightbox { grid-template-columns: 36px 1fr 36px; padding: 10px; gap: 4px }
+  .lightbox-content { grid-template-columns: 1fr; max-height: 92vh }
+  .lightbox-details { max-height: 210px; border-top: 1px solid rgba(255, 255, 255, .12); border-left: 0 }
 }
 
 .run-group {

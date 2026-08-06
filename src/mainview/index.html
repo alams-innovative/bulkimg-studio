@@ -29,12 +29,10 @@
           title="Generator"><i data-lucide="layout-grid"></i><span>Generator</span></button>
         <button id="nav-converter" class="nav-item" data-view="converter" title="Convert images"><i
             data-lucide="repeat-2"></i><span>Converter</span></button>
-        <button id="nav-sessions" class="nav-item" data-view="sessions" title="Sessions"><i
-            data-lucide="clock-3"></i><span>Sessions</span></button>
         <button id="nav-usage" class="nav-item" data-view="usage" title="Usage and limits"><i
             data-lucide="database"></i><span>Usage</span></button>
-        <button id="nav-history" class="nav-item" data-view="history" title="History"><i
-            data-lucide="images"></i><span>History</span></button>
+        <button id="nav-history" class="nav-item" data-view="history" title="Library"><i
+            data-lucide="images"></i><span>Library</span></button>
         <button id="nav-exports" class="nav-item" data-view="exports" title="Exports"><i
             data-lucide="archive"></i><span>Exports</span></button>
         <button id="nav-logs" class="nav-item" data-view="logs" title="Logs"><i
@@ -143,13 +141,13 @@
             <div class="section-heading">
               <div>
                 <h2>Choose output</h2>
-                <p>Fixed production formats.</p>
+                <p>Choose the image shape and size.</p>
               </div>
             </div>
             <div id="reference-control" class="reference-control" data-count="0">
               <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i
                   data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small
-                    id="reference-hint">Optional · browse, drop, or paste · up to 16 · 50 MB each</small></span><b
+                    id="reference-hint">Drop, Ctrl+V, or Win+V · up to 16 images · 50 MB each</small></span><b
                   id="reference-badge" class="hidden" hidden>0/16</b></button>
               <div class="reference-actions">
                 <button id="pick-reference" class="secondary-button" type="button"><i
@@ -164,16 +162,16 @@
             </div>
             <label class="model-field">Model<select id="model" disabled></select></label>
             <label>Format<select id="size">
-                <option value="square">Square · 1024×1024</option>
-                <option value="portrait">Portrait · 1024×1280</option>
-                <option value="landscape">Landscape · 1536×864</option>
-                <option value="story">Story · 864×1536</option>
+                <option value="square">Square · 1:1 · 1024×1024</option>
+                <option value="portrait">Portrait · 4:5 · 1024×1280</option>
+                <option value="landscape">Landscape · 16:9 · 1536×864</option>
+                <option value="story">Story · 9:16 · 864×1536</option>
               </select></label>
             <label>Quality<select id="quality">
                 <option value="low">Low</option>
                 <option value="medium" selected>Medium</option>
                 <option value="high">High</option>
-              </select><small class="field-hint">Yes, this is sent to OpenAI with every image request. Higher quality uses more image-output tokens and increases the estimate.</small></label>
+              </select><small class="field-hint">Higher quality uses more output tokens and increases the estimate.</small></label>
             <fieldset>
               <legend>Run mode</legend>
               <label class="mode-option selected"><input type="radio" name="run-mode" value="batch"
@@ -231,7 +229,8 @@
           <div><span>Spent so far</span><strong id="session-cost">$0.000 · est $0.00</strong></div>
           <div class="telemetry-actions"><button id="retry-button" class="secondary-button hidden"><i
                 data-lucide="refresh-cw"></i>Resume leftovers</button><button id="export-button"
-              class="secondary-button"><i data-lucide="package-open"></i>Export ZIP</button></div>
+              class="secondary-button"><i data-lucide="package-open"></i>Export ZIP</button><button id="preview-session"
+              class="secondary-button"><i data-lucide="images"></i>Preview output</button></div>
         </section>
       </div>
 
@@ -287,8 +286,7 @@
       </section>
       <section id="sessions-view" class="view-content management-view hidden">
         <div class="management-head">
-          <p>Runs and waves on this device.</p><button id="refresh-sessions" class="secondary-button" type="button"><i
-              data-lucide="refresh-cw"></i>Refresh</button>
+          <p>Runs and waves on this device.</p><button id="refresh-sessions" class="icon-button" type="button" aria-label="Refresh runs" title="Refresh runs"><i data-lucide="refresh-cw"></i></button>
         </div>
         <div id="session-list" class="data-list" aria-live="polite"></div>
       </section>
@@ -307,8 +305,7 @@
                 <option value="all">All time</option>
               </select>
             </label>
-            <button id="refresh-usage" class="secondary-button" type="button"><i
-                data-lucide="refresh-cw"></i>Refresh</button>
+            <button id="refresh-usage" class="icon-button" type="button" aria-label="Refresh usage" title="Refresh usage"><i data-lucide="refresh-cw"></i></button>
           </div>
         </div>
         <div id="usage-status" class="usage-status" role="status" aria-live="polite"></div>
@@ -324,10 +321,9 @@
           <section class="usage-card">
             <div class="usage-card-head">
               <div><h3>Limits</h3><p>App caps and the latest scoped provider snapshot.</p></div>
-              <div class="button-row">
-                <button id="usage-refresh-limits" class="secondary-button" type="button"><i
-                    data-lucide="refresh-cw"></i>Refresh</button>
-                <button id="usage-open-keys" class="secondary-button" type="button">API keys</button>
+              <div class="button-row compact-header-actions">
+                <button id="usage-refresh-limits" class="icon-button" type="button" aria-label="Refresh limits" title="Refresh limits"><i data-lucide="refresh-cw"></i></button>
+                <button id="usage-open-keys" class="icon-button" type="button" aria-label="Open API keys" title="Open API keys"><i data-lucide="key-round"></i></button>
               </div>
             </div>
             <div id="usage-limits" class="usage-limits"></div>
@@ -343,14 +339,13 @@
       </section>
       <section id="history-view" class="view-content management-view hidden">
         <div class="management-head">
-          <p>Generated images stored on this device.</p>
-          <div class="button-row"><button id="refresh-history" class="secondary-button" type="button"><i
-                data-lucide="refresh-cw"></i>Refresh</button><button id="clear-history"
-              class="secondary-button danger-button" type="button"><i data-lucide="trash-2"></i>Clear</button></div>
+          <p>Sessions and generated images stored on this device.</p>
+          <div class="button-row library-head-actions"><button id="refresh-history" class="icon-button" type="button" aria-label="Refresh Library" title="Refresh Library"><i data-lucide="refresh-cw"></i></button><button id="library-download-selected" class="secondary-button" type="button" disabled><i data-lucide="download"></i>Download selected</button><button id="library-delete-selected"
+              class="icon-button danger-button" type="button" disabled aria-label="Delete selected images" title="Delete selected images"><i data-lucide="trash-2"></i></button><details class="action-menu library-actions-menu"><summary aria-label="Library options" title="Library options"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Library options</p><button id="clear-history" class="menu-action danger-button" type="button"><i data-lucide="trash-2"></i>Clear all images</button></div></details></div>
         </div>
-        <div class="history-toolbar"><label><span class="sr-only">Search history</span><span class="search-control"><i
+        <div class="history-toolbar"><label><span class="sr-only">Search library</span><span class="search-control"><i
                 data-lucide="search"></i><input id="history-search" type="search"
-                placeholder="Search history" /></span></label><label class="history-filter"><span class="sr-only">Filter
+                placeholder="Search sessions and images" /></span></label><label class="history-filter"><span class="sr-only">Filter
               status</span><select id="history-filter" aria-label="Filter history">
               <option value="all">All</option>
               <option value="has-image">Has image</option>
@@ -361,27 +356,24 @@
               <option value="cancelled">Cancelled</option>
               <option value="batch">Batch</option>
               <option value="direct">Direct</option>
-            </select></label><strong id="history-count">0 items</strong></div>
+            </select></label><strong id="history-count">0 items</strong><span id="library-selection" class="history-selection" role="status">No images selected</span></div>
         <div id="history-list" class="history-grid" aria-live="polite"></div>
       </section>
       <section id="exports-view" class="view-content management-view hidden">
         <div class="management-head">
           <p>ZIP archives created on this device.</p>
-          <div class="button-row"><button id="refresh-exports" class="secondary-button" type="button"><i
-                data-lucide="refresh-cw"></i>Refresh</button><button id="open-exports-folder" class="secondary-button"
-              type="button"><i data-lucide="folder-open"></i>Open folder</button></div>
+          <div class="button-row compact-header-actions"><button id="refresh-exports" class="icon-button" type="button" aria-label="Refresh exports" title="Refresh exports"><i data-lucide="refresh-cw"></i></button><button id="open-exports-folder" class="icon-button"
+              type="button" aria-label="Open exports folder" title="Open exports folder"><i data-lucide="folder-open"></i></button></div>
         </div>
         <div id="export-list" class="data-list" aria-live="polite"></div>
       </section>
       <section id="logs-view" class="view-content management-view hidden">
         <div class="management-head">
           <p>Local diagnostic events. Ready to copy — secrets and image payloads are redacted.</p>
-          <div class="button-row">
-            <button id="refresh-logs" class="secondary-button" type="button"><i
-                data-lucide="refresh-cw"></i>Refresh</button>
-            <button id="copy-logs" class="secondary-button" type="button"><i data-lucide="copy"></i>Copy</button>
-            <button id="open-logs-folder" class="secondary-button" type="button"><i data-lucide="folder-open"></i>Open
-              folder</button>
+          <div class="button-row compact-header-actions">
+            <button id="refresh-logs" class="icon-button" type="button" aria-label="Refresh logs" title="Refresh logs"><i data-lucide="refresh-cw"></i></button>
+            <button id="copy-logs" class="icon-button" type="button" aria-label="Copy logs" title="Copy logs"><i data-lucide="copy"></i></button>
+            <button id="open-logs-folder" class="icon-button" type="button" aria-label="Open logs folder" title="Open logs folder"><i data-lucide="folder-open"></i></button>
           </div>
         </div>
         <div class="logs-toolbar">
@@ -519,9 +511,9 @@
         data-lucide="x"></i></button>
     <button type="button" class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous image"><i
         data-lucide="arrow-left"></i></button>
-    <figure class="lightbox-frame"><img id="lightbox-image" alt="" />
-      <figcaption id="lightbox-caption"></figcaption>
-    </figure>
+    <div class="lightbox-content"><figure class="lightbox-frame"><img id="lightbox-image" alt="" />
+      <figcaption><strong id="lightbox-count">Image 0 of 0</strong><span id="lightbox-caption"></span></figcaption>
+    </figure><aside id="lightbox-details" class="lightbox-details" aria-live="polite"></aside></div>
     <button type="button" class="lightbox-nav next" id="lightbox-next" aria-label="Next image"><i
         data-lucide="arrow-right"></i></button>
   </div>
