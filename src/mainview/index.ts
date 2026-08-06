@@ -284,8 +284,9 @@ const elements = {
   railEstimate: byId("rail-estimate"),
   railPkr: byId("rail-pkr"),
   waveControls: byId("wave-controls"),
-  waveSplit: byId<HTMLInputElement>("wave-split"),
-  waveSize: byId<HTMLInputElement>("wave-size"),
+  waveStrategy: byId<HTMLSelectElement>("wave-strategy"),
+  waveList: byId("wave-list"),
+  addWave: byId<HTMLButtonElement>("add-wave"),
   waveMath: byId("wave-math"),
   rateLimitsLine: byId("rate-limits-line"),
   keySummary: byId("key-summary"),
@@ -306,7 +307,6 @@ let toastEndsAt = 0;
 let adminEditingKey = false;
 let adminConfiguredState = false;
 let runSubmitInFlight = false;
-let lastWaveSizeValue = 100;
 const SIDEBAR_STORAGE_KEY = "bulkimg.sidebar.collapsed";
 const TOAST_MS_OK = 4200;
 const TOAST_MS_ERR = 7000;
@@ -322,6 +322,7 @@ let converterSessionImages: ConverterSourceImage[] = [];
 let converterTab: "workspace" | "history" = "workspace";
 let converterSessionLayout: "cards" | "list" = "cards";
 let selectedConverterSessionAssets = new Set<string>();
+let waveSizes: number[] = [];
 let lightboxItems: HistoryItem[] = [];
 let lightboxIndex = 0;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
@@ -363,24 +364,6 @@ function directPromptLimit(): number {
   return appLimits.directPromptLimit;
 }
 
-function effectiveWaveSize(): number {
-  if (currentMode() !== "batch" || !elements.waveSplit.checked) return 0;
-  const raw = Number(elements.waveSize.value);
-  if (!Number.isFinite(raw) || raw < 0) return 0;
-  return Math.min(appLimits.batchPromptLimit, Math.floor(raw));
-}
-
-function describeWaveMath(promptCount: number): string {
-  const size = effectiveWaveSize();
-  if (size <= 0 || promptCount <= 0) return promptCount ? `${promptCount} prompt${promptCount === 1 ? "" : "s"} → 1 batch` : "No prompts selected";
-  const full = Math.floor(promptCount / size);
-  const rem = promptCount % size;
-  const waves = full + (rem ? 1 : 0);
-  if (rem === 0) return `${promptCount} prompts → ${waves} wave${waves === 1 ? "" : "s"} of ${size}`;
-  if (full === 0) return `${promptCount} prompts → 1 wave of ${promptCount}`;
-  return `${promptCount} prompts → ${full} wave${full === 1 ? "" : "s"} of ${size} + 1 of ${rem}`;
-}
-
 function setHidden(el: HTMLElement, hidden: boolean): void {
   el.classList.toggle("hidden", hidden);
   el.hidden = hidden;
@@ -388,13 +371,55 @@ function setHidden(el: HTMLElement, hidden: boolean): void {
 
 function updateWaveUi(): void {
   const batch = currentMode() === "batch";
-  const split = elements.waveSplit.checked;
-  setHidden(elements.waveControls, !batch);
-  setHidden(elements.waveSizeField, !batch || !split);
-  elements.waveSize.disabled = !batch || !split;
-  const showMath = batch && split && selected.size > 0;
+  const split = elements.waveStrategy.value !== "all";
+  const hasPrompts = selected.size > 0;
+  setHidden(elements.waveControls, !batch || !hasPrompts);
+  setHidden(elements.waveSizeField, !batch || !hasPrompts || !split);
+  if (hasPrompts && split) ensureWavePlan();
+  renderWaveList();
+  const showMath = batch && selected.size > 0;
   setHidden(elements.waveMath, !showMath);
-  if (showMath) elements.waveMath.textContent = describeWaveMath(selected.size);
+  if (showMath) {
+    if (!split) elements.waveMath.textContent = `${selected.size} prompts will run in one batch.`;
+    else elements.waveMath.textContent = `${selected.size} prompts across ${waveSizes.length} wave${waveSizes.length === 1 ? "" : "s"}: ${waveSizes.join(" + ")}.`;
+  }
+}
+
+function defaultWavePlan(total: number): number[] {
+  if (total <= 0) return [];
+  const plan = [Math.min(10, total)];
+  let remaining = total - plan[0]!;
+  while (remaining > 0) { const size = Math.min(100, remaining); plan.push(size); remaining -= size; }
+  return plan;
+}
+
+function ensureWavePlan(): void {
+  const total = selected.size;
+  if (!waveSizes.length) { waveSizes = defaultWavePlan(total); return; }
+  let remaining = total;
+  const next: number[] = [];
+  for (const size of waveSizes) {
+    if (remaining <= 0) break;
+    const bounded = Math.max(1, Math.min(appLimits.batchPromptLimit, Math.floor(size || 1), remaining));
+    next.push(bounded); remaining -= bounded;
+  }
+  while (remaining > 0) { const size = Math.min(100, remaining); next.push(size); remaining -= size; }
+  waveSizes = next;
+}
+
+function renderWaveList(): void {
+  if (!waveSizes.length) { elements.waveList.innerHTML = ""; return; }
+  elements.waveList.innerHTML = waveSizes.map((size, index) => `<div class="wave-row"><span>Wave ${index + 1}</span><label><span class="sr-only">Prompts in wave ${index + 1}</span><input type="number" min="1" max="${appLimits.batchPromptLimit}" value="${size}" data-wave-index="${index}" /> <small>prompts</small></label><button class="icon-button wave-remove" type="button" data-remove-wave="${index}" aria-label="Remove wave ${index + 1}" title="Remove wave">×</button></div>`).join("");
+  elements.waveList.querySelectorAll<HTMLInputElement>("input[data-wave-index]").forEach((input) => input.addEventListener("change", () => {
+    const index = Number(input.dataset["waveIndex"]);
+    const value = Math.max(1, Math.min(appLimits.batchPromptLimit, Math.floor(Number(input.value) || 1)));
+    waveSizes[index] = value;
+    ensureWavePlan(); updateWaveUi();
+  }));
+  elements.waveList.querySelectorAll<HTMLButtonElement>("button[data-remove-wave]").forEach((button) => button.addEventListener("click", () => {
+    if (waveSizes.length === 1) return;
+    waveSizes.splice(Number(button.dataset["removeWave"]), 1); ensureWavePlan(); updateWaveUi();
+  }));
 }
 
 function formatRateLimits(admin: AdminConfigView | null): { text: string; level: "soft" | "warn" | "ready" } {
@@ -1387,7 +1412,7 @@ function renderTelemetry(next: SessionTelemetry): void {
   telemetry?.setAttribute("data-status", next.status);
   elements.sessionStatus.textContent = next.status.toUpperCase();
   const waveLabel = next.waveCount != null && next.waveIndex != null && next.waveCount > 1
-    ? ` · wave ${next.waveIndex + 1}/${next.waveCount}`
+    ? ` · batch ${next.waveIndex + 1}/${next.waveCount}`
     : "";
   const phaseLabel = next.phase && next.phase !== "done" ? ` · ${next.phase.replaceAll("_", " ")}` : "";
   elements.sessionMessage.textContent = `${next.message}${waveLabel}${phaseLabel}`;
@@ -1895,7 +1920,7 @@ async function loadSessions(): Promise<void> {
     } else {
       const runHtml = runs.map((run) => {
         const phaseBits = run.sessions.map((wave) => {
-          const label = wave.waveIndex != null ? `Wave ${wave.waveIndex + 1}` : wave.sessionId.slice(0, 8);
+          const label = wave.waveIndex != null ? `Batch ${wave.waveIndex + 1}` : wave.sessionId.slice(0, 8);
           return `<article class="data-row wave-row session-row" data-session-id="${wave.sessionId}">
             <div class="session-row-main">
               <div><strong>${escapeHtml(label)}</strong><span>${formatDate(wave.startTime)}</span></div>
@@ -1917,13 +1942,14 @@ async function loadSessions(): Promise<void> {
         const canResumeRun = run.sessions.some((wave) => wave.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(wave.status));
         return `<section class="run-group" data-run-id="${run.runId}">
           <header class="run-group-head">
-            <div><strong>Run ${escapeHtml(run.runId.slice(0, 8))}</strong><span>${formatDate(run.startTime)} · ${escapeHtml(run.runMode)} · ${run.waveCount || 1} wave(s)</span></div>
+            <div><strong>Run ${escapeHtml(run.runId.slice(0, 8))}</strong><span>${formatDate(run.startTime)} · ${escapeHtml(run.runMode)} · ${run.waveCount || 1} batch(es)</span></div>
             <div class="run-group-stats">
               <strong class="status-badge status-${escapeHtml(run.status)}">${escapeHtml(run.status)}</strong>
               <span>${run.completedCount}/${run.totalPrompts}</span>
               <span>$${run.costUsd.toFixed(3)} / est $${run.estimateUsd.toFixed(3)}</span>
             </div>
             <div class="session-actions">
+              ${run.waveStrategy === "guided" && run.sessions.some((wave) => wave.status === "pending") ? `<button class="secondary-button run-continue" data-run-id="${run.runId}">Continue next batch</button>` : ""}
               ${canResumeRun ? `<button class="secondary-button run-resume" data-run-id="${run.runId}">Resume leftovers</button>` : ""}
               <button class="secondary-button run-export" data-run-id="${run.runId}">Export run</button>
             </div>
@@ -1992,7 +2018,7 @@ function formatPromptRows(prompts: SessionPromptOutcome[]): string {
 
 function renderSessionDetailHtml(detail: SessionDetail): string {
   const t = detail.telemetry;
-  const wave = t.waveCount != null && t.waveIndex != null ? `Wave ${t.waveIndex + 1}/${t.waveCount}` : "Single session";
+  const wave = t.waveCount != null && t.waveIndex != null ? `Batch ${t.waveIndex + 1}/${t.waveCount}` : "Single session";
   const canResume = t.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(t.status);
   return `<div class="session-detail-inner">
     <div class="session-detail-meta">
@@ -2072,6 +2098,14 @@ function bindSessionListHandlers(root: ParentNode = elements.sessionList): void 
       const runId = button.dataset["runId"];
       const sessionId = button.dataset["sessionId"];
       const next = await app.rpc!.request.resumeRun(runId ? { runId } : { sessionId: sessionId! });
+      renderTelemetry(next);
+      await startSessionPolling(next.sessionId);
+      await setView("generator");
+    };
+  });
+  root.querySelectorAll<HTMLButtonElement>(".run-continue").forEach((button) => {
+    button.onclick = async () => {
+      const next = await app.rpc!.request.continueRun({ runId: button.dataset["runId"]! });
       renderTelemetry(next);
       await startSessionPolling(next.sessionId);
       await setView("generator");
@@ -2451,16 +2485,7 @@ async function bootstrap(): Promise<void> {
     };
   }
   if (data.settings) {
-    const waveSize = data.settings.waveSize;
-    if (waveSize > 0) {
-      elements.waveSize.value = String(waveSize);
-      lastWaveSizeValue = waveSize;
-      elements.waveSplit.checked = true;
-    } else {
-      elements.waveSplit.checked = false;
-      elements.waveSize.value = String(appLimits.defaultWaveSize || APP_LIMITS.defaultWaveSize);
-      lastWaveSizeValue = appLimits.defaultWaveSize || APP_LIMITS.defaultWaveSize;
-    }
+    elements.waveStrategy.value = data.settings.waveSize > 0 ? "guided" : "all";
   }
   if (data.admin) applyAdminView(data.admin);
   else if (data.adminWarning) {
@@ -2646,30 +2671,15 @@ document.querySelectorAll<HTMLInputElement>('input[name="run-mode"]').forEach((r
     void refreshEstimate();
   });
 });
-elements.waveSplit.addEventListener("change", () => {
-  if (elements.waveSplit.checked) {
-    if (Number(elements.waveSize.value) <= 0) {
-      elements.waveSize.value = String(lastWaveSizeValue || appLimits.defaultWaveSize || APP_LIMITS.defaultWaveSize);
-    }
-    lastWaveSizeValue = Math.max(1, Number(elements.waveSize.value) || lastWaveSizeValue);
-  } else {
-    const current = Number(elements.waveSize.value);
-    if (Number.isFinite(current) && current > 0) lastWaveSizeValue = current;
-  }
+elements.waveStrategy.addEventListener("change", () => {
   updateWaveUi();
-  void app.rpc!.request.setSettings({ waveSize: effectiveWaveSize() }).catch(() => undefined);
 });
-elements.waveSize.addEventListener("change", () => {
-  const raw = Number(elements.waveSize.value);
-  if (!Number.isFinite(raw) || raw <= 0) {
-    elements.waveSplit.checked = false;
-  } else {
-    elements.waveSplit.checked = true;
-    lastWaveSizeValue = Math.min(appLimits.batchPromptLimit, Math.floor(raw));
-    elements.waveSize.value = String(lastWaveSizeValue);
-  }
+elements.addWave.addEventListener("click", () => {
+  const donor = [...waveSizes].map((size, index) => ({ size, index })).reverse().find(({ size }) => size > 1);
+  if (!donor) { showToast("A one-prompt plan cannot be split further.", true); return; }
+  waveSizes[donor.index] -= 1;
+  waveSizes.push(1);
   updateWaveUi();
-  void app.rpc!.request.setSettings({ waveSize: effectiveWaveSize() }).catch(() => undefined);
 });
 elements.model.addEventListener("change", () => void refreshEstimate());
 elements.quality.addEventListener("change", () => void refreshEstimate());
@@ -2802,7 +2812,9 @@ elements.runButton.addEventListener("click", async () => {
       mode: currentMode(),
       format: elements.size.value as OutputFormatId,
       quality: elements.quality.value as "low" | "medium" | "high",
-      waveSize: effectiveWaveSize(),
+      waveSize: currentMode() === "batch" && elements.waveStrategy.value !== "all" ? 100 : 0,
+      waveStrategy: elements.waveStrategy.value as "all" | "guided" | "parallel",
+      ...(currentMode() === "batch" && elements.waveStrategy.value !== "all" ? { waveSizes: [...waveSizes] } : {}),
       ...(referenceImages.length ? { referenceImageFileIds: referenceImages.map((reference) => reference.fileId) } : {}),
     });
     releaseReferencesToSession();
@@ -3214,7 +3226,9 @@ elements.openLogsFolder.addEventListener("click", async () => {
 await bootstrap();
 
 window.addEventListener("beforeunload", (event) => {
-  if (session?.runMode !== "direct" || !["pending", "processing"].includes(session.status)) return;
+  if (!session || !["pending", "processing"].includes(session.status)) return;
   event.preventDefault();
-  event.returnValue = "A Direct run is still generating.";
+  event.returnValue = session.runMode === "direct"
+    ? "A direct run is still generating. Closing cannot recover an in-flight request."
+    : "A batch is still being checked. You can reopen later and continue from the saved run.";
 });

@@ -1,4 +1,5 @@
-import { BrowserView, BrowserWindow, Utils } from "electrobun/bun";
+import { BrowserView, BrowserWindow, Screen, Tray, Utils } from "electrobun/bun";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AdminConfigView, AppRPC, BrandTheme, RateLimitHeaderProbe, RateLimitSnapshot } from "../shared/contracts";
 import { APP_LIMITS } from "../shared/contracts";
@@ -13,14 +14,16 @@ import { PricingService } from "./services/pricing-service";
 import { parseCSV, parseManualPrompts } from "./services/prompt-parser";
 import { pickOpenFile, readClipboardCsv, readClipboardImages } from "./services/windows-native";
 import { cleanupStaleTemporaryFiles, DiagnosticLog } from "./services/diagnostics";
+import { setNativeWindowIcon } from "./services/window-icon";
+import { getInitialWindowFrame } from "./window-layout";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.3 supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.0.4 supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.3",
+  version: "1.0.4",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -70,7 +73,7 @@ const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
 void diagnosticLog.write("startup", {
   cleanedFiles,
-  version: "1.0.3",
+  version: "1.0.4",
   userData: dataDirectory,
   pid: process.pid,
 });
@@ -90,6 +93,9 @@ if (recovered > 0) {
 }
 
 const brand = await readJson(assetRoots.map((root) => join(root, "brand", "theme.json")), fallbackBrand);
+const nativeIconPath = assetRoots
+  .map((root) => join(root, "brand", "app_icon.ico"))
+  .find(existsSync);
 const models = await readJson(assetRoots.map((root) => join(root, "config", "models.json")), {
   defaultModel: "gpt-image-2",
   models: [{
@@ -178,6 +184,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       cancelBatchRun: ({ sessionId }) => batchEngine.cancel(sessionId),
       retryFailedPrompts: ({ sessionId }) => batchEngine.retryFailed(sessionId),
       resumeRun: (params) => batchEngine.resumeRun(params),
+      continueRun: ({ runId }) => batchEngine.continueRun(runId),
       estimateRunCost: async (input) => batchEngine.estimate(input, await fxService.getUsdPkrRate()),
       uploadReferenceImage: async ({ dataBase64, filename, mimeType }) => logged("reference_upload", {
         filename,
@@ -308,6 +315,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
 });
 
 batchEngine.setProgressSink((telemetry) => {
+  updateTrayStatus(telemetry.status, telemetry.message);
   try {
     rpc.send.sessionProgress(telemetry);
   } catch {
@@ -315,34 +323,93 @@ batchEngine.setProgressSink((telemetry) => {
   }
 });
 
-const DEFAULT_WINDOW_WIDTH = 1440;
-const DEFAULT_WINDOW_HEIGHT = 840;
+let mainWindow: BrowserWindow;
+let windowClosed = false;
+let isQuitting = false;
 
-const mainWindow = new BrowserWindow({
-  title: `${brand.appName} ${brand.version}`,
-  url: "views://mainview/index.html",
-  rpc,
-  frame: {
-    width: DEFAULT_WINDOW_WIDTH,
-    height: DEFAULT_WINDOW_HEIGHT - 1,
-    x: 40,
-    y: 16,
-  },
+function createMainWindow(): BrowserWindow {
+  const frame = getInitialWindowFrame(Screen.getPrimaryDisplay().workArea);
+  const windowTitle = `${brand.appName} ${brand.version}`;
+  const window = new BrowserWindow({
+    title: windowTitle,
+    url: "views://mainview/index.html",
+    rpc,
+    titleBarStyle: "default",
+    hidden: true,
+    frame,
+  });
+  window.on("close", () => {
+    windowClosed = true;
+    if (isQuitting) return;
+    Utils.showNotification({
+      title: brand.appName,
+      body: "BulkImg Studio is still running in the system tray. Select its tray icon to open it again.",
+    });
+  });
+  // Start restored at the adaptive work-area size. Electrobun 1.18.1 can leave
+  // WebView2 at its restored bounds when a hidden window is maximized during
+  // startup, exposing the unpainted native client area around the webview.
+  window.show();
+  setTimeout(() => {
+    if (nativeIconPath && !setNativeWindowIcon(windowTitle, nativeIconPath)) {
+      console.warn("Could not apply the native window icon.");
+    }
+  }, 120);
+  return window;
+}
+
+mainWindow = createMainWindow();
+const tray = new Tray({
+  title: brand.appName,
+  image: fallbackBrand.iconPath,
+  template: false,
+  width: 16,
+  height: 16,
+});
+
+function showMainWindow(): void {
+  if (windowClosed) {
+    mainWindow = createMainWindow();
+    windowClosed = false;
+    return;
+  }
+  mainWindow.show();
+  mainWindow.activate();
+}
+
+function updateTrayStatus(status: string, message = ""): void {
+  const active = status === "processing" || status === "pending";
+  const attention = status === "failed" || status === "partial" || status === "cancelled";
+  const label = active ? "Working" : attention ? "Needs attention" : status === "completed" ? "Completed" : "Ready";
+  tray.setTitle(`${brand.appName} — ${label}`);
+  tray.setMenu([
+    { type: "normal", label: `${label}${message ? `: ${message.slice(0, 72)}` : ""}`, action: "open" },
+    { type: "separator" },
+    { type: "normal", label: "Open BulkImg Studio", action: "open" },
+    { type: "normal", label: "Exit", action: "exit" },
+  ]);
+}
+
+updateTrayStatus("ready");
+tray.on("tray-clicked", (event: unknown) => {
+  const action = (event as { data?: { action?: string } }).data?.action;
+  if (action === "exit") {
+    const hasActiveBatch = database.listRuns().some((run) => run.status === "pending" || run.status === "processing");
+    if (hasActiveBatch) {
+      showMainWindow();
+      Utils.showNotification({
+        title: brand.appName,
+        body: "A batch is still running. Stop it first if you want to exit; saved results remain available when you reopen the app.",
+      });
+      return;
+    }
+    isQuitting = true;
+    Utils.quit();
+    return;
+  }
+  showMainWindow();
 });
 batchEngine.startScheduler();
-
-setTimeout(() => mainWindow.setSize(DEFAULT_WINDOW_WIDTH, DEFAULT_WINDOW_HEIGHT), 1_500);
-
-mainWindow.on("resize", (event: unknown) => {
-  const size = (event as { data?: { width?: number; height?: number } }).data;
-  if (typeof size?.width !== "number" || typeof size.height !== "number") return;
-
-  const width = Math.max(900, Math.round(size.width));
-  const height = Math.max(640, Math.round(size.height));
-  if (width !== size.width || height !== size.height) {
-    mainWindow.setSize(width, height);
-  }
-});
 
 console.log(`${brand.appName} ${brand.version} started`);
 console.log(`Data directory: ${dataDirectory}`);

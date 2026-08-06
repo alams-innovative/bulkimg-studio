@@ -19,7 +19,7 @@
           <img class="brand-logo-light"
             src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
           <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
-              id="brand-version">1.0.3</small></span>
+              id="brand-version">1.0.4</small></span>
         </div>
         <button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
           title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
@@ -53,11 +53,6 @@
       <header class="topbar">
         <div class="page-heading">
           <h1 id="page-title">Generate images.</h1>
-        </div>
-        <div id="header-stats" class="compact-summary" aria-label="Current selection">
-          <span id="selected-chip"><strong id="selected-count">0</strong> selected</span>
-          <span id="estimated-cost" class="hidden" hidden>$0.00</span>
-          <span id="fx-rate">PKR —</span>
         </div>
       </header>
 
@@ -144,38 +139,11 @@
           </div>
 
           <aside class="run-panel panel" aria-label="Choose output">
+            <div class="run-panel-content">
             <div class="section-heading">
               <div>
                 <h2>Choose output</h2>
                 <p>Fixed production formats.</p>
-              </div>
-            </div>
-            <label class="model-field">Model<select id="model" disabled></select></label>
-            <label>Format<select id="size">
-                <option value="square">Square · 1024×1024</option>
-                <option value="portrait">Portrait · 1024×1280</option>
-                <option value="landscape">Landscape · 1536×864</option>
-                <option value="story">Story · 864×1536</option>
-              </select></label>
-            <label>Quality<select id="quality">
-                <option value="low">Low</option>
-                <option value="medium" selected>Medium</option>
-                <option value="high">High</option>
-              </select></label>
-            <fieldset>
-              <legend>Run mode</legend>
-              <label class="mode-option selected"><input type="radio" name="run-mode" value="batch"
-                  checked /><span><strong>Batch</strong><small>Lower cost, queue within 24h</small></span></label>
-              <label class="mode-option"><input type="radio" name="run-mode"
-                  value="direct" /><span><strong>Direct</strong><small>Up to 4 images</small></span></label>
-            </fieldset>
-            <div id="wave-controls" class="wave-controls">
-              <label class="mode-option wave-option"><input type="checkbox" id="wave-split"
-                  checked /><span><strong>Split into waves</strong><small id="wave-math" class="hidden"
-                    hidden></small></span></label>
-              <div id="wave-size-field" class="wave-size-field">
-                <label>Wave size <input id="wave-size" type="number" min="1" max="1000" value="100" /><small
-                    class="field-hint">Prompts per OpenAI batch</small></label>
               </div>
             </div>
             <div id="reference-control" class="reference-control" data-count="0">
@@ -194,10 +162,48 @@
                 hidden></div>
               <span id="reference-status" class="sr-only" role="status" aria-live="polite"></span>
             </div>
-            <div id="rate-limits-line" class="rate-limits-line" role="status">Org limits optional — Admin key in API
-              keys.</div>
+            <label class="model-field">Model<select id="model" disabled></select></label>
+            <label>Format<select id="size">
+                <option value="square">Square · 1024×1024</option>
+                <option value="portrait">Portrait · 1024×1280</option>
+                <option value="landscape">Landscape · 1536×864</option>
+                <option value="story">Story · 864×1536</option>
+              </select></label>
+            <label>Quality<select id="quality">
+                <option value="low">Low</option>
+                <option value="medium" selected>Medium</option>
+                <option value="high">High</option>
+              </select><small class="field-hint">Yes, this is sent to OpenAI with every image request. Higher quality uses more image-output tokens and increases the estimate.</small></label>
+            <fieldset>
+              <legend>Run mode</legend>
+              <label class="mode-option selected"><input type="radio" name="run-mode" value="batch"
+                  checked /><span><strong>Batch</strong><small>Lower cost, queue within 24h</small></span></label>
+              <label class="mode-option"><input type="radio" name="run-mode"
+                  value="direct" /><span><strong>Direct</strong><small>Up to 4 images</small></span></label>
+            </fieldset>
+            <div id="wave-controls" class="wave-controls">
+              <label>Batch delivery<select id="wave-strategy">
+                <option value="guided" selected>One wave at a time — recommended</option>
+                <option value="parallel">Submit all waves together</option>
+                <option value="all">One batch (no waves)</option>
+              </select><small>Waves are submitted as separate OpenAI batches. You decide their exact sizes below.</small></label>
+              <div id="wave-size-field" class="wave-size-field">
+                <div id="wave-list" class="wave-list" aria-label="Batch waves"></div>
+                <div class="wave-actions"><button id="add-wave" class="secondary-button" type="button"><i data-lucide="plus"></i>Add wave</button><span>New waves take one prompt; set any size you need.</span></div>
+                <small id="wave-math" class="field-hint"></small>
+              </div>
+            </div>
             <div id="estimate-box" class="estimate-box hidden" hidden><span>Estimated cost</span><strong><span
                   id="rail-estimate">$0.00</span> <small id="rail-pkr">PKR 0.00</small></strong></div>
+            </div>
+            <div class="run-panel-footer">
+              <div id="header-stats" class="compact-summary" aria-label="Current selection">
+                <span id="selected-chip"><strong id="selected-count">0</strong> selected</span>
+                <span id="estimated-cost" class="hidden" hidden>$0.00</span>
+                <span id="fx-rate">PKR —</span>
+              </div>
+              <div id="rate-limits-line" class="rate-limits-line" role="status">Org limits optional — Admin key in API
+                keys.</div>
             <div class="run-actions">
               <button id="run-button" class="primary-button" disabled
                 title="Select prompts to generate"><span>Generate</span><i data-lucide="arrow-right"></i></button>
@@ -208,6 +214,7 @@
             </div>
             <p class="privacy-note"><i data-lucide="shield-check"></i>Keys are validated, encrypted, and stored locally.
             </p>
+            </div>
           </aside>
         </section>
 

@@ -82,11 +82,20 @@ copyFileSync(join(buildDir, setupArchiveName), join(installerDataDir, setupArchi
 
 try {
   console.log(`Running ${setupExeName}...`);
-  const setup = Bun.spawnSync([stagedSetup], {
-    cwd: stagingDir,
+  // Launch through Windows rather than Bun's direct process spawn. The setup
+  // program is a GUI executable and Windows can deny Bun's direct uv_spawn
+  // from a temporary directory even when the same installer is valid.
+  const escapedSetup = stagedSetup.replaceAll("'", "''");
+  const escapedStagingDirectory = stagingDir.replaceAll("'", "''");
+  const setup = Bun.spawnSync([
+    "powershell.exe",
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `$process = Start-Process -FilePath '${escapedSetup}' -WorkingDirectory '${escapedStagingDirectory}' -Wait -PassThru; exit $process.ExitCode`,
+  ], {
     stdout: "inherit",
     stderr: "inherit",
-    stdin: "inherit",
   });
   if (setup.exitCode !== 0) {
     throw new Error(`Installer exited with code ${setup.exitCode}.`);

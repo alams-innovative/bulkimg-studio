@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { AppDatabase } from "./database";
-import { BatchEngine, chunkPrompts } from "./services/batch-engine";
+import { BatchEngine, chunkPrompts, planBatchWaves, planCustomWaves } from "./services/batch-engine";
 import { HistoryService } from "./services/history-service";
 import { PricingService } from "./services/pricing-service";
 import { APP_LIMITS } from "../shared/contracts";
@@ -48,6 +48,24 @@ describe("wave planner", () => {
     expect(chunkPrompts(items, 0)).toHaveLength(1);
     expect(chunkPrompts(items, 0)[0]).toHaveLength(250);
   });
+
+  test("guided 365 starts with 10 then uses the configured later batch size", () => {
+    const items = Array.from({ length: 365 }, (_, i) => i);
+    const batches = planBatchWaves(items, "guided", 50, 10);
+    expect(batches.map((batch) => batch.length)).toEqual([10, 50, 50, 50, 50, 50, 50, 50, 5]);
+  });
+
+  test("parallel splitting has no special first batch", () => {
+    const items = Array.from({ length: 120 }, (_, i) => i);
+    expect(planBatchWaves(items, "parallel", 50, 10).map((batch) => batch.length)).toEqual([50, 50, 20]);
+    expect(planBatchWaves(items, "all", 50, 10).map((batch) => batch.length)).toEqual([120]);
+  });
+
+  test("uses the exact editable wave plan", () => {
+    const items = Array.from({ length: 260 }, (_, i) => i);
+    expect(planCustomWaves(items, [10, 100, 75, 75]).map((batch) => batch.length)).toEqual([10, 100, 75, 75]);
+    expect(() => planCustomWaves(items, [10, 100])).toThrow("cover every selected prompt");
+  });
 });
 
 describe("v5 migration, runs, and Converter storage", () => {
@@ -88,6 +106,7 @@ describe("v5 migration, runs, and Converter storage", () => {
       quality: "medium",
       waveSize: 2,
       waveCount: 2,
+      waveStrategy: "guided",
       totalPrompts: 3,
       estimateUsd: 0.15,
       fxRate: 278,

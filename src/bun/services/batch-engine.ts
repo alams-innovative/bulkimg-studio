@@ -32,6 +32,21 @@ export function chunkPrompts<T>(items: T[], waveSize: number): T[][] {
   return chunks;
 }
 
+export function planBatchWaves<T>(items: T[], strategy: "all" | "guided" | "parallel", waveSize: number, firstWaveSize = 10): T[][] {
+  if (strategy === "all" || items.length <= firstWaveSize) return items.length ? [items] : [];
+  if (strategy === "parallel") return chunkPrompts(items, waveSize);
+  const first = items.slice(0, firstWaveSize);
+  return [first, ...chunkPrompts(items.slice(firstWaveSize), waveSize)];
+}
+
+export function planCustomWaves<T>(items: T[], sizes: number[]): T[][] {
+  if (!sizes.length || sizes.some((size) => !Number.isInteger(size) || size < 1) || sizes.reduce((total, size) => total + size, 0) !== items.length) {
+    throw new Error("Wave sizes must be positive and cover every selected prompt exactly once.");
+  }
+  let offset = 0;
+  return sizes.map((size) => { const wave = items.slice(offset, offset + size); offset += size; return wave; });
+}
+
 function validateInput(input: SubmitRunInput): SubmitRunInput {
   if (!input || typeof input !== "object" || !Array.isArray(input.prompts)) throw new Error("The generation request is invalid.");
   if (input.model !== "gpt-image-2") throw new Error("Only GPT Image 2 is supported.");
@@ -66,6 +81,9 @@ function validateInput(input: SubmitRunInput): SubmitRunInput {
   }
   if (input.waveSize !== undefined && (!Number.isInteger(input.waveSize) || input.waveSize < 0 || input.waveSize > BATCH_LIMIT)) {
     throw new Error(`Wave size must be 0 (no split) or 1–${BATCH_LIMIT}.`);
+  }
+  if (input.waveSizes !== undefined && (!Array.isArray(input.waveSizes) || input.waveSizes.some((size) => !Number.isInteger(size) || size < 1 || size > BATCH_LIMIT) || input.waveSizes.reduce((total, size) => total + size, 0) !== input.prompts.length)) {
+    throw new Error("Wave sizes must be positive and cover every selected prompt exactly once.");
   }
   return input;
 }
@@ -271,7 +289,11 @@ export class BatchEngine {
     const waveSize = base.mode === "batch"
       ? (base.waveSize !== undefined ? base.waveSize : settingsWave)
       : 0;
-    const waves = base.mode === "batch" ? chunkPrompts(base.prompts, waveSize) : [base.prompts];
+    const strategy = base.mode === "batch" ? (base.waveStrategy ?? (waveSize ? "guided" : "all")) : "all";
+    const firstWaveSize = Math.max(1, Math.min(base.prompts.length, base.firstWaveSize ?? this.database.getAppSettings().firstWaveSize));
+    const waves = base.mode === "batch"
+      ? (base.waveSizes?.length ? planCustomWaves(base.prompts, base.waveSizes) : planBatchWaves(base.prompts, strategy, waveSize || BATCH_LIMIT, firstWaveSize))
+      : [base.prompts];
     const estimate = this.estimate({
       model: base.model, promptCount: base.prompts.length, mode: base.mode,
       quality: base.quality, format: base.format, referenceCount: base.referenceImageFileIds?.length ?? 0,
@@ -282,7 +304,7 @@ export class BatchEngine {
       if (!base.parentRunId) {
         this.database.createBatchRun({
           runId, model: base.model, mode: base.mode, format: base.format, quality: base.quality,
-          waveSize, waveCount: waves.length, totalPrompts: base.prompts.length,
+          waveSize, waveCount: waves.length, waveStrategy: strategy, totalPrompts: base.prompts.length,
           estimateUsd: estimate.costUsd, fxRate,
         });
       }
@@ -310,7 +332,7 @@ export class BatchEngine {
         if (index > 0) {
           this.database.updateSession(sessionId, {
             status: "pending",
-            message: `Queued as wave ${index + 1} of ${waves.length}.`,
+            message: `Queued as batch ${index + 1} of ${waves.length}.`,
           });
         }
         sessionIds.push(sessionId);
@@ -321,8 +343,13 @@ export class BatchEngine {
         });
       }
       this.activeRunWave.set(runId, 0);
-      this.database.updateBatchRun(runId, { status: "processing", message: `Wave 1 of ${waves.length}` });
-      queueMicrotask(() => void this.runWaveChain(runId, sessionIds, waveInputs));
+      this.database.updateBatchRun(runId, { status: "processing", message: `Batch 1 of ${waves.length}` });
+      if (strategy === "parallel") {
+        for (let index = 0; index < sessionIds.length; index += 1) queueMicrotask(() => void this.submitRemoteBatch(sessionIds[index]!, waveInputs[index]!));
+        this.database.updateBatchRun(runId, { status: "processing", message: `${waves.length} batches submitted together.` });
+      } else {
+        queueMicrotask(() => void this.runWaveChain(runId, sessionIds, waveInputs));
+      }
       return this.emit(sessionIds[0]!);
     }
 
@@ -331,7 +358,7 @@ export class BatchEngine {
     if (parentRunId && !base.parentRunId && base.mode === "batch") {
       this.database.createBatchRun({
         runId: parentRunId, model: base.model, mode: base.mode, format: base.format, quality: base.quality,
-        waveSize: 0, waveCount: 1, totalPrompts: base.prompts.length, estimateUsd: estimate.costUsd, fxRate,
+        waveSize: 0, waveCount: 1, waveStrategy: "all", totalPrompts: base.prompts.length, estimateUsd: estimate.costUsd, fxRate,
       });
     }
     this.database.createSession(sessionId, base, fxRate, { costUsd: estimate.costUsd, pricingVersion: estimate.pricingVersion }, {
@@ -353,7 +380,12 @@ export class BatchEngine {
     if (this.runningWaveChains.has(runId)) return;
     this.runningWaveChains.add(runId);
     try {
-      for (let index = 0; index < sessionIds.length; index += 1) {
+      const nextIndex = sessionIds.findIndex((sessionId) => !TERMINAL.has(this.database.getTelemetry(sessionId).status));
+      if (nextIndex === -1) {
+        await this.reconcileRunStatus(runId);
+        return;
+      }
+      for (let index = nextIndex; index <= nextIndex; index += 1) {
         if (this.cancelledRuns.has(runId) || this.database.isRunCancelled(runId)) break;
         const sessionId = sessionIds[index]!;
         const tele = this.database.getTelemetry(sessionId);
@@ -361,7 +393,7 @@ export class BatchEngine {
         const rolling = this.database.aggregateRunUsage(runId);
         this.database.updateBatchRun(runId, {
           status: "processing",
-          message: `Wave ${index + 1} of ${sessionIds.length}`,
+          message: `Running batch ${index + 1} of ${sessionIds.length}.`,
           completedCount: rolling.completed,
           costUsd: rolling.costUsd,
         });
@@ -394,39 +426,65 @@ export class BatchEngine {
         return;
       }
 
-      const agg = this.database.aggregateRunUsage(runId);
-      const status: SessionStatus = agg.failed > 0 ? "partial" : "completed";
-      this.database.updateBatchRun(runId, {
-        status,
-        message: status === "completed" ? `Saved ${agg.completed} images.` : `Saved ${agg.completed}; some need retry.`,
-        completedCount: agg.completed,
-        costUsd: agg.costUsd,
-      });
+      const remaining = sessionIds.filter((sessionId) => !TERMINAL.has(this.database.getTelemetry(sessionId).status));
+      if (remaining.length > 0) {
+        const agg = this.database.aggregateRunUsage(runId);
+        this.database.updateBatchRun(runId, {
+          status: "processing",
+          message: `Batch ${nextIndex + 1} is ready to review. Continue when you are ready for batch ${nextIndex + 2}.`,
+          completedCount: agg.completed,
+          costUsd: agg.costUsd,
+        });
+      } else {
+        await this.reconcileRunStatus(runId);
+      }
     } finally {
       this.runningWaveChains.delete(runId);
       this.activeRunWave.delete(runId);
     }
   }
 
-  /** Restart wave submission after app restart when later waves were only queued. */
+  /** Remote batches are polled after restart; guided batches deliberately wait for Continue. */
   private async recoverPendingWaveChains(): Promise<void> {
-    try {
-      const runs = this.database.listRuns().filter((run) => run.status === "processing" || run.status === "pending");
-      for (const run of runs) {
-        if (this.runningWaveChains.has(run.runId) || run.waveCount <= 1) continue;
-        const sessionIds = this.database.listSessionIdsForRun(run.runId);
-        if (sessionIds.length < 2) continue;
-        const needsWork = sessionIds.some((id) => {
-          const status = this.database.getTelemetry(id).status;
-          return !TERMINAL.has(status);
-        });
-        if (!needsWork) continue;
-        void this.diagnostics?.write("wave_chain_recover", { runId: run.runId, sessions: sessionIds.length });
-        void this.runWaveChain(run.runId, sessionIds, sessionIds.map((id) => this.sessionInputFromDb(id)));
+    for (const run of this.database.listRuns()) {
+      if (run.waveStrategy === "parallel" && ["processing", "pending"].includes(run.status)) {
+        void this.reconcileRunStatus(run.runId);
       }
-    } catch {
-      // Recovery is best-effort; normal poll still advances active remote batches.
     }
+  }
+
+  async continueRun(runId: string): Promise<SessionTelemetry> {
+    const run = this.database.getRunDetail(runId);
+    if (!run) throw new Error("That run was not found.");
+    if (run.waveStrategy !== "guided") throw new Error("Only guided batches need Continue.");
+    const next = run.sessions.find((session) => session.status === "pending");
+    if (!next) throw new Error("There is no next batch waiting to run.");
+    const sessionIds = this.database.listSessionIdsForRun(runId);
+    const input = this.sessionInputFromDb(next.sessionId);
+    void this.diagnostics?.write("guided_batch_continue", { runId, sessionId: next.sessionId });
+    void this.runWaveChain(runId, sessionIds, sessionIds.map((id) => id === next.sessionId ? input : this.sessionInputFromDb(id)));
+    return this.emit(next.sessionId);
+  }
+
+  private async reconcileRunStatus(runId: string): Promise<void> {
+    const sessions = this.database.listSessionIdsForRun(runId).map((id) => this.database.getTelemetry(id));
+    if (!sessions.length) return;
+    const agg = this.database.aggregateRunUsage(runId);
+    if (sessions.some((session) => !TERMINAL.has(session.status))) {
+      this.database.updateBatchRun(runId, { status: "processing", completedCount: agg.completed, costUsd: agg.costUsd });
+      return;
+    }
+    const status: SessionStatus = sessions.every((session) => session.status === "cancelled")
+      ? "cancelled"
+      : sessions.some((session) => session.status !== "completed") || agg.failed > 0 ? "partial" : "completed";
+    this.database.updateBatchRun(runId, {
+      status,
+      message: status === "completed" ? `Saved ${agg.completed} images.`
+        : status === "cancelled" ? "Stopped. Saved images are kept."
+          : `Saved ${agg.completed}; some prompts need attention.`,
+      completedCount: agg.completed,
+      costUsd: agg.costUsd,
+    });
   }
 
   private async runDirect(sessionId: string, input: SubmitRunInput): Promise<void> {
@@ -742,11 +800,7 @@ export class BatchEngine {
     this.emit(sessionId);
     const parentRunId = this.database.getTelemetry(sessionId).parentRunId;
     if (parentRunId && TERMINAL.has(status)) {
-      const agg = this.database.aggregateRunUsage(parentRunId);
-      this.database.updateBatchRun(parentRunId, {
-        completedCount: agg.completed,
-        costUsd: agg.costUsd,
-      });
+      await this.reconcileRunStatus(parentRunId);
     }
 
     if (TERMINAL.has(status)) {
@@ -769,7 +823,7 @@ export class BatchEngine {
       this.cancelledRuns.add(current.parentRunId);
       this.database.updateBatchRun(current.parentRunId, {
         status: "cancelled",
-        message: "Cancelled. Saved waves are kept.",
+        message: "Stopped. Saved images are kept.",
         ...(() => {
           const agg = this.database.aggregateRunUsage(current.parentRunId!);
           return { completedCount: agg.completed, costUsd: agg.costUsd };
@@ -835,6 +889,7 @@ export class BatchEngine {
     return this.submit({
       prompts, model: ctx.model, mode: ctx.runMode, format: ctx.format, quality: ctx.quality,
       waveSize: parentRunId ? this.database.getBatchRun(parentRunId)?.wave_size : this.database.getAppSettings().waveSize,
+      waveStrategy: parentRunId ? this.database.getBatchRun(parentRunId)?.wave_strategy : undefined,
       parentRunId,
       ...(referenceImageFileIds.length ? { referenceImageFileIds } : {}),
     });

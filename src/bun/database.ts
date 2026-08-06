@@ -218,6 +218,10 @@ export class AppDatabase {
     `);
     this.migrateToV4();
     this.migrateToV5();
+    // Kept outside the numbered migrations so an existing v5 database gains this
+    // small, backwards-compatible field without a destructive migration.
+    this.ensureColumn("batch_runs", "wave_strategy", "TEXT NOT NULL DEFAULT 'guided'");
+    this.db.exec("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('first_wave_size', '10')");
   }
 
   private migrateToV4(): void {
@@ -258,6 +262,7 @@ export class AppDatabase {
         header_probe_json TEXT
       );
       INSERT OR IGNORE INTO app_settings (key, value) VALUES ('wave_size', '${APP_LIMITS.defaultWaveSize}');
+      INSERT OR IGNORE INTO app_settings (key, value) VALUES ('first_wave_size', '10');
       INSERT OR IGNORE INTO admin_config (id) VALUES (1);
     `);
     this.ensureColumn("batch_sessions", "parent_run_id", "TEXT");
@@ -311,7 +316,7 @@ export class AppDatabase {
     `);
   }
 
-  private ensureColumn(table: "api_keys" | "batch_sessions" | "generated_assets" | "session_prompts" | "reference_files", column: string, definition: string): void {
+  private ensureColumn(table: "api_keys" | "batch_sessions" | "batch_runs" | "generated_assets" | "session_prompts" | "reference_files", column: string, definition: string): void {
     const columns = this.db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
     if (!columns.some((item) => item.name === column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -331,8 +336,10 @@ export class AppDatabase {
 
   getAppSettings(): AppSettings {
     const waveSize = Number(this.getSetting("wave_size", String(APP_LIMITS.defaultWaveSize)));
+    const firstWaveSize = Number(this.getSetting("first_wave_size", "10"));
     return {
       waveSize: Number.isFinite(waveSize) ? Math.max(0, Math.floor(waveSize)) : APP_LIMITS.defaultWaveSize,
+      firstWaveSize: Number.isFinite(firstWaveSize) ? Math.max(1, Math.min(APP_LIMITS.batchPromptLimit, Math.floor(firstWaveSize))) : 10,
     };
   }
 
@@ -342,6 +349,12 @@ export class AppDatabase {
         throw new Error(`Wave size must be 0 (no split) or 1–${APP_LIMITS.batchPromptLimit}.`);
       }
       this.setSetting("wave_size", String(partial.waveSize));
+    }
+    if (partial.firstWaveSize !== undefined) {
+      if (!Number.isInteger(partial.firstWaveSize) || partial.firstWaveSize < 1 || partial.firstWaveSize > APP_LIMITS.batchPromptLimit) {
+        throw new Error(`First batch must be 1–${APP_LIMITS.batchPromptLimit}.`);
+      }
+      this.setSetting("first_wave_size", String(partial.firstWaveSize));
     }
     return this.getAppSettings();
   }
@@ -513,16 +526,17 @@ export class AppDatabase {
 
   createBatchRun(run: {
     runId: string; model: string; mode: RunMode; format: OutputFormatId; quality: QualityTier;
-    waveSize: number; waveCount: number; totalPrompts: number; estimateUsd: number; fxRate: number;
+    waveSize: number; waveCount: number; waveStrategy: "all" | "guided" | "parallel";
+    totalPrompts: number; estimateUsd: number; fxRate: number;
   }): void {
     this.db.query(`
       INSERT INTO batch_runs
         (run_id, model_used, run_mode, output_format, quality, wave_size, wave_count, total_prompts,
-         status, status_message, estimate_usd, fx_rate, diagnostic_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'Queued', ?, ?, ?)
+         wave_strategy, status, status_message, estimate_usd, fx_rate, diagnostic_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'Queued', ?, ?, ?)
     `).run(
       run.runId, run.model, run.mode, run.format, run.quality, run.waveSize, run.waveCount,
-      run.totalPrompts, run.estimateUsd, run.fxRate, `BIS-${run.runId.replaceAll("-", "").slice(0, 8)}`,
+      run.waveStrategy, run.totalPrompts, run.estimateUsd, run.fxRate, `BIS-${run.runId.replaceAll("-", "").slice(0, 8)}`,
     );
   }
 
@@ -553,17 +567,17 @@ export class AppDatabase {
 
   getBatchRun(runId: string): {
     run_id: string; model_used: string; run_mode: RunMode; output_format: string; quality: QualityTier;
-    wave_size: number; wave_count: number; total_prompts: number; completed_count: number;
+    wave_size: number; wave_count: number; wave_strategy: "all" | "guided" | "parallel"; total_prompts: number; completed_count: number;
     status: SessionStatus; status_message: string; estimate_usd: number; cost_usd: number;
     cost_pkr: number; fx_rate: number; created_at: string; diagnostic_id: string;
   } | null {
     return this.db.query<{
       run_id: string; model_used: string; run_mode: RunMode; output_format: string; quality: QualityTier;
-      wave_size: number; wave_count: number; total_prompts: number; completed_count: number;
+      wave_size: number; wave_count: number; wave_strategy: "all" | "guided" | "parallel"; total_prompts: number; completed_count: number;
       status: SessionStatus; status_message: string; estimate_usd: number; cost_usd: number;
       cost_pkr: number; fx_rate: number; created_at: string; diagnostic_id: string;
     }, [string]>(`
-      SELECT run_id, model_used, run_mode, output_format, quality, wave_size, wave_count, total_prompts,
+      SELECT run_id, model_used, run_mode, output_format, quality, wave_size, wave_count, wave_strategy, total_prompts,
         completed_count, status, status_message, estimate_usd, cost_usd, cost_pkr, fx_rate, created_at,
         COALESCE(diagnostic_id, '') AS diagnostic_id
       FROM batch_runs WHERE run_id = ?
@@ -1459,11 +1473,11 @@ export class AppDatabase {
     const runs = this.db.query<{
       run_id: string; status: SessionStatus; model_used: string; run_mode: RunMode;
       total_prompts: number; completed_count: number; cost_usd: number; cost_pkr: number;
-      estimate_usd: number; wave_size: number; wave_count: number; created_at: string;
+      estimate_usd: number; wave_size: number; wave_count: number; wave_strategy: "all" | "guided" | "parallel"; created_at: string;
       status_message: string; output_format: string; quality: QualityTier; diagnostic_id: string;
     }, []>(`
       SELECT run_id, status, model_used, run_mode, total_prompts, completed_count, cost_usd, cost_pkr,
-        estimate_usd, wave_size, wave_count, created_at, status_message, output_format, quality,
+        estimate_usd, wave_size, wave_count, wave_strategy, created_at, status_message, output_format, quality,
         COALESCE(diagnostic_id, '') AS diagnostic_id
       FROM batch_runs ORDER BY created_at DESC LIMIT 100
     `).all();
@@ -1480,6 +1494,7 @@ export class AppDatabase {
       estimateUsd: run.estimate_usd,
       waveSize: run.wave_size,
       waveCount: run.wave_count,
+      waveStrategy: run.wave_strategy,
       startTime: run.created_at,
       message: run.status_message,
       format: isOutputFormatId(run.output_format) ? run.output_format : "square",

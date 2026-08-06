@@ -4,11 +4,12 @@ export default {
   app: {
     name: "BulkImg Studio",
     identifier: "com.bulkimg.studio",
-    version: "1.0.3",
+    version: "1.0.4",
     description: "A local-first workspace for high-volume AI image generation.",
   },
   runtime: {
-    exitOnLastWindowClosed: true,
+    // Closing the window keeps the local scheduler and tray controls available.
+    exitOnLastWindowClosed: false,
   },
   build: {
     bun: {
@@ -33,7 +34,9 @@ export default {
     },
     win: {
       bundleCEF: false,
-      icon: "assets/brand/app_icon.ico",
+      // The release finalizer embeds this icon into every Windows executable
+      // after Electrobun assembles the installer. Keeping it there avoids the
+      // bundled CLI's broken rcedit lookup during packaging.
     },
   },
 } satisfies ElectrobunConfig;

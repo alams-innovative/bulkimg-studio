@@ -66,6 +66,12 @@ export type SubmitRunInput = {
   referenceImageFileIds?: string[];
   /** 0 = no split (single batch). Default from settings when omitted. */
   waveSize?: number;
+  /** How split Batch work should be submitted. */
+  waveStrategy?: "all" | "guided" | "parallel";
+  /** The first guided batch. Later batches use waveSize. */
+  firstWaveSize?: number;
+  /** Exact prompt counts for each wave. Must cover every submitted prompt once. */
+  waveSizes?: number[];
   parentRunId?: string;
   waveIndex?: number;
   waveCount?: number;
@@ -73,6 +79,7 @@ export type SubmitRunInput = {
 
 export type AppSettings = {
   waveSize: number;
+  firstWaveSize: number;
 };
 
 export type RateLimitSnapshot = {
@@ -244,6 +251,7 @@ export type RunSummary = {
   estimateUsd: number;
   waveSize: number;
   waveCount: number;
+  waveStrategy: "all" | "guided" | "parallel";
   startTime: string;
   message: string;
   format: OutputFormatId;
@@ -431,6 +439,7 @@ export type AppRPC = {
       cancelBatchRun: { params: { sessionId: string }; response: SessionTelemetry };
       retryFailedPrompts: { params: { sessionId: string }; response: SessionTelemetry };
       resumeRun: { params: { runId?: string; sessionId?: string }; response: SessionTelemetry };
+      continueRun: { params: { runId: string }; response: SessionTelemetry };
       estimateRunCost: {
         params: {
           model: string;
@@ -524,5 +533,5 @@ export const APP_LIMITS = {
   maxPromptChars: 32_000,
   directPromptLimit: 4,
   batchPromptLimit: 1_000,
-  defaultWaveSize: 100,
+  defaultWaveSize: 50,
 } as const;

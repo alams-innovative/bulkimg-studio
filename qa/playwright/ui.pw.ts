@@ -39,6 +39,18 @@ test("renders at most 100 rows and selects across 1,000 prompts", async ({ page 
   await expect(page.locator(".prompt-card").last()).toHaveAttribute("aria-pressed", "true");
 });
 
+test("reveals editable batch waves only after prompts are selected", async ({ page }) => {
+  await expect(page.locator("#wave-controls")).toBeHidden();
+  await page.getByRole("tab", { name: "Manual" }).click();
+  await page.getByLabel("Manual prompts").fill(Array.from({ length: 230 }, (_, index) => `Prompt ${index + 1}`).join("\n"));
+  await page.getByRole("button", { name: "Add prompts" }).click();
+  await page.locator('button[data-pick="all"]').click();
+  await expect(page.locator("#wave-controls")).toBeVisible();
+  await expect.poll(() => page.locator("#wave-list input").evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))).toEqual(["10", "100", "100", "20"]);
+  await page.getByRole("button", { name: "Add wave" }).click();
+  await expect(page.locator("#wave-list input")).toHaveCount(5);
+});
+
 test("row selection preserves the imported-list viewport", async ({ page }) => {
   await page.getByRole("tab", { name: "Manual" }).click();
   await page.getByLabel("Manual prompts").fill(Array.from({ length: 160 }, (_, index) => `Prompt ${index + 1}`).join("\n"));
@@ -191,5 +203,58 @@ for (const viewport of [{ width: 1440, height: 840 }, { width: 900, height: 640 
       }).filter((item) => item.left < -0.5 || item.right > document.documentElement.clientWidth + 0.5).slice(0, 10),
     }));
     expect(layout.scrollWidth, JSON.stringify(layout)).toBe(layout.clientWidth);
+    const rail = await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>(".run-panel")?.getBoundingClientRect();
+      const footer = document.querySelector<HTMLElement>(".run-panel-footer")?.getBoundingClientRect();
+      const workspace = document.querySelector<HTMLElement>(".workspace-grid")?.getBoundingClientRect();
+      const generator = document.querySelector<HTMLElement>(".generator-view")?.getBoundingClientRect();
+      const content = document.querySelector<HTMLElement>(".view-content")?.getBoundingClientRect();
+      return { panelBottom: panel?.bottom ?? 0, footerBottom: footer?.bottom ?? 0, workspaceBottom: workspace?.bottom ?? 0, generatorBottom: generator?.bottom ?? 0, contentBottom: content?.bottom ?? 0, viewportHeight: window.innerHeight };
+    });
+    expect(rail.footerBottom).toBeGreaterThan(0);
+    expect(rail.footerBottom).toBeLessThanOrEqual(rail.panelBottom + 0.5);
+    expect(rail.footerBottom).toBeLessThanOrEqual(rail.viewportHeight + 0.5);
+  });
+}
+
+for (const viewport of [
+  { width: 900, height: 540 },
+  { width: 1024, height: 576 },
+  { width: 1280, height: 600 },
+  { width: 1366, height: 600 },
+  { width: 1366, height: 768 },
+  { width: 1920, height: 1080 },
+  { width: 2560, height: 1440 },
+  { width: 3840, height: 2160 },
+]) {
+  test(`generator stays within the window at ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    const layout = await page.evaluate(() => {
+      const footer = document.querySelector<HTMLElement>(".run-panel-footer")?.getBoundingClientRect();
+      const panel = document.querySelector<HTMLElement>(".run-panel")?.getBoundingClientRect();
+      const actionElements = ["#header-stats", "#rate-limits-line", ".run-actions", ".privacy-note"]
+        .map((selector) => document.querySelector<HTMLElement>(selector)?.getBoundingClientRect())
+        .filter((rect): rect is DOMRect => Boolean(rect));
+      return {
+        clientWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        footerBottom: footer?.bottom ?? 0,
+        panelBottom: panel?.bottom ?? 0,
+        viewportHeight: window.innerHeight,
+        actionElements: actionElements.map((rect) => ({ top: rect.top, bottom: rect.bottom, height: rect.height })),
+      };
+    });
+    expect(layout.scrollWidth, JSON.stringify(layout)).toBe(layout.clientWidth);
+    expect(layout.footerBottom).toBeGreaterThan(0);
+    expect(layout.footerBottom).toBeLessThanOrEqual(layout.panelBottom + 0.5);
+    expect(layout.footerBottom).toBeLessThanOrEqual(layout.viewportHeight + 0.5);
+    expect(layout.actionElements).toHaveLength(4);
+    for (const element of layout.actionElements) {
+      expect(element.height).toBeGreaterThan(0);
+      expect(element.top).toBeGreaterThanOrEqual(0);
+      expect(element.bottom).toBeLessThanOrEqual(layout.viewportHeight + 0.5);
+    }
+    await expect(page.getByRole("button", { name: "Generate", exact: true })).toBeVisible();
+    await expect(page.locator(".privacy-note")).toBeVisible();
   });
 }
