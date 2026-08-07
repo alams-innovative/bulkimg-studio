@@ -1,11 +1,11 @@
-# BulkImg Studio 1.0.4 — Release Notes
+# BulkImg Studio 1.0.5 — Release Notes
 
 ## Versioning
 
 | Surface | Value |
 | --- | --- |
-| Package / Electrobun build | `1.0.4` |
-| UI / brand display | `1.0.4` |
+| Package / Electrobun build | `1.0.5` |
+| UI / brand display | `1.0.5` |
 
 ## Build
 
@@ -41,7 +41,7 @@ build and starts the installed launcher, while `bun run open:stable` only opens 
 
 ## Smoke checklist
 
-- [ ] App launches and shows **BulkImg Studio 1.0.4**
+- [ ] App launches and shows **BulkImg Studio 1.0.5**
 - [ ] Setup ZIP contains `Install-BulkImgStudio.cmd`, its PowerShell helper, `INSTALL.txt`, and `.installer/`
 - [ ] Setup installs without Bun present on a clean Windows machine
 - [ ] Install-BulkImgStudio.cmd starts the app after a clean install

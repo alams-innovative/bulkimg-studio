@@ -1193,6 +1193,102 @@ textarea {
   white-space: nowrap
 }
 
+.wave-queue {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--subtle)
+}
+
+.wave-queue.hidden,
+.wave-queue[hidden] {
+  display: none !important
+}
+
+.wave-queue-head {
+  display: grid;
+  gap: 3px;
+  min-width: 124px
+}
+
+.wave-queue-head span,
+.wave-queue-number {
+  color: var(--text3);
+  font: 500 9px "JetBrains Mono", ui-monospace, monospace;
+  letter-spacing: .07em;
+  text-transform: uppercase
+}
+
+.wave-queue-head strong {
+  font-size: 11px;
+  line-height: 1.25
+}
+
+.wave-queue-list {
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+  padding: 0 1px 2px;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: thin
+}
+
+.wave-queue-item {
+  min-width: 156px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 9px;
+  padding: 7px 8px;
+  border: 1px solid var(--subtle);
+  border-radius: 7px;
+  background: var(--muted)
+}
+
+.wave-queue-item strong {
+  font-size: 11px
+}
+
+.wave-queue-item small {
+  grid-column: 1;
+  color: var(--text3);
+  font-size: 10px;
+  text-transform: capitalize
+}
+
+.wave-queue-item.active-wave {
+  border-color: color-mix(in srgb, var(--steel) 62%, var(--border));
+  background: color-mix(in srgb, var(--steel) 9%, var(--muted))
+}
+
+.wave-queue-item.status-completed small { color: var(--success) }
+.wave-queue-item.status-partial small { color: var(--warning) }
+.wave-queue-item.status-failed small { color: var(--error) }
+
+.wave-run {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+  padding: 6px 8px;
+  font-size: 10px
+}
+
+.wave-queue-item.awaiting-run {
+  border-color: color-mix(in srgb, var(--warning) 72%, var(--border));
+  background: color-mix(in srgb, var(--warning) 10%, var(--muted));
+  animation: wave-ready-flash .9s ease-out 2
+}
+
+@keyframes wave-ready-flash {
+  0%, 100% { opacity: 1; transform: translateY(0) }
+  45% { opacity: .56; transform: translateY(-2px) }
+}
+
 .management-view {
   margin: 0 22px 22px;
   padding: 18px;
@@ -3546,6 +3642,10 @@ button.history-image:disabled {
   .toast.show .toast-progress {
     animation: none;
     transform: scaleX(0.35)
+  }
+
+  .wave-queue-item.awaiting-run {
+    animation: none
   }
 
   .app-shell {

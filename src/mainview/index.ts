@@ -301,6 +301,9 @@ const elements = {
   waveMath: byId("wave-math"),
   rateLimitsLine: byId("rate-limits-line"),
   keySummary: byId("key-summary"),
+  waveQueue: byId("wave-queue"),
+  waveQueueSummary: byId("wave-queue-summary"),
+  waveQueueList: byId("wave-queue-list"),
   toast: byId("toast"),
   checkIconTemplate: byId("check-icon-template"),
 };
@@ -356,6 +359,8 @@ let matrixPage = 0;
 let activeKeyCount = 0;
 let matrixView: "list" | "cards" = localStorage.getItem("bulkimg-prompt-view") === "cards" ? "cards" : "list";
 let lastTelemetryStatus: SessionTelemetry["status"] | null = null;
+let waveQueueRequest = 0;
+let alertedWaveKey: string | null = null;
 let selectionSyncToken = 0;
 let bootstrapData: AppBootstrap | null = null;
 let pricingView: PricingView | null = null;
@@ -683,6 +688,86 @@ async function startSessionPolling(sessionId: string): Promise<void> {
       showToast(error instanceof Error ? error.message : "Could not refresh the run", true);
     }
   }, 10_000);
+}
+
+function isTerminalStatus(status: SessionTelemetry["status"]): boolean {
+  return ["partial", "completed", "failed", "cancelled"].includes(status);
+}
+
+function hideWaveQueue(): void {
+  elements.waveQueueList.innerHTML = "";
+  elements.waveQueueSummary.textContent = "";
+  setHidden(elements.waveQueue, true);
+}
+
+async function continueQueuedWave(runId: string, button?: HTMLButtonElement): Promise<void> {
+  if (button) {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+  }
+  try {
+    const next = await app.rpc!.request.continueRun({ runId });
+    renderTelemetry(next);
+    showToast(`Batch ${(next.waveIndex ?? 0) + 1} is now running.`);
+    await startSessionPolling(next.sessionId);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not run the next batch", true);
+    if (session) void refreshWaveQueue(session);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
+  }
+}
+
+function renderWaveQueue(run: RunSummary): void {
+  const waves = [...run.sessions].sort((left, right) => (left.waveIndex ?? 0) - (right.waveIndex ?? 0));
+  if (waves.length < 2) {
+    hideWaveQueue();
+    return;
+  }
+  const readyWaveIndex = run.waveStrategy === "guided"
+    ? waves.findIndex((wave, index) => wave.status === "pending" && waves.slice(0, index).every((previous) => isTerminalStatus(previous.status)))
+    : -1;
+  const readyWave = readyWaveIndex >= 0 ? waves[readyWaveIndex]! : null;
+  const alertKey = readyWave ? `${run.runId}:${readyWave.sessionId}` : null;
+  const shouldAlert = Boolean(alertKey && alertedWaveKey !== alertKey);
+  if (shouldAlert && alertKey) alertedWaveKey = alertKey;
+
+  elements.waveQueueSummary.textContent = readyWave
+    ? `Batch ${(readyWave.waveIndex ?? readyWaveIndex) + 1} is ready to run`
+    : `${run.completedCount}/${run.totalPrompts} images across ${waves.length} batches`;
+  elements.waveQueueList.innerHTML = waves.map((wave, index) => {
+    const ordinal = (wave.waveIndex ?? index) + 1;
+    const ready = readyWave?.sessionId === wave.sessionId;
+    const statusLabel = ready ? "Ready to run" : wave.status.replaceAll("_", " ");
+    return `<li class="wave-queue-item status-${escapeHtml(wave.status)}${ready && shouldAlert ? " awaiting-run" : ""}${session?.sessionId === wave.sessionId ? " active-wave" : ""}">
+      <span class="wave-queue-number">Batch ${ordinal}/${waves.length}</span>
+      <strong>${wave.completedCount}/${wave.totalPrompts} images</strong>
+      <small>${escapeHtml(statusLabel)}</small>
+      ${ready ? `<button type="button" class="secondary-button wave-run" data-run-id="${escapeHtml(run.runId)}" aria-label="Run batch ${ordinal}">Run batch ${ordinal}</button>` : ""}
+    </li>`;
+  }).join("");
+  setHidden(elements.waveQueue, false);
+  elements.waveQueueList.querySelectorAll<HTMLButtonElement>(".wave-run").forEach((button) => {
+    button.onclick = () => void continueQueuedWave(button.dataset["runId"]!, button);
+  });
+}
+
+async function refreshWaveQueue(next: SessionTelemetry): Promise<void> {
+  const request = ++waveQueueRequest;
+  if (!next.parentRunId || !next.waveCount || next.waveCount < 2) {
+    hideWaveQueue();
+    return;
+  }
+  try {
+    const run = await app.rpc!.request.getRunDetail({ runId: next.parentRunId });
+    if (request !== waveQueueRequest || session?.sessionId !== next.sessionId) return;
+    renderWaveQueue(run);
+  } catch {
+    if (request === waveQueueRequest && session?.sessionId === next.sessionId) hideWaveQueue();
+  }
 }
 
 const slateStackIcons = {
@@ -1460,6 +1545,7 @@ function renderTelemetry(next: SessionTelemetry): void {
   const estimate = Number.isFinite(next.estimateUsd) ? next.estimateUsd : 0;
   elements.sessionCost.textContent = `$${next.costUsd.toFixed(3)} · est $${estimate.toFixed(3)} · PKR ${next.costPkr.toFixed(2)}`;
   elements.fxRate.textContent = `PKR ${next.fxRate.toFixed(2)}`;
+  void refreshWaveQueue(next);
   syncActionState();
   if (pollTimer !== null && ["partial", "completed", "failed", "cancelled"].includes(next.status)) {
     window.clearInterval(pollTimer);
@@ -2180,9 +2266,7 @@ function bindSessionListHandlers(root: ParentNode = elements.sessionList, listRo
   });
   root.querySelectorAll<HTMLButtonElement>(".run-continue").forEach((button) => {
     button.onclick = async () => {
-      const next = await app.rpc!.request.continueRun({ runId: button.dataset["runId"]! });
-      renderTelemetry(next);
-      await startSessionPolling(next.sessionId);
+      await continueQueuedWave(button.dataset["runId"]!, button);
       await setView("generator");
     };
   });

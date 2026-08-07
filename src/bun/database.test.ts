@@ -70,7 +70,7 @@ describe("database migrations and job state", () => {
 
     const migrated = new AppDatabase(directory);
     expect(migrated.getSessionRunContext("legacy-session").referenceFileIds).toEqual(["file-legacy"]);
-    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(5);
+    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
     migrated.db.close();
   });
 

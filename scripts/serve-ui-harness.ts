@@ -42,9 +42,11 @@ const telemetryBase = {
   phase: "generating" as const,
 };
 
+let guidedWaveStarted = false;
+
 const mocks: Record<string, (params: any) => any> = {
   getBootstrap: () => ({
-    brand: { appName: "BulkImg Studio", version: "1.0.4" },
+    brand: { appName: "BulkImg Studio", version: "1.0.5" },
     models: { defaultModel: "gpt-image-2", models: [{ id: "gpt-image-2", label: "GPT Image 2", enabled: true }] },
     keyCount: 1,
     platform: "win32-x64",
@@ -92,14 +94,65 @@ const mocks: Record<string, (params: any) => any> = {
     batch: { requestCount: 40, completedCount: 35, failedCount: 5, inputTokens: 4_000, outputTokens: 43_000, costUsd: 0.78, costPkr: 216.84 },
   }),
   listApiKeys: () => [{ id: "key-1", label: "Test key", keyHint: "••••test", provider: "OpenAI", isActive: true, isRateLimited: false, rateLimitedUntil: null, createdAt: new Date().toISOString(), lastUsedAt: null, totalRequests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, costPkr: 0, currentSessionId: null, currentModel: null, currentRunMode: null, currentStatus: null, currentPrompts: 0, currentCompleted: 0 }],
-  submitBatchRun: ({ prompts, mode, format, quality }: any) => ({
-    ...telemetryBase,
-    totalPrompts: prompts.length,
-    runMode: mode,
-    format,
-    quality,
-    estimateUsd: prompts.length * 0.05,
-    retryableCount: prompts.length,
+  submitBatchRun: ({ prompts, mode, format, quality }: any) => mode === "batch" && prompts.length > 1
+    ? {
+      ...telemetryBase,
+      sessionId: "wave-one",
+      status: "completed" as const,
+      totalPrompts: Math.ceil(prompts.length / 2),
+      completedCount: Math.ceil(prompts.length / 2),
+      runMode: mode,
+      format,
+      quality,
+      message: "Saved the first batch.",
+      parentRunId: "run-guided-test",
+      waveIndex: 0,
+      waveCount: 2,
+      phase: "done" as const,
+      etaMs: null,
+      estimateUsd: prompts.length * 0.05,
+    }
+    : ({
+      ...telemetryBase,
+      totalPrompts: prompts.length,
+      runMode: mode,
+      format,
+      quality,
+      estimateUsd: prompts.length * 0.05,
+      retryableCount: prompts.length,
+    }),
+  getRunDetail: () => ({
+    runId: "run-guided-test",
+    status: "processing" as const,
+    model: "gpt-image-2",
+    runMode: "batch" as const,
+    totalPrompts: 3,
+    completedCount: guidedWaveStarted ? 2 : 2,
+    costUsd: 0.1,
+    costPkr: 27.8,
+    estimateUsd: 0.15,
+    waveSize: 2,
+    waveCount: 2,
+    waveStrategy: "guided" as const,
+    startTime: new Date().toISOString(),
+    message: guidedWaveStarted ? "Batch 2 is running." : "Batch 2 is ready to run.",
+    format: "square" as const,
+    quality: "medium" as const,
+    diagnosticId: "BIS-guided",
+    sessions: [
+      {
+        sessionId: "wave-one", status: "completed" as const, model: "gpt-image-2", runMode: "batch" as const,
+        totalPrompts: 2, completedCount: 2, costUsd: 0.1, costPkr: 27.8, startTime: new Date().toISOString(), endTime: new Date().toISOString(), keyLabel: "Test key",
+        format: "square" as const, quality: "medium" as const, retryableCount: 0, diagnosticId: "BIS-guided-1", lastError: null,
+        parentRunId: "run-guided-test", waveIndex: 0, estimateUsd: 0.1, elapsedMs: 1_000,
+      },
+      {
+        sessionId: "wave-two", status: guidedWaveStarted ? "processing" as const : "pending" as const, model: "gpt-image-2", runMode: "batch" as const,
+        totalPrompts: 1, completedCount: 0, costUsd: 0, costPkr: 0, startTime: new Date().toISOString(), endTime: null, keyLabel: "Test key",
+        format: "square" as const, quality: "medium" as const, retryableCount: 1, diagnosticId: "BIS-guided-2", lastError: null,
+        parentRunId: "run-guided-test", waveIndex: 1, estimateUsd: 0.05, elapsedMs: 0,
+      },
+    ],
   }),
   pollBatchStatus: () => ({
     ...telemetryBase,
@@ -274,6 +327,7 @@ const mocks: Record<string, (params: any) => any> = {
   getHistoryImage: () => ({
     dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQAAAAEACAIAAADTED8xAAAACXBIWXMAAAsTAAALEwEAmpwYAAABaElEQVR4nO3BMQEAAADCoPVP7WsIoAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAeAN1+AAB1nZq5AAAAABJRU5ErkJggg==",
   }),
+  listConverterSessionImages: () => [],
   listExports: () => [
     {
       name: "run-demo-parent.zip",
@@ -284,7 +338,7 @@ const mocks: Record<string, (params: any) => any> = {
   ],
   getDiagnosticLogs: () => ({
     lines: [
-      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.4"}',
+      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.5"}',
       '{"ts":"2026-08-04T06:01:12.000Z","event":"session_created","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","mode":"batch"}',
       '{"ts":"2026-08-04T06:02:40.000Z","event":"batch_poll","status":"processing","completed":42,"total":100}',
       '{"ts":"2026-08-04T06:03:10.000Z","event":"batch_download_error","category":"timeout","message":"Download stalled; will retry"}',
@@ -322,7 +376,20 @@ const mocks: Record<string, (params: any) => any> = {
   }),
   listAdminProjects: () => [],
   resumeRun: () => ({ ...telemetryBase, status: "processing", message: "Resume batch submitted." }),
-  continueRun: () => ({ ...telemetryBase, status: "processing", message: "Next batch submitted." }),
+  continueRun: () => {
+    guidedWaveStarted = true;
+    return {
+      ...telemetryBase,
+      sessionId: "wave-two",
+      status: "processing" as const,
+      totalPrompts: 1,
+      runMode: "batch" as const,
+      message: "Batch 2 is running.",
+      parentRunId: "run-guided-test",
+      waveIndex: 1,
+      waveCount: 2,
+    };
+  },
   windowControl: () => ({ maximized: true }),
   revealHistoryAsset: () => ({ filePath: "C:\\\\temp\\\\image.png" }),
   revealHistorySessionFolder: () => ({ directory: "C:\\\\temp\\\\history" }),

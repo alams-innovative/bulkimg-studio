@@ -222,6 +222,7 @@ export class AppDatabase {
     // small, backwards-compatible field without a destructive migration.
     this.ensureColumn("batch_runs", "wave_strategy", "TEXT NOT NULL DEFAULT 'guided'");
     this.db.exec("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('first_wave_size', '10')");
+    this.migrateToV6();
   }
 
   private migrateToV4(): void {
@@ -313,6 +314,21 @@ export class AppDatabase {
       );
       CREATE INDEX IF NOT EXISTS idx_converter_items_job ON converter_items(job_id, ordinal);
       PRAGMA user_version = 5;
+    `);
+  }
+
+  private migrateToV6(): void {
+    const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+    if (version >= 6) return;
+    // v5 wrote total_prompts and wave_strategy in the reverse order. Repair only
+    // rows with that unmistakable shape, preserving any valid historical run.
+    this.db.exec(`
+      UPDATE batch_runs
+      SET wave_strategy = total_prompts,
+          total_prompts = wave_strategy
+      WHERE CAST(wave_strategy AS TEXT) GLOB '[0-9]*'
+        AND total_prompts IN ('all', 'guided', 'parallel');
+      PRAGMA user_version = 6;
     `);
   }
 
@@ -536,7 +552,7 @@ export class AppDatabase {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'Queued', ?, ?, ?)
     `).run(
       run.runId, run.model, run.mode, run.format, run.quality, run.waveSize, run.waveCount,
-      run.waveStrategy, run.totalPrompts, run.estimateUsd, run.fxRate, `BIS-${run.runId.replaceAll("-", "").slice(0, 8)}`,
+      run.totalPrompts, run.waveStrategy, run.estimateUsd, run.fxRate, `BIS-${run.runId.replaceAll("-", "").slice(0, 8)}`,
     );
   }
 

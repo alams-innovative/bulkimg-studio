@@ -18,12 +18,12 @@ import { setNativeWindowIcon } from "./services/window-icon";
 import { getInitialWindowFrame } from "./window-layout";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.4 supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.0.5 supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.4",
+  version: "1.0.5",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -73,7 +73,7 @@ const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
 void diagnosticLog.write("startup", {
   cleanedFiles,
-  version: "1.0.4",
+  version: "1.0.5",
   userData: dataDirectory,
   pid: process.pid,
 });

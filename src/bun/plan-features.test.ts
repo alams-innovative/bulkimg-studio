@@ -68,16 +68,16 @@ describe("wave planner", () => {
   });
 });
 
-describe("v5 migration, runs, and Converter storage", () => {
-  test("opens fresh DB at user_version 5 with settings defaults", () => {
+describe("v6 migration, runs, and Converter storage", () => {
+  test("opens fresh DB at user_version 6 with settings defaults", () => {
     const directory = makeDir();
     const database = new AppDatabase(directory);
-    expect(database.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(5);
+    expect(database.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
     expect(database.getAppSettings().waveSize).toBe(APP_LIMITS.defaultWaveSize);
     database.db.close();
   });
 
-  test("migrates v3 schema to v5", () => {
+  test("migrates v3 schema to v6", () => {
     const directory = makeDir();
     const original = new AppDatabase(directory);
     original.createSession("session-v3", input(2, "direct"), 278);
@@ -88,9 +88,30 @@ describe("v5 migration, runs, and Converter storage", () => {
     raw.close();
 
     const migrated = new AppDatabase(directory);
-    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(5);
+    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
     expect(migrated.getSessionPrompts("session-v3")).toHaveLength(2);
     expect(migrated.getAppSettings().waveSize).toBe(APP_LIMITS.defaultWaveSize);
+    migrated.db.close();
+  });
+
+  test("repairs swapped guided-wave metadata from v5", () => {
+    const directory = makeDir();
+    const original = new AppDatabase(directory);
+    original.db.close();
+    const raw = new Database(join(directory, "bulkimg-studio.db"));
+    raw.query(`
+      INSERT INTO batch_runs
+        (run_id, model_used, run_mode, output_format, quality, wave_size, wave_count, total_prompts,
+         wave_strategy, status, status_message, estimate_usd, fx_rate, diagnostic_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("swapped-v5-run", "gpt-image-2", "batch", "square", "medium", 100, 2, "guided", 165, "processing", "Batch 1 of 2", 0.3, 278, "BIS-swapped");
+    raw.exec("PRAGMA user_version = 5;");
+    raw.close();
+
+    const migrated = new AppDatabase(directory);
+    const run = migrated.getRunDetail("swapped-v5-run");
+    expect(run?.waveStrategy).toBe("guided");
+    expect(run?.totalPrompts).toBe(165);
     migrated.db.close();
   });
 
@@ -144,6 +165,42 @@ describe("v5 migration, runs, and Converter storage", () => {
     const runs = database.listRuns();
     expect(runs).toHaveLength(1);
     expect(runs[0]!.sessions).toHaveLength(2);
+    database.db.close();
+  });
+
+  test("does not start a guided wave before the prior wave is terminal", async () => {
+    const directory = makeDir();
+    const database = new AppDatabase(directory);
+    const runId = "run-guarded-continue";
+    database.createBatchRun({
+      runId,
+      model: "gpt-image-2",
+      mode: "batch",
+      format: "square",
+      quality: "medium",
+      waveSize: 1,
+      waveCount: 2,
+      waveStrategy: "guided",
+      totalPrompts: 2,
+      estimateUsd: 0.1,
+      fxRate: 278,
+    });
+    for (const [sessionId, waveIndex] of [["guard-wave-1", 0], ["guard-wave-2", 1]] as const) {
+      database.createSession(sessionId, {
+        ...input(1, "batch"), parentRunId: runId, waveIndex, waveCount: 2,
+      }, 278, { costUsd: 0.05, pricingVersion: "test" }, { parentRunId: runId, waveIndex, waveCount: 2 });
+    }
+    database.updateSession("guard-wave-1", { status: "processing", message: "Batch 1 is processing." });
+    const engine = new BatchEngine(
+      database,
+      { listSafe: () => [], activeKeys: async () => [], invalidateKey: () => undefined } as any,
+      { getUsdPkrRate: async () => 278 } as any,
+      new HistoryService(database, directory, join(directory, "downloads")),
+      new PricingService([]),
+      directory,
+    );
+
+    await expect(engine.continueRun(runId)).rejects.toThrow("current batch must finish");
     database.db.close();
   });
 });

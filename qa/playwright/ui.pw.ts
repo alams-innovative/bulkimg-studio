@@ -51,6 +51,23 @@ test("reveals editable batch waves only after prompts are selected", async ({ pa
   await expect(page.locator("#wave-list input")).toHaveCount(5);
 });
 
+test("shows queued guided waves in the live bar and runs the ready wave", async ({ page }) => {
+  await page.getByRole("tab", { name: "Manual" }).click();
+  await page.getByLabel("Manual prompts").fill("Prompt one\nPrompt two\nPrompt three");
+  await page.getByRole("button", { name: "Add prompts" }).click();
+  await page.getByRole("button", { name: "Select all", exact: true }).click();
+  await page.getByRole("button", { name: "Generate 3", exact: true }).click();
+
+  const queue = page.locator("#wave-queue");
+  await expect(queue).toBeVisible();
+  await expect(queue).toContainText("Batch 2 is ready to run");
+  await expect(queue.locator(".wave-queue-item")).toHaveCount(2);
+  await expect(queue.locator(".wave-queue-item.awaiting-run")).toHaveCount(1);
+  await queue.getByRole("button", { name: "Run batch 2" }).click();
+  await expect(queue.locator(".wave-run")).toHaveCount(0);
+  await expect(queue.locator(".wave-queue-item").nth(1)).toHaveClass(/status-processing/);
+});
+
 test("row selection preserves the imported-list viewport", async ({ page }) => {
   await page.getByRole("tab", { name: "Manual" }).click();
   await page.getByLabel("Manual prompts").fill(Array.from({ length: 160 }, (_, index) => `Prompt ${index + 1}`).join("\n"));

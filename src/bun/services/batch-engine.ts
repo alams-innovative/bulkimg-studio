@@ -457,8 +457,13 @@ export class BatchEngine {
     const run = this.database.getRunDetail(runId);
     if (!run) throw new Error("That run was not found.");
     if (run.waveStrategy !== "guided") throw new Error("Only guided batches need Continue.");
-    const next = run.sessions.find((session) => session.status === "pending");
+    const orderedSessions = [...run.sessions].sort((left, right) => (left.waveIndex ?? 0) - (right.waveIndex ?? 0));
+    const nextIndex = orderedSessions.findIndex((session) => session.status === "pending");
+    const next = nextIndex >= 0 ? orderedSessions[nextIndex] : undefined;
     if (!next) throw new Error("There is no next batch waiting to run.");
+    if (!orderedSessions.slice(0, nextIndex).every((session) => TERMINAL.has(session.status))) {
+      throw new Error("The current batch must finish before the next batch can run.");
+    }
     const sessionIds = this.database.listSessionIdsForRun(runId);
     const input = this.sessionInputFromDb(next.sessionId);
     void this.diagnostics?.write("guided_batch_continue", { runId, sessionId: next.sessionId });
