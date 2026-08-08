@@ -1,6 +1,6 @@
 # Release Guide
 
-Current version: `1.0.7`.
+Current version: `1.0.8`.
 
 ## Build and verify
 

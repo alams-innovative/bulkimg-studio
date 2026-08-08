@@ -310,6 +310,7 @@ const elements = {
   matrixPage: byId("matrix-page"),
   railEstimate: byId("rail-estimate"),
   railPkr: byId("rail-pkr"),
+  railEstimateDetail: byId("rail-estimate-detail"),
   waveControls: byId("wave-controls"),
   waveStrategy: byId<HTMLSelectElement>("wave-strategy"),
   waveList: byId("wave-list"),
@@ -549,6 +550,7 @@ function syncEstimateChrome(count: number): void {
     elements.estimatedCost.textContent = "";
     elements.railEstimate.textContent = "";
     elements.railPkr.textContent = "";
+    elements.railEstimateDetail.textContent = "";
   }
 }
 
@@ -1354,6 +1356,7 @@ async function refreshEstimate(): Promise<void> {
     elements.estimatedCost.textContent = `$${estimate.costUsd.toFixed(2)}`;
     elements.railEstimate.textContent = `$${estimate.costUsd.toFixed(3)}`;
     elements.railPkr.textContent = `PKR ${estimate.costPkr.toFixed(2)}`;
+    elements.railEstimateDetail.textContent = `${count} image${count === 1 ? "" : "s"} · ${referenceImages.length} reference${referenceImages.length === 1 ? "" : "s"} · ${currentMode() === "batch" ? "Batch rate" : "Direct rate"}`;
     animateState(elements.railEstimate);
   } catch {
     setHidden(elements.estimatedCost, false);
@@ -2103,37 +2106,19 @@ function renderUsageLimits(): void {
 function renderPricing(): void {
   const pricing = pricingView;
   if (!pricing) return;
-  elements.usagePricingMeta.textContent = `${pricing.version} · ${pricing.source}`;
-  const perMillion = (rate: number) => `${money(rate * 1_000_000, rate * 1_000_000 < 1 ? 2 : 0)} / 1M`;
-  const tokenRows: Array<[string, number]> = [
-    ["Text input", pricing.textInputTokenUsd],
-    ["Image input", pricing.imageInputTokenUsd],
-    ["Cached text input", pricing.cachedTextInputTokenUsd],
-    ["Cached image input", pricing.cachedImageInputTokenUsd],
-    ["Image output", pricing.imageOutputTokenUsd],
-  ];
+  elements.usagePricingMeta.textContent = "Estimates in USD";
   const formats: Array<keyof PricingView["imageEstimatesUsd"]> = ["square", "portrait", "landscape", "story"];
   elements.usagePricing.innerHTML = `
-    <div class="usage-pricing-tokens">${tokenRows.map(([label, rate]) =>
-      `<div class="usage-price-row"><span>${label}</span><strong>${perMillion(rate)}</strong></div>`).join("")}</div>
     <div class="usage-image-prices">
-      <div class="usage-price-row usage-price-heading"><span>Format · ratio · resolution</span><strong>Low · Medium · High</strong></div>
+      <div class="usage-price-row usage-price-heading"><span>Image size</span><strong>Direct · Batch</strong></div>
       ${formats.map((key) => {
         const rates = pricing.imageEstimatesUsd[key];
         const format = OUTPUT_FORMATS[key];
-        return `<div class="usage-price-row"><span>${format.label} · ${format.ratio} · ${format.size}</span><strong>${money(rates.low)} · ${money(rates.medium)} · ${money(rates.high)}</strong></div>`;
+        return `<div class="usage-price-row"><span>${format.label} · ${format.ratio} · ${format.size}</span><strong>Low ${money(rates.low)} / ${money(rates.low * pricing.batchDiscount)} · Medium ${money(rates.medium)} / ${money(rates.medium * pricing.batchDiscount)} · High ${money(rates.high)} / ${money(rates.high * pricing.batchDiscount)}</strong></div>`;
       }).join("")}
-      <small class="usage-limit-note">Reference input estimate: ${money(pricing.referenceInputEstimateUsd)} each · Batch discount: ${Math.round(pricing.batchDiscount * 100)}%</small>
+      <small class="usage-limit-note">Reference image estimate: ${money(pricing.referenceInputEstimateUsd)} each direct · ${money(pricing.referenceInputEstimateUsd * pricing.batchDiscount)} each in Batch. Actual reference cost depends on the image input and is recorded after the run.</small>
     </div>
-    <div class="usage-pricing-notes">
-      <div><strong>Cached prompts</strong><span>OpenAI may classify eligible repeated input as cached. This app displays the cached rate, but does not force caching.</span></div>
-      <div><strong>Reference images</strong><span>Used in edit requests through the attached reference files. Their returned image-input tokens are part of actual usage; the per-reference amount above is only a pre-run estimate.</span></div>
-    </div>
-    <div class="usage-pricing-examples">
-      <h4>Cost examples</h4>
-      <div class="usage-example"><strong>1 prompt · no references</strong><span>1 text input + 1 generated image output</span><em>Direct and Batch use different rates</em></div>
-      <div class="usage-example"><strong>15 prompts · 4 references</strong><span>4 references are uploaded once, then used across 15 requests = up to 60 image-input uses</span><em>Batch applies 50% to the token bill; caching only lowers it when OpenAI reports cached tokens</em></div>
-    </div>`;
+    <p class="usage-limit-note">Your selected prompt count, quality, size, and reference-image count are calculated automatically in the Generator. Batch totals already include the Batch rate.</p>`;
   enter(elements.usagePricing, 0.08, 4);
 }
 
@@ -2494,6 +2479,8 @@ function renderUpdateState(state: UpdateState): void {
 
   const selectedRelease = state.releases.find((release) => release.version === selectedUpdateVersion) ?? state.available;
   if (selectedRelease) selectedUpdateVersion = selectedRelease.version;
+  setHidden(elements.downloadUpdate, !selectedRelease);
+  setHidden(elements.installUpdate, !selectedRelease);
   const downloaded = Boolean(selectedRelease && state.downloadedVersion === selectedRelease.version);
   elements.downloadUpdate.disabled = busy || !selectedRelease || downloaded;
   elements.installUpdate.disabled = busy || !selectedRelease || !downloaded;

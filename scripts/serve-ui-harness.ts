@@ -66,7 +66,7 @@ const updateReleases = [
   { version: "1.1.0-beta.1", tag: "v1.1.0-beta.1", channel: "beta", publishedAt: "2026-08-09T00:00:00.000Z", releaseNotesUrl: "https://github.com/alams-innovative/bulkimg-studio/releases/tag/v1.1.0-beta.1", minimumSupportedVersion: "1.0.0", architectures: ["x64"], schemaVersion: 7, available: false, unavailableReason: "Enable beta updates to install this release.", isCurrent: false },
 ];
 const updateState = (state: HarnessState) => ({
-  configured: true, currentVersion: "1.0.7", channel: state.updateChannel, lastCheckedAt: new Date().toISOString(), lastError: null,
+  configured: true, currentVersion: "1.0.8", channel: state.updateChannel, lastCheckedAt: new Date().toISOString(), lastError: null,
   activity: state.downloadedUpdateVersion ? "ready" as const : "idle" as const, progress: null,
   available: updateReleases.find((release) => release.version === "1.0.8") ?? null,
   releases: updateReleases.map((release) => release.channel === "beta" ? { ...release, available: state.updateChannel === "beta", unavailableReason: state.updateChannel === "beta" ? null : release.unavailableReason } : release),
@@ -75,7 +75,7 @@ const updateState = (state: HarnessState) => ({
 
 const mocks: Record<string, (params: any) => any> = {
   getBootstrap: () => ({
-    brand: { appName: "BulkImg Studio", version: "1.0.7" },
+    brand: { appName: "BulkImg Studio", version: "1.0.8" },
     models: { defaultModel: "gpt-image-2", models: [{ id: "gpt-image-2", label: "GPT Image 2", enabled: true }] },
     keyCount: 1,
     platform: "win32-x64",
@@ -411,7 +411,7 @@ const mocks: Record<string, (params: any) => any> = {
   ],
   getDiagnosticLogs: () => ({
     lines: [
-      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.7"}',
+      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.8"}',
       '{"ts":"2026-08-04T06:01:12.000Z","event":"session_created","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","mode":"batch"}',
       '{"ts":"2026-08-04T06:02:40.000Z","event":"batch_poll","status":"processing","completed":42,"total":100}',
       '{"ts":"2026-08-04T06:03:10.000Z","event":"batch_download_error","category":"timeout","message":"Download stalled; will retry"}',

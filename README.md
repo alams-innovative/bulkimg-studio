@@ -1,6 +1,6 @@
 # BulkImg Studio
 
-BulkImg Studio 1.0.7 is a Windows-first Electrobun application for preparing and submitting high-volume AI image generation runs from weekly CSV calendars or manual prompts.
+BulkImg Studio 1.0.8 is a Windows-first Electrobun application for preparing and submitting high-volume AI image generation runs from weekly CSV calendars or manual prompts.
 
 ## What is included
 

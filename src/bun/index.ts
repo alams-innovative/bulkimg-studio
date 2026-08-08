@@ -21,12 +21,12 @@ import { UpdateService } from "./services/update-service";
 import { getInitialWindowFrame } from "./window-layout";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.7 supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.0.8 supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.7",
+  version: "1.0.8",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -143,7 +143,7 @@ const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
 void diagnosticLog.write("startup", {
   cleanedFiles,
-  version: "1.0.7",
+  version: "1.0.8",
   userData: dataDirectory,
   pid: process.pid,
 });
@@ -462,10 +462,9 @@ function createMainWindow(): BrowserWindow {
       body: "BulkImg Studio is still running in the system tray. Select its tray icon to open it again.",
     });
   });
-  // Show before maximizing. Electrobun 1.18.1 can leave WebView2 at restored
-  // bounds when a hidden window is maximized during startup.
+  // Start at a work-area-bounded restored size. Maximizing during the first
+  // WebView2 paint can briefly leave stale compositor bounds on Windows.
   window.show();
-  setTimeout(() => window.maximize(), 40);
   setTimeout(() => {
     if (nativeIconPath && !setNativeWindowIcon(windowTitle, nativeIconPath)) {
       console.warn("Could not apply the native window icon.");

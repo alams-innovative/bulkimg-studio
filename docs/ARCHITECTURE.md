@@ -1,6 +1,6 @@
 # Architecture
 
-Current product stage: **BulkImg Studio 1.0.7**.
+Current product stage: **BulkImg Studio 1.0.8**.
 
 ## Process boundary
 
