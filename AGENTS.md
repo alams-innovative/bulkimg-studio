@@ -33,6 +33,10 @@ bun run test:ui
 bun run build:release
 ```
 
+`bun run test:ui` is the complete browser regression suite. It uses two safe,
+isolated workers and includes functional, accessibility, keyboard, browser-error,
+visual, desktop, and laptop coverage.
+
 If a command cannot run, report the exact blocker and do not claim it passed. For UI work, also inspect the affected screen and keep the Playwright coverage current. For build/install work, verify the produced ZIP contains `Install-BulkImgStudio.cmd` and `.installer/`.
 
 ## Stable / production app requests

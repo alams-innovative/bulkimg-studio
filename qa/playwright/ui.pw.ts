@@ -1,9 +1,21 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-test.beforeEach(async ({ page }) => {
-  await page.goto("/");
+const browserErrors = new WeakMap<Page, string[]>();
+
+test.beforeEach(async ({ page }, testInfo) => {
+  const errors: string[] = [];
+  browserErrors.set(page, errors);
+  page.on("pageerror", (error) => errors.push(`Unhandled error: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(`Console error: ${message.text()}`);
+  });
+  await page.goto(`/?test-run=${encodeURIComponent(testInfo.testId)}`);
   await expect(page.getByRole("heading", { name: "Generate images." })).toBeVisible();
+});
+
+test.afterEach(async ({ page }) => {
+  expect(browserErrors.get(page) ?? [], "Browser errors must be fixed, not ignored.").toEqual([]);
 });
 
 test("generator remains accessible and keyboard operable", async ({ page }) => {
@@ -306,6 +318,31 @@ for (const viewport of [{ width: 1440, height: 840 }, { width: 900, height: 640 
     expect(rail.footerBottom).toBeGreaterThan(0);
     expect(rail.footerBottom).toBeLessThanOrEqual(rail.panelBottom + 0.5);
     expect(rail.footerBottom).toBeLessThanOrEqual(rail.viewportHeight + 0.5);
+  });
+}
+
+for (const viewport of [{ width: 1366, height: 768 }, { width: 1280, height: 720 }]) {
+  test(`laptop layout ${viewport.width}x${viewport.height}`, async ({ page }) => {
+    await page.setViewportSize(viewport);
+    await expect(page.locator("body")).toHaveScreenshot(`generator-laptop-${viewport.width}x${viewport.height}.png`, { animations: "disabled", maxDiffPixels: 10 });
+    const layout = await page.evaluate(() => {
+      const required = ["#header-stats", "#rate-limits-line", ".run-actions", ".privacy-note"]
+        .map((selector) => document.querySelector<HTMLElement>(selector)?.getBoundingClientRect())
+        .filter((rect): rect is DOMRect => Boolean(rect));
+      return {
+        clientWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth,
+        viewportHeight: window.innerHeight,
+        required: required.map((rect) => ({ top: rect.top, bottom: rect.bottom, height: rect.height })),
+      };
+    });
+    expect(layout.scrollWidth, JSON.stringify(layout)).toBe(layout.clientWidth);
+    expect(layout.required).toHaveLength(4);
+    for (const element of layout.required) {
+      expect(element.height).toBeGreaterThan(0);
+      expect(element.top).toBeGreaterThanOrEqual(0);
+      expect(element.bottom).toBeLessThanOrEqual(layout.viewportHeight + 0.5);
+    }
   });
 }
 

@@ -42,21 +42,35 @@ const telemetryBase = {
   phase: "generating" as const,
 };
 
-let guidedWaveStarted = false;
-let guidedWaveCancelled = false;
-let updateChannel: "stable" | "beta" = "stable";
-let downloadedUpdateVersion: string | null = null;
+type HarnessState = {
+  guidedWaveStarted: boolean;
+  guidedWaveCancelled: boolean;
+  updateChannel: "stable" | "beta";
+  downloadedUpdateVersion: string | null;
+};
+
+const harnessStates = new Map<string, HarnessState>();
+
+function stateFor(request?: Request): HarnessState {
+  const referer = request?.headers.get("referer") ?? "";
+  const id = new URL(referer || "http://127.0.0.1/").searchParams.get("test-run") ?? "default";
+  const existing = harnessStates.get(id);
+  if (existing) return existing;
+  const state: HarnessState = { guidedWaveStarted: false, guidedWaveCancelled: false, updateChannel: "stable", downloadedUpdateVersion: null };
+  harnessStates.set(id, state);
+  return state;
+}
 const updateReleases = [
   { version: "1.0.8", tag: "v1.0.8", channel: "stable", publishedAt: "2026-08-08T00:00:00.000Z", releaseNotesUrl: "https://github.com/alams-innovative/bulkimg-studio/releases/tag/v1.0.8", minimumSupportedVersion: "1.0.0", architectures: ["x64"], schemaVersion: 7, available: true, unavailableReason: null, isCurrent: false },
   { version: "1.0.5", tag: "v1.0.5", channel: "stable", publishedAt: "2026-08-01T00:00:00.000Z", releaseNotesUrl: "https://github.com/alams-innovative/bulkimg-studio/releases/tag/v1.0.5", minimumSupportedVersion: "1.0.0", architectures: ["x64"], schemaVersion: 7, available: true, unavailableReason: null, isCurrent: false },
   { version: "1.1.0-beta.1", tag: "v1.1.0-beta.1", channel: "beta", publishedAt: "2026-08-09T00:00:00.000Z", releaseNotesUrl: "https://github.com/alams-innovative/bulkimg-studio/releases/tag/v1.1.0-beta.1", minimumSupportedVersion: "1.0.0", architectures: ["x64"], schemaVersion: 7, available: false, unavailableReason: "Enable beta updates to install this release.", isCurrent: false },
 ];
-const updateState = () => ({
-  configured: true, currentVersion: "1.0.7", channel: updateChannel, lastCheckedAt: new Date().toISOString(), lastError: null,
-  activity: downloadedUpdateVersion ? "ready" as const : "idle" as const, progress: null,
+const updateState = (state: HarnessState) => ({
+  configured: true, currentVersion: "1.0.7", channel: state.updateChannel, lastCheckedAt: new Date().toISOString(), lastError: null,
+  activity: state.downloadedUpdateVersion ? "ready" as const : "idle" as const, progress: null,
   available: updateReleases.find((release) => release.version === "1.0.8") ?? null,
-  releases: updateReleases.map((release) => release.channel === "beta" ? { ...release, available: updateChannel === "beta", unavailableReason: updateChannel === "beta" ? null : release.unavailableReason } : release),
-  downloadedVersion: downloadedUpdateVersion, fallbackStableVersions: ["1.0.5"],
+  releases: updateReleases.map((release) => release.channel === "beta" ? { ...release, available: state.updateChannel === "beta", unavailableReason: state.updateChannel === "beta" ? null : release.unavailableReason } : release),
+  downloadedVersion: state.downloadedUpdateVersion, fallbackStableVersions: ["1.0.5"],
 });
 
 const mocks: Record<string, (params: any) => any> = {
@@ -100,10 +114,10 @@ const mocks: Record<string, (params: any) => any> = {
   getGeneratorDraft: () => null,
   saveGeneratorDraft: (draft: any) => ({ ...draft, updatedAt: new Date().toISOString() }),
   clearGeneratorDraft: () => ({ success: true }),
-  getUpdateState: () => updateState(),
-  checkForUpdates: () => updateState(),
-  setUpdateChannel: ({ channel }: { channel: "stable" | "beta" }) => { updateChannel = channel; return updateState(); },
-  downloadUpdate: ({ version }: { version: string }) => { downloadedUpdateVersion = version; return updateState(); },
+  getUpdateState: (_params: unknown, request?: Request) => updateState(stateFor(request)),
+  checkForUpdates: (_params: unknown, request?: Request) => updateState(stateFor(request)),
+  setUpdateChannel: ({ channel }: { channel: "stable" | "beta" }, request?: Request) => { const state = stateFor(request); state.updateChannel = channel; return updateState(state); },
+  downloadUpdate: ({ version }: { version: string }, request?: Request) => { const state = stateFor(request); state.downloadedUpdateVersion = version; return updateState(state); },
   installUpdate: () => ({ scheduled: true }),
   parseManualPrompts: ({ text }: { text: string }) => promptMatrix(text),
   importCSV: ({ csvText, sourceName }: { csvText: string; sourceName: string }) => parseCSV(csvText, sourceName),
@@ -117,10 +131,11 @@ const mocks: Record<string, (params: any) => any> = {
     batch: { requestCount: 40, completedCount: 35, failedCount: 5, inputTokens: 4_000, outputTokens: 43_000, costUsd: 0.78, costPkr: 216.84 },
   }),
   listApiKeys: () => [{ id: "key-1", label: "Test key", keyHint: "••••test", provider: "OpenAI", isActive: true, isRateLimited: false, rateLimitedUntil: null, createdAt: new Date().toISOString(), lastUsedAt: null, totalRequests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, costPkr: 0, currentSessionId: null, currentModel: null, currentRunMode: null, currentStatus: null, currentPrompts: 0, currentCompleted: 0 }],
-  submitBatchRun: ({ prompts, mode, format, quality }: any) => {
+  submitBatchRun: ({ prompts, mode, format, quality }: any, request?: Request) => {
+    const state = stateFor(request);
     if (mode === "batch" && prompts.length > 1) {
-      guidedWaveStarted = false;
-      guidedWaveCancelled = false;
+      state.guidedWaveStarted = false;
+      state.guidedWaveCancelled = false;
       return {
       ...telemetryBase,
       sessionId: "wave-one",
@@ -149,13 +164,15 @@ const mocks: Record<string, (params: any) => any> = {
       retryableCount: prompts.length,
     };
   },
-  getRunDetail: () => ({
+  getRunDetail: (_params: unknown, request?: Request) => {
+    const state = stateFor(request);
+    return ({
     runId: "run-guided-test",
-    status: guidedWaveCancelled ? "cancelled" as const : "processing" as const,
+    status: state.guidedWaveCancelled ? "cancelled" as const : "processing" as const,
     model: "gpt-image-2",
     runMode: "batch" as const,
     totalPrompts: 3,
-    completedCount: guidedWaveStarted ? 2 : 2,
+    completedCount: state.guidedWaveStarted ? 2 : 2,
     costUsd: 0.1,
     costPkr: 27.8,
     estimateUsd: 0.15,
@@ -163,7 +180,7 @@ const mocks: Record<string, (params: any) => any> = {
     waveCount: 2,
     waveStrategy: "guided" as const,
     startTime: new Date().toISOString(),
-    message: guidedWaveCancelled ? "Stopped after saving 2 images." : guidedWaveStarted ? "Batch 2 is running." : "Batch 2 is ready to run.",
+    message: state.guidedWaveCancelled ? "Stopped after saving 2 images." : state.guidedWaveStarted ? "Batch 2 is running." : "Batch 2 is ready to run.",
     format: "square" as const,
     quality: "medium" as const,
     diagnosticId: "BIS-guided",
@@ -175,15 +192,17 @@ const mocks: Record<string, (params: any) => any> = {
         parentRunId: "run-guided-test", waveIndex: 0, estimateUsd: 0.1, elapsedMs: 1_000,
       },
       {
-        sessionId: "wave-two", status: guidedWaveCancelled ? "cancelled" as const : guidedWaveStarted ? "processing" as const : "pending" as const, model: "gpt-image-2", runMode: "batch" as const,
+        sessionId: "wave-two", status: state.guidedWaveCancelled ? "cancelled" as const : state.guidedWaveStarted ? "processing" as const : "pending" as const, model: "gpt-image-2", runMode: "batch" as const,
         totalPrompts: 1, completedCount: 0, costUsd: 0, costPkr: 0, startTime: new Date().toISOString(), endTime: null, keyLabel: "Test key",
         format: "square" as const, quality: "medium" as const, retryableCount: 1, diagnosticId: "BIS-guided-2", lastError: null,
         parentRunId: "run-guided-test", waveIndex: 1, estimateUsd: 0.05, elapsedMs: 0,
       },
     ],
-  }),
-  cancelRemainingWaves: () => {
-    guidedWaveCancelled = true;
+    });
+  },
+  cancelRemainingWaves: (_params: unknown, request?: Request) => {
+    const state = stateFor(request);
+    state.guidedWaveCancelled = true;
     return {
       runId: "run-guided-test", status: "cancelled" as const, model: "gpt-image-2", runMode: "batch" as const,
       totalPrompts: 3, completedCount: 2, costUsd: 0.1, costPkr: 27.8, estimateUsd: 0.15,
@@ -430,8 +449,8 @@ const mocks: Record<string, (params: any) => any> = {
   }),
   listAdminProjects: () => [],
   resumeRun: () => ({ ...telemetryBase, status: "processing", message: "Resume batch submitted." }),
-  continueRun: () => {
-    guidedWaveStarted = true;
+  continueRun: (_params: unknown, request?: Request) => {
+    stateFor(request).guidedWaveStarted = true;
     return {
       ...telemetryBase,
       sessionId: "wave-two",
@@ -469,6 +488,7 @@ const server = Bun.serve({
   },
   async fetch(request) {
     const url = new URL(request.url);
+    if (url.pathname === "/favicon.ico") return new Response(null, { status: 204 });
     if (url.pathname === "/") {
       const html = (await Bun.file(join(root, "src", "mainview", "index.html")).text())
         .replace("<script type=\"module\" src=\"index.js\"></script>", "<script src=\"/mock-rpc.js\"></script><script type=\"module\" src=\"/index.js\"></script>")

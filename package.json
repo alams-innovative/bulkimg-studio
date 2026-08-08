@@ -19,7 +19,7 @@
     "update:signing:verify": "bun run scripts/verify-update-signing.ts",
     "check": "tsc --noEmit",
     "test": "bun test src",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test --workers=2"
   },
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
