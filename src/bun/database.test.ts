@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { AppDatabase } from "./database";
+import type { GeneratorDraftInput } from "../shared/contracts";
 
 const temporaryDirectories: string[] = [];
 afterEach(() => { for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
@@ -16,6 +17,43 @@ function input(mode: "direct" | "batch" = "direct") {
 }
 
 describe("database migrations and job state", () => {
+  test("persists a selected Generator workspace without invalid row ids", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bulkimg-generator-draft-test-"));
+    temporaryDirectories.push(directory);
+    const database = new AppDatabase(directory);
+    const draft: GeneratorDraftInput = {
+      matrix: {
+        sourceName: "weekly-calendar.csv",
+        columns: ["Monday | Brand"],
+        cells: [{ id: "cell-1-1", week: "Week 1", weekStartDate: "01 Aug 2026", dayLabel: "Monday", scheduleDate: "02 Aug 2026", themeColumn: "Brand", promptText: "Product still life", disabled: false }],
+        groups: [{ id: "week-1", label: "Week 1", startDate: "01 Aug 2026", cellIds: ["cell-1-1"] }],
+        warnings: [],
+      },
+      selectedIds: ["cell-1-1", "missing"],
+      matrixPage: 3,
+      matrixView: "cards",
+      mode: "batch",
+      model: "gpt-image-2",
+      format: "square",
+      quality: "medium",
+      waveStrategy: "guided",
+      waveSizes: [1],
+    };
+    database.saveGeneratorDraft(draft);
+    database.db.close();
+
+    const reopened = new AppDatabase(directory);
+    expect(reopened.getGeneratorDraft()).toMatchObject({
+      matrix: { sourceName: "weekly-calendar.csv" },
+      selectedIds: ["cell-1-1"],
+      matrixPage: 3,
+      matrixView: "cards",
+    });
+    reopened.clearGeneratorDraft();
+    expect(reopened.getGeneratorDraft()).toBeNull();
+    reopened.db.close();
+  });
+
   test("creates prompt outcomes and preserves retry state", () => {
     const directory = mkdtempSync(join(tmpdir(), "bulkimg-db-test-"));
     temporaryDirectories.push(directory);
@@ -70,7 +108,7 @@ describe("database migrations and job state", () => {
 
     const migrated = new AppDatabase(directory);
     expect(migrated.getSessionRunContext("legacy-session").referenceFileIds).toEqual(["file-legacy"]);
-    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
+    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(7);
     migrated.db.close();
   });
 

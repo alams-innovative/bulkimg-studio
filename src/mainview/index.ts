@@ -55,6 +55,7 @@ import type {
   ConverterRule,
   ConverterSourceImage,
   ExportSummary,
+  GeneratorDraft,
   HistoryItem,
   PromptCell,
   PromptGroup,
@@ -273,10 +274,11 @@ const elements = {
   historyCount: byId("history-count"),
   historyList: byId("history-list"),
   lightbox: byId("lightbox"),
+  lightboxViewport: byId<HTMLElement>("lightbox-viewport"),
   lightboxImage: byId<HTMLImageElement>("lightbox-image"),
   lightboxCount: byId("lightbox-count"),
-  lightboxCaption: byId("lightbox-caption"),
-  lightboxPromptToggle: byId<HTMLButtonElement>("lightbox-prompt-toggle"),
+  lightboxZoom: byId("lightbox-zoom"),
+  lightboxResetZoom: byId<HTMLButtonElement>("lightbox-reset-zoom"),
   lightboxDetails: byId("lightbox-details"),
   lightboxClose: byId<HTMLButtonElement>("lightbox-close"),
   lightboxPrev: byId<HTMLButtonElement>("lightbox-prev"),
@@ -304,6 +306,7 @@ const elements = {
   waveQueue: byId("wave-queue"),
   waveQueueSummary: byId("wave-queue-summary"),
   waveQueueList: byId("wave-queue-list"),
+  waveCancelRemaining: byId<HTMLButtonElement>("wave-cancel-remaining"),
   toast: byId("toast"),
   checkIconTemplate: byId("check-icon-template"),
 };
@@ -350,7 +353,10 @@ let clipboardHistoryTargetExpiresAt = 0;
 let waveSizes: number[] = [];
 let lightboxItems: HistoryItem[] = [];
 let lightboxIndex = 0;
-let lightboxPromptExpanded = false;
+let lightboxZoom = 1;
+let lightboxPan = { x: 0, y: 0 };
+let lightboxPointer: { id: number; x: number; y: number; panX: number; panY: number } | null = null;
+let lightboxReturnFocus: HTMLElement | null = null;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
 let referenceImages: ReferenceImage[] = [];
 let referencePasteInFlight = false;
@@ -362,6 +368,8 @@ let lastTelemetryStatus: SessionTelemetry["status"] | null = null;
 let waveQueueRequest = 0;
 let alertedWaveKey: string | null = null;
 let selectionSyncToken = 0;
+let generatorDraftTimer: number | null = null;
+let restoringGeneratorWorkspace = false;
 let bootstrapData: AppBootstrap | null = null;
 let pricingView: PricingView | null = null;
 let appLimits: {
@@ -444,10 +452,11 @@ function renderWaveList(): void {
     const value = Math.max(1, Math.min(appLimits.batchPromptLimit, Math.floor(Number(input.value) || 1)));
     waveSizes[index] = value;
     ensureWavePlan(); updateWaveUi();
+    scheduleGeneratorDraftSave();
   }));
   elements.waveList.querySelectorAll<HTMLButtonElement>("button[data-remove-wave]").forEach((button) => button.addEventListener("click", () => {
     if (waveSizes.length === 1) return;
-    waveSizes.splice(Number(button.dataset["removeWave"]), 1); ensureWavePlan(); updateWaveUi();
+    waveSizes.splice(Number(button.dataset["removeWave"]), 1); ensureWavePlan(); updateWaveUi(); scheduleGeneratorDraftSave();
   }));
 }
 
@@ -697,6 +706,10 @@ function isTerminalStatus(status: SessionTelemetry["status"]): boolean {
 function hideWaveQueue(): void {
   elements.waveQueueList.innerHTML = "";
   elements.waveQueueSummary.textContent = "";
+  elements.waveCancelRemaining.disabled = true;
+  elements.waveCancelRemaining.removeAttribute("data-run-id");
+  setHidden(elements.waveCancelRemaining, true);
+  alertedWaveKey = null;
   setHidden(elements.waveQueue, true);
 }
 
@@ -721,9 +734,44 @@ async function continueQueuedWave(runId: string, button?: HTMLButtonElement): Pr
   }
 }
 
+async function cancelQueuedWaves(runId: string): Promise<void> {
+  const remaining = elements.waveQueueList.querySelectorAll(".wave-queue-item.status-pending").length;
+  if (!window.confirm(`Cancel the ${remaining || "remaining"} queued batch${remaining === 1 ? "" : "es"}? Saved images will stay available.`)) return;
+  elements.waveCancelRemaining.disabled = true;
+  elements.waveCancelRemaining.setAttribute("aria-busy", "true");
+  try {
+    const stopped = await app.rpc!.request.cancelRemainingWaves({ runId });
+    hideWaveQueue();
+    if (session) {
+      renderTelemetry({
+        ...session,
+        status: "cancelled",
+        totalPrompts: stopped.totalPrompts,
+        completedCount: stopped.completedCount,
+        costUsd: stopped.costUsd,
+        costPkr: stopped.costPkr,
+        parentRunId: stopped.runId,
+        waveIndex: null,
+        waveCount: null,
+        phase: "done",
+        retryableCount: Math.max(0, stopped.totalPrompts - stopped.completedCount),
+        message: `Stopped after saving ${stopped.completedCount} of ${stopped.totalPrompts} images.`,
+      });
+    } else {
+      hideWaveQueue();
+    }
+    showToast(`Remaining batches cancelled. ${stopped.completedCount} saved image${stopped.completedCount === 1 ? "" : "s"} kept.`);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not cancel the remaining batches.", true);
+    if (session) void refreshWaveQueue(session);
+  } finally {
+    elements.waveCancelRemaining.removeAttribute("aria-busy");
+  }
+}
+
 function renderWaveQueue(run: RunSummary): void {
   const waves = [...run.sessions].sort((left, right) => (left.waveIndex ?? 0) - (right.waveIndex ?? 0));
-  if (waves.length < 2) {
+  if (waves.length < 2 || isTerminalStatus(run.status)) {
     hideWaveQueue();
     return;
   }
@@ -738,6 +786,9 @@ function renderWaveQueue(run: RunSummary): void {
   elements.waveQueueSummary.textContent = readyWave
     ? `Batch ${(readyWave.waveIndex ?? readyWaveIndex) + 1} is ready to run`
     : `${run.completedCount}/${run.totalPrompts} images across ${waves.length} batches`;
+  elements.waveCancelRemaining.dataset["runId"] = run.runId;
+  elements.waveCancelRemaining.disabled = !readyWave;
+  setHidden(elements.waveCancelRemaining, !readyWave);
   elements.waveQueueList.innerHTML = waves.map((wave, index) => {
     const ordinal = (wave.waveIndex ?? index) + 1;
     const ready = readyWave?.sessionId === wave.sessionId;
@@ -1257,6 +1308,7 @@ function updateSelection(): void {
   syncEstimateChrome(count);
   syncActionState();
   if (estimateTimer !== null) window.clearTimeout(estimateTimer);
+  scheduleGeneratorDraftSave();
   if (count === 0) return;
   estimateTimer = window.setTimeout(() => void refreshEstimate(), 180);
 }
@@ -1305,18 +1357,56 @@ function updateMatrixSummary(): void {
     : `${enabled} prompt${enabled === 1 ? "" : "s"}${disabled ? ` · ${disabled} unavailable` : ""}`;
 }
 
-function applyMatrix(next: PromptMatrix): void {
+function currentGeneratorDraft(): Omit<GeneratorDraft, "updatedAt"> | null {
+  if (!matrix) return null;
+  return {
+    matrix,
+    selectedIds: [...selected],
+    matrixPage,
+    matrixView,
+    mode: currentMode(),
+    model: elements.model.value,
+    format: elements.size.value as OutputFormatId,
+    quality: elements.quality.value as "low" | "medium" | "high",
+    waveStrategy: elements.waveStrategy.value as "all" | "guided" | "parallel",
+    waveSizes: [...waveSizes],
+  };
+}
+
+function scheduleGeneratorDraftSave(): void {
+  if (restoringGeneratorWorkspace) return;
+  if (generatorDraftTimer !== null) window.clearTimeout(generatorDraftTimer);
+  const draft = currentGeneratorDraft();
+  if (!draft) return;
+  generatorDraftTimer = window.setTimeout(async () => {
+    generatorDraftTimer = null;
+    try {
+      await app.rpc!.request.saveGeneratorDraft(draft);
+    } catch (error) {
+      logUi("generator_draft_save", { ok: false, message: error instanceof Error ? error.message : "error" });
+    }
+  }, 320);
+}
+
+function applyMatrix(next: PromptMatrix, restored?: Pick<GeneratorDraft, "selectedIds" | "matrixPage">): void {
   matrix = next;
-  selected = new Set();
-  matrixPage = 0;
+  const validSelectable = new Set(next.cells.filter((cell) => !cell.disabled).map((cell) => cell.id));
+  selected = new Set((restored?.selectedIds ?? []).filter((id) => validSelectable.has(id)));
+  const pages = Math.max(1, Math.ceil(next.cells.length / PAGE_SIZE));
+  matrixPage = Math.max(0, Math.min(restored?.matrixPage ?? 0, pages - 1));
   updateMatrixSummary();
   elements.warnings.classList.toggle("hidden", next.warnings.length === 0);
   elements.warnings.textContent = next.warnings.join(" ");
   renderMatrix(true, true);
   updateSelection();
+  scheduleGeneratorDraftSave();
 }
 
 function clearPromptMatrix(showNotification = true): void {
+  if (generatorDraftTimer !== null) {
+    window.clearTimeout(generatorDraftTimer);
+    generatorDraftTimer = null;
+  }
   matrix = null;
   selected = new Set();
   matrixPage = 0;
@@ -1327,6 +1417,7 @@ function clearPromptMatrix(showNotification = true): void {
   updateMatrixSummary();
   renderMatrix(true, false);
   updateSelection();
+  void app.rpc!.request.clearGeneratorDraft({}).catch(() => undefined);
   if (showNotification) showToast("Imported prompts cleared.");
 }
 
@@ -1578,6 +1669,7 @@ function setMatrixView(view: "list" | "cards"): void {
   renderMatrix(false, false);
   enterVisibleItems(elements.matrix, ".prompt-card", 6);
   elements.matrix.focus({ preventScroll: true });
+  scheduleGeneratorDraftSave();
 }
 
 function openKeysDialog(focusTarget: HTMLElement): void {
@@ -2392,15 +2484,68 @@ function filteredHistoryItems(): HistoryItem[] {
   });
 }
 
+function updateLightboxTransform(): void {
+  elements.lightboxImage.style.transform = `translate3d(${lightboxPan.x}px, ${lightboxPan.y}px, 0) scale(${lightboxZoom})`;
+  elements.lightboxZoom.textContent = `${Math.round(lightboxZoom * 100)}%`;
+  elements.lightboxResetZoom.disabled = lightboxZoom === 1 && lightboxPan.x === 0 && lightboxPan.y === 0;
+}
+
+function resetLightboxView(): void {
+  lightboxZoom = 1;
+  lightboxPan = { x: 0, y: 0 };
+  updateLightboxTransform();
+}
+
+function clampLightboxPan(): void {
+  const bounds = elements.lightboxViewport.getBoundingClientRect();
+  const maxX = Math.max(0, (bounds.width * (lightboxZoom - 1)) / 2);
+  const maxY = Math.max(0, (bounds.height * (lightboxZoom - 1)) / 2);
+  lightboxPan.x = Math.max(-maxX, Math.min(maxX, lightboxPan.x));
+  lightboxPan.y = Math.max(-maxY, Math.min(maxY, lightboxPan.y));
+}
+
+function zoomLightbox(nextZoom: number, clientX?: number, clientY?: number): void {
+  const next = Math.max(1, Math.min(5, nextZoom));
+  if (next === lightboxZoom) return;
+  if (clientX !== undefined && clientY !== undefined) {
+    const bounds = elements.lightboxViewport.getBoundingClientRect();
+    const pointX = clientX - bounds.left - bounds.width / 2;
+    const pointY = clientY - bounds.top - bounds.height / 2;
+    const scale = next / lightboxZoom;
+    lightboxPan.x = pointX - (pointX - lightboxPan.x) * scale;
+    lightboxPan.y = pointY - (pointY - lightboxPan.y) * scale;
+  }
+  lightboxZoom = next;
+  clampLightboxPan();
+  updateLightboxTransform();
+}
+
+async function copyLightboxPrompt(prompt: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(prompt);
+    showToast("Prompt copied.");
+  } catch {
+    const fallback = document.createElement("textarea");
+    fallback.value = prompt;
+    fallback.style.position = "fixed";
+    fallback.style.opacity = "0";
+    document.body.append(fallback);
+    fallback.select();
+    const copied = document.execCommand("copy");
+    fallback.remove();
+    showToast(copied ? "Prompt copied." : "Could not copy the prompt.", !copied);
+  }
+}
+
 function closeLightbox(): void {
   elements.lightbox.classList.add("hidden");
   elements.lightbox.hidden = true;
   elements.lightboxImage.removeAttribute("src");
   elements.lightboxCount.textContent = "Image 0 of 0";
-  elements.lightboxCaption.textContent = "";
-  elements.lightboxCaption.classList.remove("expanded");
-  elements.lightboxPromptToggle.textContent = "Show prompt";
   elements.lightboxDetails.innerHTML = "";
+  resetLightboxView();
+  lightboxReturnFocus?.focus({ preventScroll: true });
+  lightboxReturnFocus = null;
 }
 
 async function openLightbox(items: HistoryItem[], index: number): Promise<void> {
@@ -2410,6 +2555,7 @@ async function openLightbox(items: HistoryItem[], index: number): Promise<void> 
   const previewIndex = Math.max(0, previewable.findIndex((item) => item.promptId === current?.promptId));
   lightboxItems = previewable;
   lightboxIndex = previewIndex >= 0 ? previewIndex : 0;
+  lightboxReturnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   await showLightboxAt(lightboxIndex);
 }
 
@@ -2420,22 +2566,20 @@ async function showLightboxAt(index: number): Promise<void> {
   elements.lightbox.classList.remove("hidden");
   elements.lightbox.hidden = false;
   elements.lightboxCount.textContent = `Image ${lightboxIndex + 1} of ${lightboxItems.length}`;
-  elements.lightboxCaption.textContent = item.promptText;
-  lightboxPromptExpanded = false;
-  elements.lightboxCaption.classList.remove("expanded");
-  elements.lightboxPromptToggle.textContent = "Show prompt";
+  resetLightboxView();
   elements.lightboxPrev.disabled = lightboxIndex === 0;
   elements.lightboxNext.disabled = lightboxIndex === lightboxItems.length - 1;
-  elements.lightboxImage.alt = item.promptText;
+  elements.lightboxImage.alt = "Generated image";
   const session = librarySessions.get(item.sessionId);
   const selected = librarySelectedPromptIds.has(item.promptId);
-  elements.lightboxDetails.innerHTML = `<div class="lightbox-detail-head"><span class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span><button type="button" class="secondary-button lightbox-select" data-prompt-id="${escapeHtml(item.promptId)}"><i data-lucide="${selected ? "check" : "images"}"></i>${selected ? "Selected" : "Select image"}</button></div><section><h3>Image details</h3><dl><div><dt>Image</dt><dd>${lightboxIndex + 1} of ${lightboxItems.length}</dd></div><div><dt>Week</dt><dd>${escapeHtml(item.week || "Not set")}</dd></div><div><dt>Theme</dt><dd>${escapeHtml(item.themeColumn || "Manual")}</dd></div><div><dt>Format</dt><dd>${escapeHtml(session ? `${session.format} · ${session.quality}` : item.model)}</dd></div><div><dt>Cost</dt><dd>$${item.costUsd.toFixed(3)}</dd></div></dl></section><section><h3>Session</h3><dl><div><dt>Progress</dt><dd>${session ? `${session.completedCount} of ${session.totalPrompts} images` : "Saved image"}</dd></div><div><dt>Mode</dt><dd>${escapeHtml(item.runMode)}</dd></div><div><dt>Created</dt><dd>${escapeHtml(formatDate(item.createdAt))}</dd></div></dl></section>`;
+  elements.lightboxDetails.innerHTML = `<div class="lightbox-detail-head"><span class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span><button type="button" class="secondary-button lightbox-select" data-prompt-id="${escapeHtml(item.promptId)}"><i data-lucide="${selected ? "check" : "images"}"></i>${selected ? "Selected" : "Select image"}</button></div><section class="lightbox-prompt-section"><div class="lightbox-prompt-head"><h3>Prompt</h3><button type="button" class="secondary-button lightbox-copy-prompt"><i data-lucide="copy"></i>Copy prompt</button></div><p class="lightbox-prompt-text">${escapeHtml(item.promptText)}</p></section><section><h3>Image details</h3><dl><div><dt>Image</dt><dd>${lightboxIndex + 1} of ${lightboxItems.length}</dd></div><div><dt>Week</dt><dd>${escapeHtml(item.week || "Not set")}</dd></div><div><dt>Theme</dt><dd>${escapeHtml(item.themeColumn || "Manual")}</dd></div><div><dt>Format</dt><dd>${escapeHtml(session ? `${session.format} · ${session.quality}` : item.model)}</dd></div><div><dt>Cost</dt><dd>$${item.costUsd.toFixed(3)}</dd></div></dl></section><section><h3>Session</h3><dl><div><dt>Progress</dt><dd>${session ? `${session.completedCount} of ${session.totalPrompts} images` : "Saved image"}</dd></div><div><dt>Mode</dt><dd>${escapeHtml(item.runMode)}</dd></div><div><dt>Created</dt><dd>${escapeHtml(formatDate(item.createdAt))}</dd></div></dl></section>`;
   elements.lightboxDetails.querySelector<HTMLButtonElement>(".lightbox-select")?.addEventListener("click", () => {
     if (librarySelectedPromptIds.has(item.promptId)) librarySelectedPromptIds.delete(item.promptId);
     else librarySelectedPromptIds.add(item.promptId);
     updateLibrarySelection();
     void showLightboxAt(lightboxIndex);
   });
+  elements.lightboxDetails.querySelector<HTMLButtonElement>(".lightbox-copy-prompt")?.addEventListener("click", () => void copyLightboxPrompt(item.promptText));
   try {
     const { dataUrl } = await app.rpc!.request.getHistoryImage({ assetId: item.assetId! });
     elements.lightboxImage.src = dataUrl;
@@ -2444,6 +2588,7 @@ async function showLightboxAt(index: number): Promise<void> {
     closeLightbox();
   }
   refreshIcons();
+  window.requestAnimationFrame(() => elements.lightboxClose.focus({ preventScroll: true }));
 }
 
 function renderHistoryCard(item: HistoryItem): string {
@@ -2757,6 +2902,52 @@ async function bootstrap(): Promise<void> {
   logUi("ui_bootstrap_ok", { version: data.brand.version, platform: data.platform, keyCount: data.keyCount });
 }
 
+function restoreDraftSettings(draft: GeneratorDraft): void {
+  const model = elements.model.querySelector<HTMLOptionElement>(`option[value="${CSS.escape(draft.model)}"]`);
+  if (model && !model.disabled) elements.model.value = draft.model;
+  if (Object.values(OUTPUT_FORMATS).some((format) => format.id === draft.format)) elements.size.value = draft.format;
+  if (["low", "medium", "high"].includes(draft.quality)) elements.quality.value = draft.quality;
+  const mode = document.querySelector<HTMLInputElement>(`input[name="run-mode"][value="${draft.mode}"]`);
+  if (mode) {
+    mode.checked = true;
+    document.querySelectorAll(".mode-option").forEach((label) => label.classList.toggle("selected", label.contains(mode)));
+  }
+  elements.waveStrategy.value = draft.waveStrategy;
+  waveSizes = [...draft.waveSizes];
+  matrixView = draft.matrixView;
+  localStorage.setItem("bulkimg-prompt-view", matrixView);
+}
+
+async function restoreGeneratorWorkspace(): Promise<void> {
+  restoringGeneratorWorkspace = true;
+  try {
+    const draft = await app.rpc!.request.getGeneratorDraft({});
+    if (draft) {
+      restoreDraftSettings(draft);
+      applyMatrix(draft.matrix, draft);
+      showToast(`Restored ${draft.matrix.sourceName} · ${selected.size} selected.`);
+    }
+  } catch (error) {
+    logUi("generator_draft_restore", { ok: false, message: error instanceof Error ? error.message : "error" });
+  } finally {
+    restoringGeneratorWorkspace = false;
+  }
+
+  try {
+    const sessions = await app.rpc!.request.listSessions({});
+    const active = sessions
+      .filter((candidate) => candidate.status === "pending" || candidate.status === "processing")
+      .sort((left, right) => Date.parse(right.startTime) - Date.parse(left.startTime))[0];
+    if (!active) return;
+    const telemetry = await app.rpc!.request.pollBatchStatus({ sessionId: active.sessionId });
+    renderTelemetry(telemetry);
+    if (!isTerminalStatus(telemetry.status)) await startSessionPolling(telemetry.sessionId);
+    // renderTelemetry resolves the parent run again for the bottom wave queue.
+  } catch (error) {
+    logUi("generator_session_restore", { ok: false, message: error instanceof Error ? error.message : "error" });
+  }
+}
+
 applyTheme(getInitialTheme());
 restoreSidebar();
 refreshIcons();
@@ -2904,8 +3095,8 @@ document.querySelectorAll<HTMLButtonElement>("[data-pick]").forEach((button) => 
 });
 elements.deleteSelectedPrompts.addEventListener("click", removeSelectedPrompts);
 elements.clearImportedPrompts.addEventListener("click", () => clearPromptMatrix());
-elements.matrixPrev.addEventListener("click", () => { matrixPage = Math.max(0, matrixPage - 1); renderMatrix(true, true); });
-elements.matrixNext.addEventListener("click", () => { matrixPage += 1; renderMatrix(true, true); });
+elements.matrixPrev.addEventListener("click", () => { matrixPage = Math.max(0, matrixPage - 1); renderMatrix(true, true); scheduleGeneratorDraftSave(); });
+elements.matrixNext.addEventListener("click", () => { matrixPage += 1; renderMatrix(true, true); scheduleGeneratorDraftSave(); });
 elements.matrixScrollUp.addEventListener("click", () => scrollPromptSelections(-1));
 elements.matrixScrollDown.addEventListener("click", () => scrollPromptSelections(1));
 elements.matrix.addEventListener("scroll", updateMatrixScrollControls, { passive: true });
@@ -2917,11 +3108,17 @@ document.querySelectorAll<HTMLInputElement>('input[name="run-mode"]').forEach((r
     radio.closest(".mode-option")?.classList.add("selected");
     updateSelection();
     updateWaveUi();
+    scheduleGeneratorDraftSave();
     void refreshEstimate();
   });
 });
 elements.waveStrategy.addEventListener("change", () => {
   updateWaveUi();
+  scheduleGeneratorDraftSave();
+});
+elements.waveCancelRemaining.addEventListener("click", () => {
+  const runId = elements.waveCancelRemaining.dataset["runId"];
+  if (runId) void cancelQueuedWaves(runId);
 });
 elements.addWave.addEventListener("click", () => {
   const donor = [...waveSizes].map((size, index) => ({ size, index })).reverse().find(({ size }) => size > 1);
@@ -2929,10 +3126,11 @@ elements.addWave.addEventListener("click", () => {
   waveSizes[donor.index] = donor.size - 1;
   waveSizes.push(1);
   updateWaveUi();
+  scheduleGeneratorDraftSave();
 });
-elements.model.addEventListener("change", () => void refreshEstimate());
-elements.quality.addEventListener("change", () => void refreshEstimate());
-elements.size.addEventListener("change", () => void refreshEstimate());
+elements.model.addEventListener("change", () => { scheduleGeneratorDraftSave(); void refreshEstimate(); });
+elements.quality.addEventListener("change", () => { scheduleGeneratorDraftSave(); void refreshEstimate(); });
+elements.size.addEventListener("change", () => { scheduleGeneratorDraftSave(); void refreshEstimate(); });
 
 elements.referenceDock.addEventListener("click", () => elements.referenceFile.click());
 elements.referenceControl.addEventListener("pointerenter", () => armClipboardHistoryTarget("reference"));
@@ -3580,10 +3778,49 @@ elements.libraryDeleteSelected.addEventListener("click", async () => {
 elements.lightboxClose.addEventListener("click", () => closeLightbox());
 elements.lightboxPrev.addEventListener("click", () => void showLightboxAt(lightboxIndex - 1));
 elements.lightboxNext.addEventListener("click", () => void showLightboxAt(lightboxIndex + 1));
-elements.lightboxPromptToggle.addEventListener("click", () => {
-  lightboxPromptExpanded = !lightboxPromptExpanded;
-  elements.lightboxCaption.classList.toggle("expanded", lightboxPromptExpanded);
-  elements.lightboxPromptToggle.textContent = lightboxPromptExpanded ? "Hide prompt" : "Show prompt";
+elements.lightboxResetZoom.addEventListener("click", () => resetLightboxView());
+elements.lightboxViewport.addEventListener("wheel", (event) => {
+  if (elements.lightbox.hidden) return;
+  event.preventDefault();
+  const multiplier = event.deltaY < 0 ? 1.15 : 1 / 1.15;
+  zoomLightbox(lightboxZoom * multiplier, event.clientX, event.clientY);
+}, { passive: false });
+elements.lightboxViewport.addEventListener("pointerdown", (event) => {
+  if (lightboxZoom <= 1 || event.button !== 0) return;
+  lightboxPointer = { id: event.pointerId, x: event.clientX, y: event.clientY, panX: lightboxPan.x, panY: lightboxPan.y };
+  elements.lightboxViewport.setPointerCapture(event.pointerId);
+  elements.lightboxViewport.classList.add("is-panning");
+});
+elements.lightboxViewport.addEventListener("pointermove", (event) => {
+  if (!lightboxPointer || event.pointerId !== lightboxPointer.id) return;
+  lightboxPan.x = lightboxPointer.panX + event.clientX - lightboxPointer.x;
+  lightboxPan.y = lightboxPointer.panY + event.clientY - lightboxPointer.y;
+  clampLightboxPan();
+  updateLightboxTransform();
+});
+const endLightboxPan = (event: PointerEvent) => {
+  if (!lightboxPointer || event.pointerId !== lightboxPointer.id) return;
+  if (elements.lightboxViewport.hasPointerCapture(event.pointerId)) elements.lightboxViewport.releasePointerCapture(event.pointerId);
+  lightboxPointer = null;
+  elements.lightboxViewport.classList.remove("is-panning");
+};
+elements.lightboxViewport.addEventListener("pointerup", endLightboxPan);
+elements.lightboxViewport.addEventListener("pointercancel", endLightboxPan);
+elements.lightboxViewport.addEventListener("dblclick", () => resetLightboxView());
+elements.lightboxViewport.addEventListener("keydown", (event) => {
+  if (event.key === "+" || event.key === "=") { event.preventDefault(); zoomLightbox(lightboxZoom * 1.2); }
+  else if (event.key === "-") { event.preventDefault(); zoomLightbox(lightboxZoom / 1.2); }
+  else if (event.key === "0") { event.preventDefault(); resetLightboxView(); }
+  else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key) && lightboxZoom > 1) {
+    event.preventDefault();
+    const step = 36;
+    if (event.key === "ArrowUp") lightboxPan.y += step;
+    if (event.key === "ArrowDown") lightboxPan.y -= step;
+    if (event.key === "ArrowLeft") lightboxPan.x += step;
+    if (event.key === "ArrowRight") lightboxPan.x -= step;
+    clampLightboxPan();
+    updateLightboxTransform();
+  }
 });
 elements.lightbox.addEventListener("click", (event) => {
   if (event.target === elements.lightbox) closeLightbox();
@@ -3598,7 +3835,8 @@ document.addEventListener("click", (event) => {
 });
 window.addEventListener("keydown", (event) => {
   if (elements.lightbox.hidden) return;
-  if (event.key === "Escape") closeLightbox();
+  if (event.key === "Escape") { event.preventDefault(); closeLightbox(); return; }
+  if (event.target === elements.lightboxViewport) return;
   if (event.key === "ArrowLeft") void showLightboxAt(lightboxIndex - 1);
   if (event.key === "ArrowRight") void showLightboxAt(lightboxIndex + 1);
 });
@@ -3649,6 +3887,7 @@ elements.openLogsFolder.addEventListener("click", async () => {
 });
 
 await bootstrap();
+await restoreGeneratorWorkspace();
 
 window.addEventListener("beforeunload", (event) => {
   if (!session || !["pending", "processing"].includes(session.status)) return;

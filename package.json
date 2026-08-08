@@ -1,6 +1,6 @@
 {
   "name": "bulkimg-studio",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "private": true,
   "type": "module",
   "description": "Windows-first batch AI image generation studio built with Electrobun and Bun.",

@@ -10,8 +10,22 @@ import { PricingService } from "./services/pricing-service";
 import { APP_LIMITS } from "../shared/contracts";
 
 const temporaryDirectories: string[] = [];
-afterEach(() => {
-  for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { recursive: true, force: true });
+afterEach(async () => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    // Bun's SQLite statement cache can retain a WAL handle until the test
+    // worker exits on Windows. Best-effort cleanup keeps the test portable
+    // without turning that host-runtime quirk into a test failure.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        rmSync(directory, { recursive: true, force: true });
+        break;
+      } catch (error) {
+        if (!(error instanceof Error) || !/EBUSY|EPERM/i.test(error.message)) throw error;
+        if (attempt === 4) break;
+        await Bun.sleep(25);
+      }
+    }
+  }
 });
 
 function makeDir(): string {
@@ -68,16 +82,16 @@ describe("wave planner", () => {
   });
 });
 
-describe("v6 migration, runs, and Converter storage", () => {
-  test("opens fresh DB at user_version 6 with settings defaults", () => {
+describe("v7 migration, runs, and Converter storage", () => {
+  test("opens fresh DB at user_version 7 with settings defaults", () => {
     const directory = makeDir();
     const database = new AppDatabase(directory);
-    expect(database.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
+    expect(database.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(7);
     expect(database.getAppSettings().waveSize).toBe(APP_LIMITS.defaultWaveSize);
     database.db.close();
   });
 
-  test("migrates v3 schema to v6", () => {
+  test("migrates v3 schema to v7", () => {
     const directory = makeDir();
     const original = new AppDatabase(directory);
     original.createSession("session-v3", input(2, "direct"), 278);
@@ -88,7 +102,7 @@ describe("v6 migration, runs, and Converter storage", () => {
     raw.close();
 
     const migrated = new AppDatabase(directory);
-    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(6);
+    expect(migrated.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version).toBe(7);
     expect(migrated.getSessionPrompts("session-v3")).toHaveLength(2);
     expect(migrated.getAppSettings().waveSize).toBe(APP_LIMITS.defaultWaveSize);
     migrated.db.close();
@@ -201,6 +215,62 @@ describe("v6 migration, runs, and Converter storage", () => {
     );
 
     await expect(engine.continueRun(runId)).rejects.toThrow("current batch must finish");
+    database.db.close();
+  });
+
+  test("cancels only the queued waves after completed guided batches", async () => {
+    const directory = makeDir();
+    const database = new AppDatabase(directory);
+    const runId = "run-stop-remaining";
+    const sizes = [3, 4, 3, 4];
+    database.createBatchRun({
+      runId,
+      model: "gpt-image-2",
+      mode: "batch",
+      format: "square",
+      quality: "medium",
+      waveSize: 4,
+      waveCount: sizes.length,
+      waveStrategy: "guided",
+      totalPrompts: sizes.reduce((total, size) => total + size, 0),
+      estimateUsd: 0.7,
+      fxRate: 278,
+    });
+    const ids = sizes.map((_, index) => `stop-wave-${index + 1}`);
+    for (const [index, sessionId] of ids.entries()) {
+      database.createSession(sessionId, {
+        ...input(sizes[index]!, "batch"), parentRunId: runId, waveIndex: index, waveCount: sizes.length,
+      }, 278, { costUsd: 0.1, pricingVersion: "test" }, { parentRunId: runId, waveIndex: index, waveCount: sizes.length });
+    }
+    for (const sessionId of ids.slice(0, 3)) {
+      for (const prompt of database.getSessionPrompts(sessionId)) {
+        database.markPromptProcessing(prompt.prompt_id);
+        database.completePrompt(prompt.prompt_id, { inputTokens: 1, outputTokens: 2, costUsd: 0.01 });
+      }
+      const completed = database.getSessionPrompts(sessionId).length;
+      database.updateSession(sessionId, {
+        status: "completed",
+        message: "Saved wave.",
+        completedCount: completed,
+        costUsd: completed * 0.01,
+      });
+    }
+    const engine = new BatchEngine(
+      database,
+      { listSafe: () => [], activeKeys: async () => [], invalidateKey: () => undefined } as any,
+      { getUsdPkrRate: async () => 278 } as any,
+      new HistoryService(database, directory, join(directory, "downloads")),
+      new PricingService([]),
+      directory,
+    );
+
+    const stopped = await engine.cancelRemainingWaves(runId);
+    expect(stopped).toMatchObject({ status: "cancelled", completedCount: 10 });
+    expect(database.getTelemetry(ids[0]!).status).toBe("completed");
+    expect(database.getTelemetry(ids[2]!).status).toBe("completed");
+    expect(database.getTelemetry(ids[3]!).status).toBe("cancelled");
+    expect(database.getSessionPrompts(ids[3]!).every((prompt) => prompt.status === "cancelled")).toBe(true);
+    database.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
     database.db.close();
   });
 });

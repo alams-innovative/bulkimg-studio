@@ -41,6 +41,26 @@ export type PromptMatrix = {
 
 export type RunMode = "batch" | "direct";
 export type QualityTier = "low" | "medium" | "high";
+
+/**
+ * The local, unsubmitted Generator workspace. References deliberately do not
+ * live here: provider files have their own retry-safe lifecycle.
+ */
+export type GeneratorDraft = {
+  matrix: PromptMatrix;
+  selectedIds: string[];
+  matrixPage: number;
+  matrixView: "list" | "cards";
+  mode: RunMode;
+  model: string;
+  format: OutputFormatId;
+  quality: QualityTier;
+  waveStrategy: "all" | "guided" | "parallel";
+  waveSizes: number[];
+  updatedAt: string;
+};
+
+export type GeneratorDraftInput = Omit<GeneratorDraft, "updatedAt">;
 export type SessionStatus = "pending" | "processing" | "partial" | "completed" | "failed" | "cancelled";
 export type PromptStatus = "pending" | "processing" | "completed" | "failed" | "cancelled";
 export type RunPhase = "queued" | "generating" | "waiting_batch" | "downloading" | "saving" | "done" | "error";
@@ -432,6 +452,9 @@ export type AppRPC = {
       setSettings: { params: Partial<AppSettings>; response: AppSettings };
       importCSV: { params: { csvText: string; sourceName: string }; response: PromptMatrix };
       parseManualPrompts: { params: { text: string }; response: PromptMatrix };
+      getGeneratorDraft: { params: {}; response: GeneratorDraft | null };
+      saveGeneratorDraft: { params: GeneratorDraftInput; response: GeneratorDraft };
+      clearGeneratorDraft: { params: {}; response: { success: boolean } };
       pickCsvFile: { params: {}; response: { csvText: string; sourceName: string } | null };
       submitBatchRun: { params: SubmitRunInput; response: SessionTelemetry };
       pollBatchStatus: { params: { sessionId: string }; response: SessionTelemetry };
@@ -440,6 +463,7 @@ export type AppRPC = {
       retryFailedPrompts: { params: { sessionId: string }; response: SessionTelemetry };
       resumeRun: { params: { runId?: string; sessionId?: string }; response: SessionTelemetry };
       continueRun: { params: { runId: string }; response: SessionTelemetry };
+      cancelRemainingWaves: { params: { runId: string }; response: RunSummary };
       estimateRunCost: {
         params: {
           model: string;

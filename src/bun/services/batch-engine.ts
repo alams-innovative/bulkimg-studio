@@ -7,7 +7,7 @@ import { OpenAIClient, OpenAIError, sanitizedError, type BatchObject } from "./o
 import type { HistoryService } from "./history-service";
 import type { PricingService } from "./pricing-service";
 import type {
-  CostEstimate, ImageTokenUsage, OutputFormatId, QualityTier, RunMode, SessionDetail, SessionStatus,
+  CostEstimate, ImageTokenUsage, OutputFormatId, QualityTier, RunMode, RunSummary, SessionDetail, SessionStatus,
   SessionTelemetry, SubmitRunInput,
 } from "../../shared/contracts";
 import { APP_LIMITS } from "../../shared/contracts";
@@ -469,6 +469,43 @@ export class BatchEngine {
     void this.diagnostics?.write("guided_batch_continue", { runId, sessionId: next.sessionId });
     void this.runWaveChain(runId, sessionIds, sessionIds.map((id) => id === next.sessionId ? input : this.sessionInputFromDb(id)));
     return this.emit(next.sessionId);
+  }
+
+  /** Stop only unstarted guided waves. Completed output remains untouched. */
+  async cancelRemainingWaves(runId: string): Promise<RunSummary> {
+    const run = this.database.getRunDetail(runId);
+    if (!run) throw new Error("That run was not found.");
+    if (run.waveStrategy !== "guided") throw new Error("Only guided runs have waiting waves to cancel.");
+    const active = run.sessions.find((item) => item.status === "processing");
+    if (active) throw new Error("Wait for the current batch to finish before cancelling the remaining batches.");
+    const pending = run.sessions.filter((item) => item.status === "pending");
+    if (!pending.length) throw new Error("There are no remaining batches to cancel.");
+
+    this.cancelledRuns.add(runId);
+    for (const wave of pending) {
+      this.database.cancelOpenPrompts(wave.sessionId);
+      this.database.setSessionPhase(wave.sessionId, "done");
+      this.database.updateSession(wave.sessionId, {
+        status: "cancelled",
+        message: "Skipped because the remaining batches were cancelled.",
+        nextPollAt: null,
+      });
+      this.emit(wave.sessionId);
+      await this.cleanupRemoteReferences(wave.sessionId);
+    }
+    const aggregate = this.database.aggregateRunUsage(runId);
+    this.database.updateBatchRun(runId, {
+      status: "cancelled",
+      message: `Stopped after saving ${aggregate.completed} image${aggregate.completed === 1 ? "" : "s"}.`,
+      completedCount: aggregate.completed,
+      costUsd: aggregate.costUsd,
+    });
+    void this.diagnostics?.write("guided_remaining_waves_cancelled", {
+      runId,
+      cancelledWaves: pending.length,
+      completed: aggregate.completed,
+    });
+    return this.database.getRunDetail(runId) ?? run;
   }
 
   private async reconcileRunStatus(runId: string): Promise<void> {

@@ -43,6 +43,7 @@ const telemetryBase = {
 };
 
 let guidedWaveStarted = false;
+let guidedWaveCancelled = false;
 
 const mocks: Record<string, (params: any) => any> = {
   getBootstrap: () => ({
@@ -82,6 +83,9 @@ const mocks: Record<string, (params: any) => any> = {
   }),
   getSettings: () => ({ waveSize: APP_LIMITS.defaultWaveSize }),
   setSettings: (partial: { waveSize?: number }) => ({ waveSize: partial.waveSize ?? APP_LIMITS.defaultWaveSize }),
+  getGeneratorDraft: () => null,
+  saveGeneratorDraft: (draft: any) => ({ ...draft, updatedAt: new Date().toISOString() }),
+  clearGeneratorDraft: () => ({ success: true }),
   parseManualPrompts: ({ text }: { text: string }) => promptMatrix(text),
   importCSV: ({ csvText, sourceName }: { csvText: string; sourceName: string }) => parseCSV(csvText, sourceName),
   estimateRunCost: ({ promptCount }: { promptCount: number }) => ({ costUsd: promptCount * 0.053, costPkr: promptCount * 0.053 * 278, fxRate: 278, pricingVersion: "test", isEstimate: true }),
@@ -94,8 +98,11 @@ const mocks: Record<string, (params: any) => any> = {
     batch: { requestCount: 40, completedCount: 35, failedCount: 5, inputTokens: 4_000, outputTokens: 43_000, costUsd: 0.78, costPkr: 216.84 },
   }),
   listApiKeys: () => [{ id: "key-1", label: "Test key", keyHint: "••••test", provider: "OpenAI", isActive: true, isRateLimited: false, rateLimitedUntil: null, createdAt: new Date().toISOString(), lastUsedAt: null, totalRequests: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, costPkr: 0, currentSessionId: null, currentModel: null, currentRunMode: null, currentStatus: null, currentPrompts: 0, currentCompleted: 0 }],
-  submitBatchRun: ({ prompts, mode, format, quality }: any) => mode === "batch" && prompts.length > 1
-    ? {
+  submitBatchRun: ({ prompts, mode, format, quality }: any) => {
+    if (mode === "batch" && prompts.length > 1) {
+      guidedWaveStarted = false;
+      guidedWaveCancelled = false;
+      return {
       ...telemetryBase,
       sessionId: "wave-one",
       status: "completed" as const,
@@ -111,8 +118,9 @@ const mocks: Record<string, (params: any) => any> = {
       phase: "done" as const,
       etaMs: null,
       estimateUsd: prompts.length * 0.05,
+      };
     }
-    : ({
+    return {
       ...telemetryBase,
       totalPrompts: prompts.length,
       runMode: mode,
@@ -120,10 +128,11 @@ const mocks: Record<string, (params: any) => any> = {
       quality,
       estimateUsd: prompts.length * 0.05,
       retryableCount: prompts.length,
-    }),
+    };
+  },
   getRunDetail: () => ({
     runId: "run-guided-test",
-    status: "processing" as const,
+    status: guidedWaveCancelled ? "cancelled" as const : "processing" as const,
     model: "gpt-image-2",
     runMode: "batch" as const,
     totalPrompts: 3,
@@ -135,7 +144,7 @@ const mocks: Record<string, (params: any) => any> = {
     waveCount: 2,
     waveStrategy: "guided" as const,
     startTime: new Date().toISOString(),
-    message: guidedWaveStarted ? "Batch 2 is running." : "Batch 2 is ready to run.",
+    message: guidedWaveCancelled ? "Stopped after saving 2 images." : guidedWaveStarted ? "Batch 2 is running." : "Batch 2 is ready to run.",
     format: "square" as const,
     quality: "medium" as const,
     diagnosticId: "BIS-guided",
@@ -147,14 +156,37 @@ const mocks: Record<string, (params: any) => any> = {
         parentRunId: "run-guided-test", waveIndex: 0, estimateUsd: 0.1, elapsedMs: 1_000,
       },
       {
-        sessionId: "wave-two", status: guidedWaveStarted ? "processing" as const : "pending" as const, model: "gpt-image-2", runMode: "batch" as const,
+        sessionId: "wave-two", status: guidedWaveCancelled ? "cancelled" as const : guidedWaveStarted ? "processing" as const : "pending" as const, model: "gpt-image-2", runMode: "batch" as const,
         totalPrompts: 1, completedCount: 0, costUsd: 0, costPkr: 0, startTime: new Date().toISOString(), endTime: null, keyLabel: "Test key",
         format: "square" as const, quality: "medium" as const, retryableCount: 1, diagnosticId: "BIS-guided-2", lastError: null,
         parentRunId: "run-guided-test", waveIndex: 1, estimateUsd: 0.05, elapsedMs: 0,
       },
     ],
   }),
-  pollBatchStatus: () => ({
+  cancelRemainingWaves: () => {
+    guidedWaveCancelled = true;
+    return {
+      runId: "run-guided-test", status: "cancelled" as const, model: "gpt-image-2", runMode: "batch" as const,
+      totalPrompts: 3, completedCount: 2, costUsd: 0.1, costPkr: 27.8, estimateUsd: 0.15,
+      waveSize: 2, waveCount: 2, waveStrategy: "guided" as const, startTime: new Date().toISOString(),
+      message: "Stopped after saving 2 images.", format: "square" as const, quality: "medium" as const,
+      diagnosticId: "BIS-guided", sessions: [],
+    };
+  },
+  pollBatchStatus: ({ sessionId }: { sessionId?: string } = {}) => sessionId === "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" ? ({
+    ...telemetryBase,
+    sessionId,
+    status: "processing" as const,
+    totalPrompts: 100,
+    completedCount: 42,
+    elapsedMs: 180_000,
+    message: "Restored active batch.",
+    runMode: "batch" as const,
+    parentRunId: "run-demo-parent",
+    waveIndex: 0,
+    waveCount: 2,
+    estimateUsd: 2.4,
+  }) : ({
     ...telemetryBase,
     status: "completed",
     completedCount: 1,
@@ -168,10 +200,12 @@ const mocks: Record<string, (params: any) => any> = {
     etaMs: null,
     estimateUsd: 0.001,
   }),
-  listSessions: () => [
+  listSessions: (_params: unknown, request?: Request) => {
+    const restoring = request?.headers.get("referer")?.includes("restore-active") ?? false;
+    return [
     {
       sessionId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-      status: "processing",
+      status: restoring ? "processing" : "completed",
       model: "gpt-image-2",
       runMode: "batch",
       totalPrompts: 100,
@@ -179,7 +213,7 @@ const mocks: Record<string, (params: any) => any> = {
       costUsd: 1.12,
       costPkr: 311.36,
       startTime: new Date().toISOString(),
-      endTime: null,
+      endTime: restoring ? null : new Date().toISOString(),
       keyLabel: "Test key",
       format: "square",
       quality: "medium",
@@ -191,7 +225,8 @@ const mocks: Record<string, (params: any) => any> = {
       estimateUsd: 2.4,
       elapsedMs: 180_000,
     },
-  ],
+    ];
+  },
   listRuns: () => [
     {
       runId: "run-demo-parent",
@@ -427,7 +462,7 @@ const server = Bun.serve({
     if (url.pathname === "/rpc" && request.method === "POST") {
       const call = await request.json() as { method: string; params: any };
       const handler = mocks[call.method];
-      return Response.json(handler ? await handler(call.params) : null);
+      return Response.json(handler ? await handler(call.params, request) : null);
     }
     if (url.pathname.startsWith("/assets/")) {
       const path = resolve(root, url.pathname.slice(1));

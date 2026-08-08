@@ -1,5 +1,6 @@
 import { BrowserView, BrowserWindow, Screen, Tray, Utils } from "electrobun/bun";
 import { existsSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 import type { AdminConfigView, AppRPC, BrandTheme, RateLimitHeaderProbe, RateLimitSnapshot } from "../shared/contracts";
 import { APP_LIMITS } from "../shared/contracts";
@@ -18,12 +19,12 @@ import { setNativeWindowIcon } from "./services/window-icon";
 import { getInitialWindowFrame } from "./window-layout";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.5 supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.0.6 supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.5",
+  version: "1.0.6",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -68,12 +69,79 @@ const assetRoots = [
   join(process.cwd(), "..", "Resources", "app", "views", "assets"),
 ];
 
+// Electrobun keeps the backend alive after its only window is closed so Batch
+// recovery and the tray can continue. A Windows named pipe makes a second
+// Start-menu launch activate that existing backend instead of starting another
+// scheduler against the same local database.
+function pipeHash(value: string): string {
+  let hash = 5381;
+  for (const character of value) hash = ((hash * 33) ^ character.charCodeAt(0)) >>> 0;
+  return hash.toString(36);
+}
+
+// Keep stable and canary installs independent while ensuring an updated build
+// in the same install location activates its existing background scheduler.
+const INSTANCE_PIPE = `\\\\.\\pipe\\bulkimg-studio-${(process.env["USERNAME"] || "user").replace(/[^a-z0-9_-]/gi, "_").toLowerCase()}-${pipeHash(`${process.execPath}|${process.cwd()}`.toLowerCase())}`;
+let mainWindow: BrowserWindow | null = null;
+let windowClosed = false;
+let isQuitting = false;
+
+function activateExistingInstance(): void {
+  if (mainWindow) showMainWindow();
+}
+
+async function claimSingleInstance(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = net.createServer((socket) => {
+      socket.once("data", () => activateExistingInstance());
+      socket.end();
+    });
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code !== "EADDRINUSE") {
+        console.warn("Single-instance channel unavailable; continuing.", error.message);
+        resolve(true);
+        return;
+      }
+      const client = net.createConnection(INSTANCE_PIPE);
+      let resolved = false;
+      const finish = (primary: boolean) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(primary);
+      };
+      client.once("connect", () => {
+        client.write("activate");
+        client.end();
+        finish(false);
+      });
+      client.once("error", () => {
+        // A stale named-pipe endpoint is rare but can happen after a forced
+        // termination. Retry claiming it once rather than launching blindly.
+        setTimeout(() => {
+          const retry = net.createServer((socket) => {
+            socket.once("data", () => activateExistingInstance());
+            socket.end();
+          });
+          retry.once("error", () => finish(false));
+          retry.listen(INSTANCE_PIPE, () => finish(true));
+        }, 80);
+      });
+    });
+    server.listen(INSTANCE_PIPE, () => resolve(true));
+  });
+}
+
+if (!await claimSingleInstance()) {
+  Utils.quit();
+  process.exit(0);
+}
+
 const dataDirectory = Utils.paths.userData;
 const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
 void diagnosticLog.write("startup", {
   cleanedFiles,
-  version: "1.0.5",
+  version: "1.0.6",
   userData: dataDirectory,
   pid: process.pid,
 });
@@ -161,6 +229,16 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       parseManualPrompts: ({ text }) => logged("parse_manual", {
         chars: text.length,
       }, () => parseManualPrompts(text)),
+      getGeneratorDraft: () => database.getGeneratorDraft(),
+      saveGeneratorDraft: (draft) => logged("generator_draft_save", {
+        sourceName: draft.matrix.sourceName.slice(0, 120),
+        promptCount: draft.matrix.cells.length,
+        selectedCount: draft.selectedIds.length,
+      }, () => database.saveGeneratorDraft(draft)),
+      clearGeneratorDraft: () => logged("generator_draft_clear", {}, () => {
+        database.clearGeneratorDraft();
+        return { success: true as const };
+      }),
       pickCsvFile: async () => logged("pick_csv_file", {}, async () => {
         const path = await pickOpenFile({
           title: "Import weekly CSV calendar",
@@ -185,6 +263,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       retryFailedPrompts: ({ sessionId }) => batchEngine.retryFailed(sessionId),
       resumeRun: (params) => batchEngine.resumeRun(params),
       continueRun: ({ runId }) => batchEngine.continueRun(runId),
+      cancelRemainingWaves: ({ runId }) => batchEngine.cancelRemainingWaves(runId),
       estimateRunCost: async (input) => batchEngine.estimate(input, await fxService.getUsdPkrRate()),
       uploadReferenceImage: async ({ dataBase64, filename, mimeType }) => logged("reference_upload", {
         filename,
@@ -328,10 +407,6 @@ batchEngine.setProgressSink((telemetry) => {
   }
 });
 
-let mainWindow: BrowserWindow;
-let windowClosed = false;
-let isQuitting = false;
-
 function createMainWindow(): BrowserWindow {
   const frame = getInitialWindowFrame(Screen.getPrimaryDisplay().workArea);
   const windowTitle = `${brand.appName} ${brand.version}`;
@@ -345,6 +420,7 @@ function createMainWindow(): BrowserWindow {
   });
   window.on("close", () => {
     windowClosed = true;
+    mainWindow = null;
     if (isQuitting) return;
     Utils.showNotification({
       title: brand.appName,
@@ -373,7 +449,7 @@ const tray = new Tray({
 });
 
 function showMainWindow(): void {
-  if (windowClosed) {
+  if (windowClosed || !mainWindow) {
     mainWindow = createMainWindow();
     windowClosed = false;
     return;

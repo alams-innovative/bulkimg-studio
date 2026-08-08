@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
-  ApiKeyStats, AppSettings, ConverterJob, ConverterJobItem, ConverterOptions, ConverterSourceImage, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RateLimitSnapshot,
+  ApiKeyStats, AppSettings, ConverterJob, ConverterJobItem, ConverterOptions, ConverterSourceImage, GeneratorDraft, GeneratorDraftInput, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RateLimitSnapshot,
   RunMode, RunPhase, RunSummary, SanitizedProviderError, SessionPromptOutcome, SessionStatus,
   SessionSummary, SessionTelemetry, SubmitRunInput, UsageSummary, UsageTotals,
 } from "../shared/contracts";
@@ -223,6 +223,7 @@ export class AppDatabase {
     this.ensureColumn("batch_runs", "wave_strategy", "TEXT NOT NULL DEFAULT 'guided'");
     this.db.exec("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('first_wave_size', '10')");
     this.migrateToV6();
+    this.migrateToV7();
   }
 
   private migrateToV4(): void {
@@ -332,6 +333,19 @@ export class AppDatabase {
     `);
   }
 
+  private migrateToV7(): void {
+    const version = this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+    if (version >= 7) return;
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS generator_drafts (
+        id TEXT PRIMARY KEY CHECK (id = 'current'),
+        draft_json TEXT NOT NULL,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      PRAGMA user_version = 7;
+    `);
+  }
+
   private ensureColumn(table: "api_keys" | "batch_sessions" | "batch_runs" | "generated_assets" | "session_prompts" | "reference_files", column: string, definition: string): void {
     const columns = this.db.query<{ name: string }, []>(`PRAGMA table_info(${table})`).all();
     if (!columns.some((item) => item.name === column)) {
@@ -373,6 +387,48 @@ export class AppDatabase {
       this.setSetting("first_wave_size", String(partial.firstWaveSize));
     }
     return this.getAppSettings();
+  }
+
+  getGeneratorDraft(): GeneratorDraft | null {
+    const row = this.db.query<{ draft_json: string; updated_at: string }, []>(
+      "SELECT draft_json, updated_at FROM generator_drafts WHERE id = 'current'",
+    ).get();
+    if (!row) return null;
+    try {
+      const draft = JSON.parse(row.draft_json) as GeneratorDraft;
+      if (!draft?.matrix || !Array.isArray(draft.matrix.cells) || !Array.isArray(draft.selectedIds)) return null;
+      return { ...draft, updatedAt: row.updated_at };
+    } catch {
+      return null;
+    }
+  }
+
+  saveGeneratorDraft(input: GeneratorDraftInput): GeneratorDraft {
+    const validIds = new Set(input.matrix.cells.map((cell) => cell.id));
+    const selectedIds = [...new Set(input.selectedIds)].filter((id) => validIds.has(id));
+    const normalized: GeneratorDraftInput = {
+      ...input,
+      selectedIds,
+      matrixPage: Math.max(0, Math.floor(input.matrixPage) || 0),
+      matrixView: input.matrixView === "cards" ? "cards" : "list",
+      mode: input.mode === "direct" ? "direct" : "batch",
+      model: input.model.slice(0, 120),
+      format: isOutputFormatId(input.format) ? input.format : "square",
+      quality: ["low", "medium", "high"].includes(input.quality) ? input.quality : "medium",
+      waveStrategy: ["all", "guided", "parallel"].includes(input.waveStrategy) ? input.waveStrategy : "guided",
+      waveSizes: input.waveSizes.filter((size) => Number.isInteger(size) && size > 0 && size <= APP_LIMITS.batchPromptLimit),
+    };
+    const serialized = JSON.stringify(normalized);
+    if (serialized.length > 12 * 1024 * 1024) throw new Error("This imported workspace is too large to save locally.");
+    this.db.query(`
+      INSERT INTO generator_drafts (id, draft_json, updated_at) VALUES ('current', ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(id) DO UPDATE SET draft_json = excluded.draft_json, updated_at = CURRENT_TIMESTAMP
+    `).run(serialized);
+    return this.getGeneratorDraft() ?? { ...normalized, updatedAt: new Date().toISOString() };
+  }
+
+  clearGeneratorDraft(): void {
+    this.db.query("DELETE FROM generator_drafts WHERE id = 'current'").run();
   }
 
   listConverterSessionImages(): ConverterSourceImage[] {

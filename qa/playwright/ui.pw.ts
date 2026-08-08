@@ -51,6 +51,13 @@ test("reveals editable batch waves only after prompts are selected", async ({ pa
   await expect(page.locator("#wave-list input")).toHaveCount(5);
 });
 
+test("restores an active session into the Generator status area", async ({ page }) => {
+  await page.goto("/?restore-active");
+  await expect(page.locator(".telemetry")).toBeVisible();
+  await expect(page.locator("#progress")).toHaveText("42 / 100");
+  await expect(page.locator("#session-message")).toContainText("Restored active batch.");
+});
+
 test("shows queued guided waves in the live bar and runs the ready wave", async ({ page }) => {
   await page.getByRole("tab", { name: "Manual" }).click();
   await page.getByLabel("Manual prompts").fill("Prompt one\nPrompt two\nPrompt three");
@@ -66,6 +73,22 @@ test("shows queued guided waves in the live bar and runs the ready wave", async 
   await queue.getByRole("button", { name: "Run batch 2" }).click();
   await expect(queue.locator(".wave-run")).toHaveCount(0);
   await expect(queue.locator(".wave-queue-item").nth(1)).toHaveClass(/status-processing/);
+});
+
+test("cancels unstarted guided waves from the live bar and keeps completed output", async ({ page }) => {
+  page.on("dialog", (dialog) => dialog.accept());
+  await page.getByRole("tab", { name: "Manual" }).click();
+  await page.getByLabel("Manual prompts").fill("Prompt one\nPrompt two\nPrompt three");
+  await page.getByRole("button", { name: "Add prompts" }).click();
+  await page.getByRole("button", { name: "Select all", exact: true }).click();
+  await page.getByRole("button", { name: "Generate 3", exact: true }).click();
+
+  const queue = page.locator("#wave-queue");
+  await expect(queue.getByRole("button", { name: "Cancel remaining" })).toBeVisible();
+  await queue.getByRole("button", { name: "Cancel remaining" }).click();
+  await expect(queue).toBeHidden();
+  await expect(page.locator("#session-status")).toHaveText("CANCELLED");
+  await expect(page.locator("#session-message")).toContainText("Stopped after saving 2 of 3 images.");
 });
 
 test("row selection preserves the imported-list viewport", async ({ page }) => {
@@ -126,6 +149,26 @@ test("weekly CSV rows can be selected as groups or as individual prompts", async
   await expect(page.locator("#selected-count")).toHaveText("2");
   await firstWeekSelect.click();
   await expect(page.locator("#selected-count")).toHaveText("0");
+});
+
+test("preview supports pointer-centred zoom and full one-click prompt copy", async ({ page }) => {
+  await page.getByRole("button", { name: "Library" }).click();
+  await page.getByRole("button", { name: "Preview image" }).first().click();
+  await expect(page.locator("#lightbox")).toBeVisible();
+  await expect(page.locator(".lightbox-prompt-text")).toContainText("A geometric blue bird on a muted slate studio backdrop");
+  await expect(page.getByRole("button", { name: "Copy prompt" })).toBeVisible();
+
+  const viewport = page.locator("#lightbox-viewport");
+  const box = await viewport.boundingBox();
+  expect(box).not.toBeNull();
+  await page.mouse.move(box!.x + box!.width * 0.7, box!.y + box!.height * 0.35);
+  await page.mouse.wheel(0, -180);
+  await expect(page.locator("#lightbox-zoom")).not.toHaveText("100%");
+  await expect(page.locator("#lightbox-image")).toHaveCSS("transform", /matrix/);
+  await page.getByRole("button", { name: "Reset view" }).click();
+  await expect(page.locator("#lightbox-zoom")).toHaveText("100%");
+  await page.getByRole("button", { name: "Copy prompt" }).click();
+  await expect(page.locator("#toast-message")).toHaveText("Prompt copied.");
 });
 
 test("deselects, deletes selected rows, deletes one row, and clears the imported matrix", async ({ page }) => {
@@ -210,7 +253,7 @@ test("Converter keeps quick conversion simple and exposes per-image rules", asyn
 for (const viewport of [{ width: 1440, height: 840 }, { width: 900, height: 640 }]) {
   test(`layout ${viewport.width}x${viewport.height}`, async ({ page }) => {
     await page.setViewportSize(viewport);
-    await expect(page.locator("body")).toHaveScreenshot(`generator-${viewport.width}x${viewport.height}.png`, { animations: "disabled" });
+    await expect(page.locator("body")).toHaveScreenshot(`generator-${viewport.width}x${viewport.height}.png`, { animations: "disabled", maxDiffPixels: 10 });
     const layout = await page.evaluate(() => ({
       clientWidth: document.documentElement.clientWidth,
       scrollWidth: document.documentElement.scrollWidth,

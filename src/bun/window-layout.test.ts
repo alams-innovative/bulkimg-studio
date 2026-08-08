@@ -20,6 +20,15 @@ describe("initial desktop window layout", () => {
     });
   });
 
+  test("uses a usable workspace on a common 1280×720 laptop", () => {
+    expect(getInitialWindowFrame({ x: 0, y: 0, width: 1280, height: 680 })).toEqual({
+      x: 52,
+      y: 34,
+      width: 1177,
+      height: 612,
+    });
+  });
+
   test("respects the position and bounds of a smaller secondary display", () => {
     expect(getInitialWindowFrame({ x: -1024, y: 40, width: 1024, height: 600 })).toEqual({
       x: -983,
