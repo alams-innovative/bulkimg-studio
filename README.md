@@ -1,6 +1,6 @@
 # BulkImg Studio
 
-BulkImg Studio 1.0.5 is a Windows-first Electrobun application for preparing and submitting high-volume AI image generation runs from weekly CSV calendars or manual prompts.
+BulkImg Studio 1.0.6 is a Windows-first Electrobun application for preparing and submitting high-volume AI image generation runs from weekly CSV calendars or manual prompts.
 
 ## What is included
 
@@ -54,10 +54,12 @@ Do not place OpenAI keys in `.env`. Add keys through the app so they are encrypt
 
 Brand text, colors, and asset paths are in `assets/brand/theme.json`; the model registry is in `assets/config/models.json`.
 
-## Documentation
+## Project guides
 
-- `docs/SYSTEM_SPECIFICATION.md` — full product/spec target
+- `AGENTS.md` — required coding, QA, and stable-release workflow
 - `docs/ARCHITECTURE.md` — process boundary and source map
-- `docs/RELEASE.md` — Windows release build and smoke checklist
+- `docs/RELEASE.md` — release/install gate
+- `docs/RELEASE_TEMPLATE.md` — approved GitHub Release notes template
+- `docs/UPDATE_SYSTEM_PLAN.md` — planned GitHub-based updater
 
 Brand assets live in `assets/brand/` (`theme.json`, `logo.svg`, `app_icon.ico`). Model and pricing registries are in `assets/config/`.

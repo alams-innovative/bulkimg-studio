@@ -47,7 +47,7 @@ let guidedWaveCancelled = false;
 
 const mocks: Record<string, (params: any) => any> = {
   getBootstrap: () => ({
-    brand: { appName: "BulkImg Studio", version: "1.0.5" },
+    brand: { appName: "BulkImg Studio", version: "1.0.6" },
     models: { defaultModel: "gpt-image-2", models: [{ id: "gpt-image-2", label: "GPT Image 2", enabled: true }] },
     keyCount: 1,
     platform: "win32-x64",
@@ -373,7 +373,7 @@ const mocks: Record<string, (params: any) => any> = {
   ],
   getDiagnosticLogs: () => ({
     lines: [
-      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.5"}',
+      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.6"}',
       '{"ts":"2026-08-04T06:01:12.000Z","event":"session_created","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","mode":"batch"}',
       '{"ts":"2026-08-04T06:02:40.000Z","event":"batch_poll","status":"processing","completed":42,"total":100}',
       '{"ts":"2026-08-04T06:03:10.000Z","event":"batch_download_error","category":"timeout","message":"Download stalled; will retry"}',
