@@ -513,13 +513,9 @@
   <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Image preview" hidden>
     <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close preview"><i
         data-lucide="x"></i></button>
-    <button type="button" class="lightbox-nav prev" id="lightbox-prev" aria-label="Previous image"><i
-        data-lucide="arrow-left"></i></button>
-    <div class="lightbox-content"><figure class="lightbox-frame"><div id="lightbox-viewport" class="lightbox-viewport" tabindex="0" role="group" aria-label="Image preview. Use the mouse wheel to zoom, drag to pan, or use plus, minus, zero, and arrow keys."><img id="lightbox-image" alt="Generated image" /></div>
-      <figcaption><strong id="lightbox-count">Image 0 of 0</strong><span id="lightbox-zoom" class="lightbox-zoom" role="status">100%</span><button id="lightbox-reset-zoom" class="lightbox-reset-zoom" type="button">Reset view</button></figcaption>
+    <div class="lightbox-content"><figure class="lightbox-frame"><div id="lightbox-viewport" class="lightbox-viewport" tabindex="0" role="group" aria-label="Image preview. Use the mouse wheel to zoom, drag to pan, plus or minus to zoom, and left or right arrow keys to browse images."><img id="lightbox-image" alt="Generated image" /><nav class="lightbox-pagination" aria-label="Image pagination"><button type="button" class="lightbox-nav" id="lightbox-prev" aria-label="Previous image"><i data-lucide="arrow-left"></i></button><strong id="lightbox-count" aria-live="polite">Image 0 of 0</strong><button type="button" class="lightbox-nav" id="lightbox-next" aria-label="Next image"><i data-lucide="arrow-right"></i></button></nav></div>
+      <figcaption><span id="lightbox-zoom" class="lightbox-zoom" role="status">100%</span><button id="lightbox-reset-zoom" class="lightbox-reset-zoom" type="button">Reset view</button></figcaption>
     </figure><aside id="lightbox-details" class="lightbox-details" aria-live="polite"></aside></div>
-    <button type="button" class="lightbox-nav next" id="lightbox-next" aria-label="Next image"><i
-        data-lucide="arrow-right"></i></button>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden>
     <div class="toast-body">

@@ -1758,11 +1758,17 @@ textarea {
 .history-card {
   min-width: 0;
   position: relative;
-  background: var(--muted);
+  display: grid;
+  grid-template-rows: auto 1fr;
+  background: color-mix(in srgb, var(--muted) 84%, var(--canvas));
   border: 1px solid var(--subtle);
   border-radius: var(--r2);
-  overflow: visible
+  overflow: visible;
+  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease
 }
+
+.history-card:hover { border-color: color-mix(in srgb, var(--accent) 44%, var(--border)); box-shadow: 0 10px 24px color-mix(in srgb, #000 16%, transparent); transform: translateY(-2px) }
+.history-card:has(.library-select-item:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 10px 24px color-mix(in srgb, #000 14%, transparent) }
 
 .history-select {
   position: absolute;
@@ -1786,7 +1792,8 @@ textarea {
 }
 
 .history-image {
-  height: 150px;
+  aspect-ratio: 4 / 3;
+  min-height: 166px;
   position: relative;
   background: var(--side);
   display: grid;
@@ -1801,12 +1808,22 @@ textarea {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0
+  opacity: 0;
+  transform: scale(1.001);
+  transition: opacity 180ms ease, transform 260ms cubic-bezier(.16, 1, .3, 1)
 }
 
 .history-image img.loaded {
   opacity: 1
 }
+
+.history-image:hover img.loaded,
+.history-image:focus-visible img.loaded { transform: scale(1.035) }
+.history-image:focus-visible { outline: 2px solid var(--accentText); outline-offset: -2px }
+.history-image-overlay { position: absolute; inset: auto 8px 8px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.16); border-radius: 7px; background: rgba(8,12,17,.7); color: #fff; font-size: 10px; font-weight: 700; opacity: 0; transform: translateY(4px); transition: opacity 150ms ease, transform 150ms ease; pointer-events: none }
+.history-image-overlay i { width: 14px; height: 14px }
+.history-image:hover .history-image-overlay,
+.history-image:focus-visible .history-image-overlay { opacity: 1; transform: translateY(0) }
 
 .history-image .image-placeholder {
   min-height: 0
@@ -1814,7 +1831,10 @@ textarea {
 
 .history-card-body {
   position: relative;
-  padding: 11px 42px 11px 11px
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  padding: 11px
 }
 
 .history-card-meta {
@@ -1826,13 +1846,14 @@ textarea {
 
 .history-prompt {
   display: -webkit-box;
-  min-height: 34px;
-  max-height: 34px;
+  min-height: 36px;
+  max-height: 54px;
   overflow: hidden;
-  margin: 9px 0;
+  margin: 0;
   font-size: 12px;
+  line-height: 1.48;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2
+  -webkit-line-clamp: 3
 }
 
 .history-card-summary {
@@ -1843,6 +1864,9 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap
 }
+
+.history-card-footer { display: flex; align-items: center; min-width: 0; gap: 8px }
+.history-card-footer .history-card-summary { flex: 1; min-width: 0 }
 
 .history-actions button {
   flex: 1;
@@ -2865,8 +2889,8 @@ button:disabled {
 .library-group-content.hidden { display: none }
 
 .history-group .history-grid-inner {
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 10px
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px
 }
 
 .history-group-actions {
@@ -2932,7 +2956,7 @@ button:disabled {
   text-transform: uppercase
 }
 
-.history-card-menu { position: absolute; right: 10px; bottom: 10px }
+.history-card-menu { position: relative; right: auto; bottom: auto; flex: 0 0 auto }
 .history-card-menu .action-menu-popover { top: auto; bottom: calc(100% + 6px) }
 .menu-action {
   display: flex;
@@ -2999,7 +3023,7 @@ button:disabled {
   z-index: 80;
   display: grid;
   place-items: center;
-  padding: 24px 84px;
+  padding: 24px;
   background: rgba(8, 10, 14, .88)
 }
 
@@ -3065,8 +3089,7 @@ button:disabled {
   line-height: 1.4
 }
 
-.lightbox-frame figcaption { grid-template-columns: 1fr auto auto; align-items: center; text-align: left }
-.lightbox-frame figcaption strong { color: #fff; font-size: 12px }
+.lightbox-frame figcaption { grid-template-columns: 1fr auto; align-items: center; text-align: left }
 .lightbox-zoom { color: #9ba8b8; font-size: 11px; font-variant-numeric: tabular-nums }
 .lightbox-reset-zoom { padding: 0; border: 0; background: transparent; color: var(--accentText); font: inherit; font-size: 11px; cursor: pointer }
 .lightbox-reset-zoom:hover:not(:disabled) { color: #fff }
@@ -3092,6 +3115,7 @@ button:disabled {
 .lightbox-details section + section { margin-top: 20px }
 .lightbox-details h3 { margin: 0 0 9px; color: #fff; font: 700 13px Manrope, sans-serif }
 .lightbox-details dl { display: grid; gap: 8px; margin: 0 }
+.lightbox-load-warning { margin: 0 0 14px; padding: 8px 9px; border: 1px solid color-mix(in srgb, var(--danger) 60%, transparent); border-radius: 7px; background: color-mix(in srgb, var(--danger) 12%, transparent); color: #ffd2d2; font-size: 11px; line-height: 1.4 }
 .lightbox-details dl div { display: flex; justify-content: space-between; gap: 12px }
 .lightbox-details dt { color: #9ba8b8; font-size: 11px }
 .lightbox-details dd { margin: 0; color: #fff; font-size: 11px; text-align: right }
@@ -3099,8 +3123,7 @@ button:disabled {
 .lightbox-prompt-head h3 { margin-bottom: 0 }
 .lightbox-prompt-text { max-height: min(28vh, 300px); overflow: auto; margin: 0; color: #d7dce2; font: 12px/1.55 "JetBrains Mono", monospace; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left }
 
-.lightbox-close,
-.lightbox-nav {
+.lightbox-close {
   border: 1px solid rgba(255, 255, 255, .18);
   background: rgba(20, 24, 30, .8);
   color: #fff;
@@ -3111,6 +3134,13 @@ button:disabled {
   place-items: center;
   cursor: pointer
 }
+
+.lightbox-pagination { position: absolute; z-index: 2; bottom: 12px; left: 50%; display: grid; grid-template-columns: 32px auto 32px; align-items: center; gap: 4px; min-height: 36px; padding: 3px; border: 1px solid rgba(255,255,255,.16); border-radius: 9px; background: rgba(16,22,30,.84); box-shadow: 0 8px 22px rgba(0,0,0,.28); transform: translateX(-50%); backdrop-filter: blur(8px) }
+.lightbox-pagination strong { min-width: 86px; padding: 0 6px; color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; text-align: center; white-space: nowrap }
+.lightbox-nav { display: grid; width: 32px; height: 30px; padding: 0; border: 0; border-radius: 6px; place-items: center; background: transparent; color: #fff; cursor: pointer }
+.lightbox-nav:hover:not(:disabled),
+.lightbox-nav:focus-visible { background: rgba(255,255,255,.13); outline: none }
+.lightbox-nav:disabled { cursor: default; opacity: .32 }
 
 .lightbox-close {
   position: absolute;
@@ -3126,17 +3156,10 @@ button:disabled {
   .lightbox-content { grid-template-columns: minmax(0, 1fr) 240px }
 }
 
-.lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%) }
-.lightbox-nav.prev { left: 24px }
-.lightbox-nav.next { right: 24px }
-.lightbox-nav:disabled { cursor: default; opacity: .32 }
-
 @media(max-width:760px) {
-  .lightbox { padding: 10px 52px }
+  .lightbox { padding: 10px }
   .lightbox-content { grid-template-columns: 1fr; max-height: 92vh }
   .lightbox-details { max-height: 210px; border-top: 1px solid rgba(255, 255, 255, .12); border-left: 0 }
-  .lightbox-nav.prev { left: 8px }
-  .lightbox-nav.next { right: 8px }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3170,7 +3193,7 @@ button:disabled {
 
 .history-grid-inner {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 12px
 }
 
@@ -3186,6 +3209,13 @@ button.history-image {
 
 button.history-image:disabled {
   cursor: default
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .history-card,
+  .history-image img,
+  .history-image-overlay { transition: none }
+  .history-card:hover { transform: none }
 }
 
 .session-row>.session-row-main {

@@ -155,6 +155,8 @@ test("preview supports pointer-centred zoom and full one-click prompt copy", asy
   await page.getByRole("button", { name: "Library" }).click();
   await page.getByRole("button", { name: "Preview image" }).first().click();
   await expect(page.locator("#lightbox")).toBeVisible();
+  await expect(page.locator("#lightbox-viewport #lightbox-prev")).toBeVisible();
+  await expect(page.locator("#lightbox-viewport #lightbox-next")).toBeVisible();
   await expect(page.locator(".lightbox-prompt-text")).toContainText("A geometric blue bird on a muted slate studio backdrop");
   await expect(page.getByRole("button", { name: "Copy prompt" })).toBeVisible();
 
@@ -169,6 +171,22 @@ test("preview supports pointer-centred zoom and full one-click prompt copy", asy
   await expect(page.locator("#lightbox-zoom")).toHaveText("100%");
   await page.getByRole("button", { name: "Copy prompt" }).click();
   await expect(page.locator("#toast-message")).toHaveText("Prompt copied.");
+
+  await page.keyboard.press("ArrowRight");
+  await expect(page.locator("#lightbox")).toBeVisible();
+  await expect(page.locator("#lightbox-count")).toHaveText("Image 2 of 2");
+  await expect(page.locator(".lightbox-prompt-text")).toContainText("ceramic mug");
+  await page.keyboard.press("ArrowLeft");
+  await expect(page.locator("#lightbox-count")).toHaveText("Image 1 of 2");
+});
+
+test("Library exposes select-all beside each image group", async ({ page }) => {
+  await page.getByRole("button", { name: "Library" }).click();
+  const group = page.locator(".history-group").first();
+  await expect(group.locator(":scope > .history-group-head .library-select-group")).toBeVisible();
+  await expect(group.locator(".action-menu .library-select-group")).toHaveCount(0);
+  await group.locator(".library-select-group").click();
+  await expect(page.locator("#library-selection")).toHaveText("2 images selected");
 });
 
 test("deselects, deletes selected rows, deletes one row, and clears the imported matrix", async ({ page }) => {

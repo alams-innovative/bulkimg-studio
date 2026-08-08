@@ -427,10 +427,10 @@ function createMainWindow(): BrowserWindow {
       body: "BulkImg Studio is still running in the system tray. Select its tray icon to open it again.",
     });
   });
-  // Start restored at the adaptive work-area size. Electrobun 1.18.1 can leave
-  // WebView2 at its restored bounds when a hidden window is maximized during
-  // startup, exposing the unpainted native client area around the webview.
+  // Show before maximizing. Electrobun 1.18.1 can leave WebView2 at restored
+  // bounds when a hidden window is maximized during startup.
   window.show();
+  setTimeout(() => window.maximize(), 40);
   setTimeout(() => {
     if (nativeIconPath && !setNativeWindowIcon(windowTitle, nativeIconPath)) {
       console.warn("Could not apply the native window icon.");
@@ -455,6 +455,7 @@ function showMainWindow(): void {
     return;
   }
   mainWindow.show();
+  mainWindow.maximize();
   mainWindow.activate();
 }
 

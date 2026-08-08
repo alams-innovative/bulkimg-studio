@@ -357,6 +357,7 @@ let lightboxZoom = 1;
 let lightboxPan = { x: 0, y: 0 };
 let lightboxPointer: { id: number; x: number; y: number; panX: number; panY: number } | null = null;
 let lightboxReturnFocus: HTMLElement | null = null;
+let lightboxLoadToken = 0;
 type ReferenceImage = { fileId: string; name: string; previewUrl: string };
 let referenceImages: ReferenceImage[] = [];
 let referencePasteInFlight = false;
@@ -2538,6 +2539,7 @@ async function copyLightboxPrompt(prompt: string): Promise<void> {
 }
 
 function closeLightbox(): void {
+  lightboxLoadToken += 1;
   elements.lightbox.classList.add("hidden");
   elements.lightbox.hidden = true;
   elements.lightboxImage.removeAttribute("src");
@@ -2561,6 +2563,7 @@ async function openLightbox(items: HistoryItem[], index: number): Promise<void> 
 
 async function showLightboxAt(index: number): Promise<void> {
   if (!lightboxItems.length) return;
+  const loadToken = ++lightboxLoadToken;
   lightboxIndex = Math.max(0, Math.min(index, lightboxItems.length - 1));
   const item = lightboxItems[lightboxIndex]!;
   elements.lightbox.classList.remove("hidden");
@@ -2582,13 +2585,16 @@ async function showLightboxAt(index: number): Promise<void> {
   elements.lightboxDetails.querySelector<HTMLButtonElement>(".lightbox-copy-prompt")?.addEventListener("click", () => void copyLightboxPrompt(item.promptText));
   try {
     const { dataUrl } = await app.rpc!.request.getHistoryImage({ assetId: item.assetId! });
+    if (loadToken !== lightboxLoadToken || elements.lightbox.hidden) return;
     elements.lightboxImage.src = dataUrl;
   } catch (error) {
-    showToast(error instanceof Error ? error.message : "Could not open preview", true);
-    closeLightbox();
+    if (loadToken !== lightboxLoadToken || elements.lightbox.hidden) return;
+    elements.lightboxImage.removeAttribute("src");
+    elements.lightboxDetails.insertAdjacentHTML("afterbegin", `<p class="lightbox-load-warning" role="alert">${escapeHtml(error instanceof Error ? error.message : "This image is no longer available on this device.")}</p>`);
+    showToast("This image could not be loaded. Use the arrow keys to keep browsing.", true);
   }
   refreshIcons();
-  window.requestAnimationFrame(() => elements.lightboxClose.focus({ preventScroll: true }));
+  window.requestAnimationFrame(() => elements.lightboxViewport.focus({ preventScroll: true }));
 }
 
 function renderHistoryCard(item: HistoryItem): string {
@@ -2596,13 +2602,14 @@ function renderHistoryCard(item: HistoryItem): string {
       <label class="history-select"><input class="library-select-item" type="checkbox" data-prompt-id="${escapeHtml(item.promptId)}" ${librarySelectedPromptIds.has(item.promptId) ? "checked" : ""} /><span class="sr-only">Select this image</span></label>
       <button type="button" class="history-image preview-history" ${item.assetId ? `data-asset-id="${escapeHtml(item.assetId)}" data-prompt-id="${escapeHtml(item.promptId)}"` : "disabled"} aria-label="Preview image">
         <div class="image-placeholder"><i data-lucide="${item.hasImage ? "loader-circle" : "image-off"}" aria-hidden="true"></i><strong>${item.hasImage ? "Loading preview" : "No image saved"}</strong><small>${item.hasImage ? "Stored locally" : "Prompt retained from this session"}</small></div>
+        <span class="history-image-overlay" aria-hidden="true"><span>Open preview</span><i data-lucide="expand"></i></span>
       </button>
       <div class="history-card-body">
         <div class="history-card-meta"><span>${formatDate(item.createdAt)}</span><span class="status-badge status-${escapeHtml(item.status)}">${escapeHtml(item.status)}</span></div>
-        <p class="history-prompt">${escapeHtml(item.promptText)}</p>
-        <p class="history-card-summary" title="${escapeHtml(item.model)} · ${escapeHtml(item.themeColumn || item.week || "Manual")}">${escapeHtml(item.themeColumn || item.week || "Manual")} · $${item.costUsd.toFixed(3)}</p>
+        <p class="history-prompt" title="${escapeHtml(item.promptText)}">${escapeHtml(item.promptText)}</p>
+        <div class="history-card-footer"><p class="history-card-summary" title="${escapeHtml(item.model)} · ${escapeHtml(item.themeColumn || item.week || "Manual")}">${escapeHtml(item.themeColumn || item.week || "Manual")} · $${item.costUsd.toFixed(3)}</p>
         <details class="action-menu history-card-menu"><summary aria-label="Image options" title="Image options"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Image options</p><button class="menu-action reveal-history" data-asset-id="${item.assetId ?? ""}" ${item.assetId ? "" : "disabled"}><i data-lucide="folder-open"></i>Show file in folder</button><button class="menu-action reveal-session" data-session-id="${item.sessionId}"><i data-lucide="folder-open"></i>Open session folder</button><button class="menu-action danger-button delete-history" data-prompt-id="${item.promptId}"><i data-lucide="trash-2"></i>Delete this image</button></div></details>
-      </div>
+        </div></div>
     </article>`;
 }
 
@@ -2675,7 +2682,7 @@ function renderHistory(animateCards = false): void {
       ? `<div class="history-grid-inner">${group.items.map(renderHistoryCard).join("")}</div>`
       : '<p class="empty-inline">No images saved for this session yet.</p>';
     return `<section class="history-group">
-      <header class="history-group-head"><button type="button" class="library-group-toggle" data-group-id="${escapeHtml(group.id)}" aria-expanded="${collapsedLibraryGroups.has(group.id) ? "false" : "true"}"><i data-lucide="${collapsedLibraryGroups.has(group.id) ? "chevron-right" : "chevron-down"}" aria-hidden="true"></i><span><strong>${escapeHtml(group.title)}</strong><small>${escapeHtml(group.subtitle)} · ${group.items.length} image${group.items.length === 1 ? "" : "s"}</small></span></button><div class="history-group-actions"><details class="action-menu"><summary aria-label="Run options" title="Run options"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Run options</p>${group.items.length ? `<button type="button" class="menu-action preview-library-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="images"></i>Preview and details</button>` : ""}${exportAction.replace("secondary-button", "menu-action").replace(">Export ZIP<", "><i data-lucide=\"download\"></i>Download all images<")}${group.items.length ? `<button type="button" class="menu-action library-select-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="check"></i>Select all images</button>` : ""}${activeSession ? `<button type="button" class="menu-action session-live" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="images"></i>Open progress</button>${activeSession.runMode === "batch" ? `<button type="button" class="menu-action session-check" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="refresh-cw"></i>Check for updates</button>` : ""}<button type="button" class="menu-action danger-button session-cancel" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="x"></i>Cancel this run</button>` : ""}${canResume ? `<button type="button" class="menu-action ${run ? "run-resume" : "session-resume"}" data-${run ? "run-id" : "session-id"}="${escapeHtml(run?.runId ?? primarySession.sessionId)}"><i data-lucide="refresh-cw"></i>Resume unfinished images</button>` : ""}${canContinue ? `<button type="button" class="menu-action run-continue" data-run-id="${escapeHtml(run!.runId)}"><i data-lucide="images"></i>Continue next batch</button>` : ""}</div></details></div></header>
+      <header class="history-group-head"><button type="button" class="library-group-toggle" data-group-id="${escapeHtml(group.id)}" aria-expanded="${collapsedLibraryGroups.has(group.id) ? "false" : "true"}"><i data-lucide="${collapsedLibraryGroups.has(group.id) ? "chevron-right" : "chevron-down"}" aria-hidden="true"></i><span><strong>${escapeHtml(group.title)}</strong><small>${escapeHtml(group.subtitle)} · ${group.items.length} image${group.items.length === 1 ? "" : "s"}</small></span></button><div class="history-group-actions">${group.items.length ? `<button type="button" class="secondary-button library-select-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="check"></i>Select all images</button>` : ""}<details class="action-menu"><summary aria-label="Run options" title="Run options"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Run options</p>${group.items.length ? `<button type="button" class="menu-action preview-library-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="images"></i>Preview and details</button>` : ""}${exportAction.replace("secondary-button", "menu-action").replace(">Export ZIP<", "><i data-lucide=\"download\"></i>Download all images<")}${activeSession ? `<button type="button" class="menu-action session-live" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="images"></i>Open progress</button>${activeSession.runMode === "batch" ? `<button type="button" class="menu-action session-check" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="refresh-cw"></i>Check for updates</button>` : ""}<button type="button" class="menu-action danger-button session-cancel" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="x"></i>Cancel this run</button>` : ""}${canResume ? `<button type="button" class="menu-action ${run ? "run-resume" : "session-resume"}" data-${run ? "run-id" : "session-id"}="${escapeHtml(run?.runId ?? primarySession.sessionId)}"><i data-lucide="refresh-cw"></i>Resume unfinished images</button>` : ""}${canContinue ? `<button type="button" class="menu-action run-continue" data-run-id="${escapeHtml(run!.runId)}"><i data-lucide="images"></i>Continue next batch</button>` : ""}</div></details></div></header>
       <div class="library-group-content${collapsedLibraryGroups.has(group.id) ? " hidden" : ""}"${collapsedLibraryGroups.has(group.id) ? " hidden" : ""}><div class="session-detail-panel hidden" data-detail-for="${escapeHtml(primarySession.sessionId)}" hidden></div>${imagesHtml}</div>
     </section>`;
   }).join("");
@@ -3811,13 +3818,11 @@ elements.lightboxViewport.addEventListener("keydown", (event) => {
   if (event.key === "+" || event.key === "=") { event.preventDefault(); zoomLightbox(lightboxZoom * 1.2); }
   else if (event.key === "-") { event.preventDefault(); zoomLightbox(lightboxZoom / 1.2); }
   else if (event.key === "0") { event.preventDefault(); resetLightboxView(); }
-  else if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key) && lightboxZoom > 1) {
+  else if (["ArrowUp", "ArrowDown"].includes(event.key) && lightboxZoom > 1) {
     event.preventDefault();
     const step = 36;
     if (event.key === "ArrowUp") lightboxPan.y += step;
     if (event.key === "ArrowDown") lightboxPan.y -= step;
-    if (event.key === "ArrowLeft") lightboxPan.x += step;
-    if (event.key === "ArrowRight") lightboxPan.x -= step;
     clampLightboxPan();
     updateLightboxTransform();
   }
@@ -3833,13 +3838,12 @@ document.addEventListener("click", (event) => {
   });
   if (target?.closest(".menu-action")) activeMenu?.removeAttribute("open");
 });
-window.addEventListener("keydown", (event) => {
+elements.lightbox.addEventListener("keydown", (event) => {
   if (elements.lightbox.hidden) return;
-  if (event.key === "Escape") { event.preventDefault(); closeLightbox(); return; }
-  if (event.target === elements.lightboxViewport) return;
-  if (event.key === "ArrowLeft") void showLightboxAt(lightboxIndex - 1);
-  if (event.key === "ArrowRight") void showLightboxAt(lightboxIndex + 1);
-});
+  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeLightbox(); return; }
+  if (event.key === "ArrowLeft") { event.preventDefault(); event.stopPropagation(); void showLightboxAt(lightboxIndex - 1); }
+  if (event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); void showLightboxAt(lightboxIndex + 1); }
+}, { capture: true });
 elements.clearHistory.addEventListener("click", async () => {
   if (!historyItems.length || !window.confirm("Delete all prompt history and all locally stored generated images? This cannot be undone.")) return;
   elements.clearHistory.disabled = true;
