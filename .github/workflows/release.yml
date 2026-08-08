@@ -44,5 +44,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $pre = if ($env:CHANNEL -eq "beta") { "--prerelease" } else { "" }
-          gh release create $env:GITHUB_REF_NAME artifacts/release/BulkImgStudio-Setup.zip artifacts/release/bulkimg-update.json artifacts/release/bulkimg-update.json.sig --title "BulkImg Studio $env:GITHUB_REF_NAME" --generate-notes $pre
+          $assets = @(
+            "artifacts/release/BulkImgStudio-Setup.zip",
+            "artifacts/release/bulkimg-update.json",
+            "artifacts/release/bulkimg-update.json.sig"
+          )
+          $notesFile = "docs/releases/$env:GITHUB_REF_NAME.md"
+          $notes = if (Test-Path -LiteralPath $notesFile) { @("--notes-file", $notesFile) } else { @("--generate-notes") }
+          $pre = if ($env:CHANNEL -eq "beta") { @("--prerelease") } else { @() }
+          gh release create $env:GITHUB_REF_NAME @assets --title "BulkImg Studio $env:GITHUB_REF_NAME" @notes @pre
