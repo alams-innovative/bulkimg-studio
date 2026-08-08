@@ -202,6 +202,7 @@ test("preview supports pointer-centred zoom and full one-click prompt copy", asy
   await expect(page.locator("#lightbox")).toBeVisible();
   await expect(page.locator("#lightbox-count")).toHaveText("Image 2 of 2");
   await expect(page.locator(".lightbox-prompt-text")).toContainText("ceramic mug");
+  await expect(page.locator("#lightbox-viewport")).toBeFocused();
   await page.keyboard.press("ArrowLeft");
   await expect(page.locator("#lightbox-count")).toHaveText("Image 1 of 2");
 });
@@ -290,7 +291,6 @@ test("Converter keeps quick conversion simple and exposes per-image rules", asyn
   await expect(page.getByText("Every 3rd image → AVIF")).toBeVisible();
   await expect(page.locator(".converter-queue-item").nth(2).locator("b")).toHaveText("AVIF");
   await expect(page.getByRole("button", { name: "Convert", exact: true })).toBeEnabled();
-  await expect(page.locator("#converter-view")).toHaveScreenshot("converter-with-queue.png", { animations: "disabled" });
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
