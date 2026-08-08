@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type {
   ApiKeyStats, AppSettings, ConverterJob, ConverterJobItem, ConverterOptions, ConverterSourceImage, GeneratorDraft, GeneratorDraftInput, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RateLimitSnapshot,
   RunMode, RunPhase, RunSummary, SanitizedProviderError, SessionPromptOutcome, SessionStatus,
@@ -362,6 +362,16 @@ export class AppDatabase {
       INSERT INTO app_settings (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(key, value);
+  }
+
+  schemaVersion(): number {
+    return this.db.query<{ user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0;
+  }
+
+  createUpdateBackup(destinationPath: string): void {
+    mkdirSync(dirname(destinationPath), { recursive: true });
+    const escaped = destinationPath.replaceAll("'", "''");
+    this.db.exec(`VACUUM INTO '${escaped}'`);
   }
 
   getAppSettings(): AppSettings {

@@ -10,8 +10,8 @@ import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 const channel = Bun.argv[2] ?? "stable";
-if (channel !== "stable" && channel !== "canary") {
-  throw new Error(`Unsupported release channel: ${channel}. Use stable or canary.`);
+if (channel !== "stable" && channel !== "beta") {
+  throw new Error(`Unsupported release channel: ${channel}. Use stable or beta.`);
 }
 
 if (process.platform !== "win32") {
@@ -22,7 +22,7 @@ const projectRoot = resolve(import.meta.dir, "..");
 const buildDir = join(projectRoot, "build", `${channel}-win-x64`);
 if (!existsSync(buildDir)) {
   throw new Error(
-    `The ${channel} build directory does not exist. Run bun run build${channel === "canary" ? ":canary" : ""} first.`,
+    `The ${channel} build directory does not exist. Run bun run build${channel === "beta" ? ":beta" : ""} first.`,
   );
 }
 const setupExeName = readdirSync(buildDir).find(
@@ -37,7 +37,7 @@ const setupArchiveName = readdirSync(buildDir).find(
 
 if (!setupExeName || !setupMetadataName || !setupArchiveName) {
   throw new Error(
-    `The ${channel} build is incomplete. Run bun run build${channel === "canary" ? ":canary" : ""} first.`,
+    `The ${channel} build is incomplete. Run bun run build${channel === "beta" ? ":beta" : ""} first.`,
   );
 }
 

@@ -26,7 +26,7 @@ BulkImg Studio is a Windows-first Electrobun desktop app for preparing high-volu
 
 - Windows 10/11 with WebView2; Bun is required only for development/building.
 - Versions use semantic versioning and must match package, build, and brand configuration.
-- Stable and canary installs use separate local app-data paths.
+- Stable and beta installs use separate local app-data paths.
 - The complete installer ZIP, not the setup executable alone, is the distributable release unit.
 
 See `ARCHITECTURE.md` for the process boundary, `RELEASE.md` for the release checklist, and `UPDATE_SYSTEM_PLAN.md` for planned self-updating.

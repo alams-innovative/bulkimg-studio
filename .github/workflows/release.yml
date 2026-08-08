@@ -1,0 +1,48 @@
+name: Release BulkImg Studio
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel
+        required: true
+        type: choice
+        options: [stable, beta]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      BULKIMG_UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.BULKIMG_UPDATE_SIGNING_PRIVATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun test
+      - run: bun run test:ui
+      - name: Configure release verification key
+        run: bun run scripts/configure-update-public-key.ts
+      - name: Build
+        shell: pwsh
+        run: |
+          $channel = "${{ inputs.channel }}"
+          if (-not $channel) { $channel = if ("${{ github.ref }}" -match "-") { "beta" } else { "stable" } }
+          if ($channel -eq "beta") { bun run build:beta } else { bun run build }
+          "CHANNEL=$channel" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Sign manifest
+        run: bun run scripts/release-update-manifest.ts $env:CHANNEL $env:GITHUB_REF_NAME
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $pre = if ($env:CHANNEL -eq "beta") { "--prerelease" } else { "" }
+          gh release create $env:GITHUB_REF_NAME artifacts/release/BulkImgStudio-Setup.zip artifacts/release/bulkimg-update.json artifacts/release/bulkimg-update.json.sig --title "BulkImg Studio $env:GITHUB_REF_NAME" --generate-notes $pre

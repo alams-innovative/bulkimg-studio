@@ -19,7 +19,7 @@
           <img class="brand-logo-light"
             src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
           <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
-              id="brand-version">1.0.6</small></span>
+              id="brand-version">1.0.7</small></span>
         </div>
         <button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
           title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
@@ -37,6 +37,8 @@
             data-lucide="archive"></i><span>Exports</span></button>
         <button id="nav-logs" class="nav-item" data-view="logs" title="Logs"><i
             data-lucide="scroll-text"></i><span>Logs</span></button>
+        <button id="nav-about" class="nav-item" data-view="about" title="About and updates"><i
+            data-lucide="info"></i><span>About</span></button>
       </nav>
       <div class="sidebar-spacer"></div>
       <button id="manage-keys" class="nav-item" title="API keys"><i data-lucide="key-round"></i><span>API keys</span><b
@@ -396,6 +398,26 @@
         </div>
         <pre id="logs-list" class="logs-list" aria-live="polite" tabindex="0"></pre>
         <p id="logs-path" class="logs-path"></p>
+      </section>
+      <section id="about-view" class="view-content management-view hidden" aria-labelledby="about-title">
+        <div class="management-head">
+          <div><h2 id="about-title">About & updates</h2><p>Version details and safe update controls for this device.</p></div>
+          <button id="check-updates" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Check for updates</button>
+        </div>
+        <div id="update-status" class="update-status" role="status" aria-live="polite"></div>
+        <section class="update-card panel" aria-labelledby="update-channel-title">
+          <div><h3 id="update-channel-title">Update channel</h3><p>Stable is recommended for normal production work.</p></div>
+          <label class="update-channel-toggle"><input id="receive-beta-updates" type="checkbox" /><span><strong>Receive beta updates</strong><small>Beta releases are newer but can disrupt your workflow. Stable is recommended.</small></span></label>
+        </section>
+        <section class="update-card panel" aria-labelledby="update-available-title">
+          <div class="update-card-head"><div><h3 id="update-available-title">Available update</h3><p id="update-available-copy">Check GitHub Releases to see compatible updates.</p></div><span id="update-current-version" class="status-badge">—</span></div>
+          <div id="update-progress" class="update-progress hidden" hidden><div><span id="update-progress-label">Preparing download</span><strong id="update-progress-value">0%</strong></div><div><i id="update-progress-bar"></i></div></div>
+          <div class="button-row"><button id="download-update" class="primary-button" type="button" disabled><i data-lucide="download"></i>Download update</button><button id="install-update" class="secondary-button" type="button" disabled><i data-lucide="package-open"></i>Install and restart</button></div>
+        </section>
+        <section class="update-card panel" aria-labelledby="update-history-title">
+          <div class="update-card-head"><div><h3 id="update-history-title">Version history</h3><p>Only compatible published releases can be installed.</p></div></div>
+          <div id="update-history" class="update-history" aria-live="polite"></div>
+        </section>
       </section>
     </main>
   </div>

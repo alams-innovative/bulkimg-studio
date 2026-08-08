@@ -13,8 +13,8 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 const channel = Bun.argv[2] ?? "stable";
-if (channel !== "stable" && channel !== "canary") {
-  throw new Error(`Unsupported release channel: ${channel}. Use stable or canary.`);
+if (channel !== "stable" && channel !== "beta") {
+  throw new Error(`Unsupported release channel: ${channel}. Use stable or beta.`);
 }
 const projectRoot = resolve(import.meta.dir, "..");
 const platformName = `${channel}-win-x64`;
@@ -102,7 +102,10 @@ try {
   brandExecutable(join(extractedBundle, "bin", "launcher.exe"));
   brandExecutable(join(extractedBundle, "bin", "bun.exe"));
   run("tar.exe", ["-cf", rebuiltTar, "-C", extractedDir, basename(extractedBundle)]);
-  run(zstdPath, ["compress", "-i", rebuiltTar, "-o", rebuiltArchive, "-l", "19", "--no-timing"]);
+  // Level 19 is disproportionally slow for a release artifact that is
+  // immediately wrapped in a ZIP. Level 3 finishes predictably on Windows
+  // while preserving the same installer contents and checksum contract.
+  run(zstdPath, ["compress", "-i", rebuiltTar, "-o", rebuiltArchive, "-l", "3", "--no-timing"]);
 
   brandExecutable(setupExe);
   brandExecutable(bundleLauncher);

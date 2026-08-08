@@ -70,6 +70,7 @@ import type {
   UsageSummary,
   UsageTotals,
 } from "../shared/contracts";
+import type { UpdateState } from "../shared/update-contracts";
 import { APP_LIMITS } from "../shared/contracts";
 import { OUTPUT_FORMATS, type OutputFormatId } from "../shared/output-formats";
 
@@ -107,6 +108,19 @@ const elements = {
   historyView: byId("history-view"),
   exportsView: byId("exports-view"),
   logsView: byId("logs-view"),
+  aboutView: byId("about-view"),
+  checkUpdates: byId<HTMLButtonElement>("check-updates"),
+  updateStatus: byId("update-status"),
+  receiveBetaUpdates: byId<HTMLInputElement>("receive-beta-updates"),
+  updateCurrentVersion: byId("update-current-version"),
+  updateAvailableCopy: byId("update-available-copy"),
+  updateProgress: byId("update-progress"),
+  updateProgressLabel: byId("update-progress-label"),
+  updateProgressValue: byId("update-progress-value"),
+  updateProgressBar: byId("update-progress-bar"),
+  downloadUpdate: byId<HTMLButtonElement>("download-update"),
+  installUpdate: byId<HTMLButtonElement>("install-update"),
+  updateHistory: byId("update-history"),
   converterView: byId("converter-view"),
   converterTabWorkspace: byId<HTMLButtonElement>("converter-tab-workspace"),
   converterTabHistory: byId<HTMLButtonElement>("converter-tab-history"),
@@ -373,6 +387,8 @@ let generatorDraftTimer: number | null = null;
 let restoringGeneratorWorkspace = false;
 let bootstrapData: AppBootstrap | null = null;
 let pricingView: PricingView | null = null;
+let selectedUpdateVersion: string | null = null;
+let updateState: UpdateState | null = null;
 let appLimits: {
   maxReferences: number;
   maxReferenceBytes: number;
@@ -1258,7 +1274,7 @@ async function showConverterSourceProperties(clientId: string): Promise<void> {
   } catch (error) { showToast(error instanceof Error ? error.message : "Could not read image properties.", true); }
 }
 
-async function setView(view: "generator" | "converter" | "sessions" | "usage" | "history" | "exports" | "logs"): Promise<void> {
+async function setView(view: "generator" | "converter" | "sessions" | "usage" | "history" | "exports" | "logs" | "about"): Promise<void> {
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
     const active = button.dataset["view"] === view;
     button.classList.toggle("active", active);
@@ -1271,6 +1287,7 @@ async function setView(view: "generator" | "converter" | "sessions" | "usage" | 
   elements.historyView.classList.toggle("hidden", view !== "history");
   elements.exportsView.classList.toggle("hidden", view !== "exports");
   elements.logsView.classList.toggle("hidden", view !== "logs");
+  elements.aboutView.classList.toggle("hidden", view !== "about");
   elements.headerStats.classList.toggle("hidden", view !== "generator");
   const titles = {
     generator: "Generate images.",
@@ -1280,6 +1297,7 @@ async function setView(view: "generator" | "converter" | "sessions" | "usage" | 
     history: "Library",
     exports: "Exports",
     logs: "Logs",
+    about: "About & updates",
   } as const;
   elements.pageTitle.textContent = titles[view];
   if (view === "sessions") await loadSessions();
@@ -1288,6 +1306,7 @@ async function setView(view: "generator" | "converter" | "sessions" | "usage" | 
   if (view === "history") await loadHistory();
   if (view === "exports") await loadExports();
   if (view === "logs") await loadLogs();
+  if (view === "about") await loadUpdateState();
   const target = document.querySelector<HTMLElement>(`#${view}-view`);
   if (target) enter(target);
 }
@@ -2454,6 +2473,104 @@ async function loadLogs(): Promise<void> {
   }
 }
 
+function renderUpdateState(state: UpdateState): void {
+  updateState = state;
+  const busy = state.activity === "checking" || state.activity === "downloading" || state.activity === "installing";
+  elements.checkUpdates.disabled = busy || !state.configured;
+  elements.receiveBetaUpdates.checked = state.channel === "beta";
+  elements.receiveBetaUpdates.disabled = busy;
+  elements.updateCurrentVersion.textContent = `v${state.currentVersion} · ${state.channel === "beta" ? "Beta" : "Stable"}`;
+  elements.updateCurrentVersion.className = `status-badge status-${state.channel === "beta" ? "partial" : "completed"}`;
+
+  if (!state.configured) {
+    elements.updateStatus.textContent = "Updates are not configured in this build yet. A signed public verification key is required.";
+  } else if (state.lastError) {
+    elements.updateStatus.textContent = state.lastError;
+  } else if (state.lastCheckedAt) {
+    elements.updateStatus.textContent = `Last checked ${formatDate(state.lastCheckedAt)}.`;
+  } else {
+    elements.updateStatus.textContent = "Choose Check for updates to query GitHub Releases.";
+  }
+
+  const selectedRelease = state.releases.find((release) => release.version === selectedUpdateVersion) ?? state.available;
+  if (selectedRelease) selectedUpdateVersion = selectedRelease.version;
+  const downloaded = Boolean(selectedRelease && state.downloadedVersion === selectedRelease.version);
+  elements.downloadUpdate.disabled = busy || !selectedRelease || downloaded;
+  elements.installUpdate.disabled = busy || !selectedRelease || !downloaded;
+  elements.downloadUpdate.dataset["version"] = selectedRelease?.version ?? "";
+  elements.installUpdate.dataset["version"] = selectedRelease?.version ?? "";
+  elements.downloadUpdate.querySelector("span")?.remove();
+  if (selectedRelease) {
+    elements.updateAvailableCopy.textContent = downloaded
+      ? `v${selectedRelease.version} is verified and ready to install.`
+      : `v${selectedRelease.version} · ${selectedRelease.channel === "beta" ? "Beta" : "Stable"} · published ${formatDate(selectedRelease.publishedAt)}.`;
+  } else {
+    elements.updateAvailableCopy.textContent = state.releases.length ? "You are on the newest compatible release for this channel." : "Check GitHub Releases to see compatible updates.";
+  }
+
+  const progress = state.progress;
+  const showProgress = Boolean(progress) || state.activity === "downloading";
+  setHidden(elements.updateProgress, !showProgress);
+  if (showProgress) {
+    const received = progress?.receivedBytes ?? 0;
+    const total = progress?.totalBytes ?? null;
+    const percent = total ? Math.min(100, Math.round((received / total) * 100)) : null;
+    elements.updateProgressLabel.textContent = total ? `${formatBytes(received)} of ${formatBytes(total)}` : "Downloading verified update…";
+    elements.updateProgressValue.textContent = percent === null ? "Working" : `${percent}%`;
+    elements.updateProgressBar.style.width = `${percent ?? 8}%`;
+  }
+
+  elements.updateHistory.innerHTML = state.releases.length
+    ? state.releases.map((release) => {
+      const action = release.isCurrent ? "Installed" : release.available
+        ? `<button type="button" class="secondary-button update-history-action" data-update-version="${escapeHtml(release.version)}">${compareVersionsForUi(release.version, state.currentVersion) < 0 ? "Install this version" : "Choose version"}</button>`
+        : `<span class="update-history-note">${escapeHtml(release.unavailableReason ?? "Unavailable")}</span>`;
+      return `<article class="update-history-row"><div><strong>v${escapeHtml(release.version)}</strong><span>${escapeHtml(release.channel === "beta" ? "Beta" : "Stable")} · ${escapeHtml(formatDate(release.publishedAt))}</span></div><div class="update-history-actions"><a href="${escapeHtml(release.releaseNotesUrl)}" target="_blank" rel="noreferrer">Notes</a>${action}</div></article>`;
+    }).join("")
+    : '<div class="empty-state"><strong>No compatible releases loaded</strong><small>Check for updates after release signing is configured.</small></div>';
+  refreshIcons();
+}
+
+function compareVersionsForUi(left: string, right: string): number {
+  const parse = (value: string) => value.replace(/^v/, "").split(/[.-]/).map((part) => Number(part) || 0);
+  const a = parse(left); const b = parse(right);
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) if ((a[index] ?? 0) !== (b[index] ?? 0)) return (a[index] ?? 0) > (b[index] ?? 0) ? 1 : -1;
+  return 0;
+}
+
+async function loadUpdateState(): Promise<void> {
+  try { renderUpdateState(await app.rpc!.request.getUpdateState({})); }
+  catch (error) { elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not load update status."; }
+}
+
+async function checkForUpdates(): Promise<void> {
+  elements.checkUpdates.disabled = true;
+  elements.updateStatus.textContent = "Checking GitHub Releases…";
+  try { renderUpdateState(await app.rpc!.request.checkForUpdates({})); }
+  catch (error) { elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not check for updates."; }
+  finally { elements.checkUpdates.disabled = false; }
+}
+
+async function downloadSelectedUpdate(version: string): Promise<void> {
+  elements.downloadUpdate.disabled = true;
+  elements.updateStatus.textContent = `Downloading and verifying v${version}…`;
+  setHidden(elements.updateProgress, false);
+  try { renderUpdateState(await app.rpc!.request.downloadUpdate({ version })); }
+  catch (error) { elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not download the update."; }
+}
+
+async function installSelectedUpdate(version: string): Promise<void> {
+  if (!window.confirm(`Install BulkImg Studio v${version} now? The app will close and reopen after the verified installer finishes.`)) return;
+  elements.installUpdate.disabled = true;
+  try {
+    await app.rpc!.request.installUpdate({ version });
+    elements.updateStatus.textContent = "Installer started. BulkImg Studio is restarting…";
+  } catch (error) {
+    elements.installUpdate.disabled = false;
+    elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not start the installer.";
+  }
+}
+
 function formatDurationMs(ms: number | null | undefined): string {
   if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
   if (ms < 1_000) return `${Math.round(ms)}ms`;
@@ -2976,7 +3093,32 @@ elements.themeToggle.addEventListener("click", () => {
 });
 
 document.querySelectorAll<HTMLButtonElement>("[data-view]").forEach((button) => {
-  button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "converter" | "sessions" | "usage" | "history" | "exports" | "logs"));
+  button.addEventListener("click", () => void setView(button.dataset["view"] as "generator" | "converter" | "sessions" | "usage" | "history" | "exports" | "logs" | "about"));
+});
+elements.checkUpdates.addEventListener("click", () => void checkForUpdates());
+elements.receiveBetaUpdates.addEventListener("change", async () => {
+  try { renderUpdateState(await app.rpc!.request.setUpdateChannel({ channel: elements.receiveBetaUpdates.checked ? "beta" : "stable" })); }
+  catch (error) { showToast(error instanceof Error ? error.message : "Could not change the update channel.", true); await loadUpdateState(); }
+});
+elements.downloadUpdate.addEventListener("click", () => {
+  const version = elements.downloadUpdate.dataset["version"];
+  if (version) void downloadSelectedUpdate(version);
+});
+elements.installUpdate.addEventListener("click", () => {
+  const version = elements.installUpdate.dataset["version"];
+  if (version) void installSelectedUpdate(version);
+});
+elements.updateHistory.addEventListener("click", (event) => {
+  const button = (event.target as Element | null)?.closest<HTMLButtonElement>(".update-history-action");
+  const version = button?.dataset["updateVersion"];
+  if (!version) return;
+  selectedUpdateVersion = version;
+  if (updateState) renderUpdateState(updateState);
+  elements.downloadUpdate.dataset["version"] = version;
+  if (updateState?.releases.some((release) => release.version === version && release.available)) {
+    elements.downloadUpdate.disabled = false;
+  }
+  void downloadSelectedUpdate(version);
 });
 elements.converterTabWorkspace.addEventListener("click", () => { converterTab = "workspace"; renderConverterTab(); });
 elements.converterTabHistory.addEventListener("click", () => { converterTab = "history"; renderConverterTab(); });

@@ -1,4 +1,5 @@
 import type { OutputFormatId } from "./output-formats";
+import type { UpdateChannel, UpdateState } from "./update-contracts";
 
 export type { OutputFormatId } from "./output-formats";
 
@@ -455,6 +456,11 @@ export type AppRPC = {
       getGeneratorDraft: { params: {}; response: GeneratorDraft | null };
       saveGeneratorDraft: { params: GeneratorDraftInput; response: GeneratorDraft };
       clearGeneratorDraft: { params: {}; response: { success: boolean } };
+      getUpdateState: { params: {}; response: UpdateState };
+      checkForUpdates: { params: {}; response: UpdateState };
+      setUpdateChannel: { params: { channel: UpdateChannel }; response: UpdateState };
+      downloadUpdate: { params: { version: string }; response: UpdateState };
+      installUpdate: { params: { version: string }; response: { scheduled: true } };
       pickCsvFile: { params: {}; response: { csvText: string; sourceName: string } | null };
       submitBatchRun: { params: SubmitRunInput; response: SessionTelemetry };
       pollBatchStatus: { params: { sessionId: string }; response: SessionTelemetry };

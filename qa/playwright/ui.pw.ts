@@ -24,6 +24,20 @@ test("usage page shows app-scoped totals, limits, modes, and pricing", async ({ 
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
+test("About keeps beta opt-in and verified update actions together", async ({ page }) => {
+  await page.getByRole("button", { name: "About" }).click();
+  await expect(page.locator("#about-view").getByRole("heading", { name: "About & updates" })).toBeVisible();
+  await expect(page.getByText("Beta releases are newer but can disrupt your workflow. Stable is recommended.")).toBeVisible();
+  await expect(page.getByText("v1.0.8 · Stable")).toBeVisible();
+  await page.getByLabel("Receive beta updates").check();
+  await expect(page.getByText("v1.1.0-beta.1")).toBeVisible();
+  await page.getByRole("button", { name: "Download update" }).click();
+  await expect(page.getByRole("button", { name: "Install and restart" })).toBeEnabled();
+  await page.locator('[data-update-version="1.0.5"]').click();
+  await expect(page.getByRole("button", { name: "Install and restart" })).toHaveAttribute("data-version", "1.0.5");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
 test("renders at most 100 rows and selects across 1,000 prompts", async ({ page }) => {
   await page.getByRole("tab", { name: "Manual" }).click();
   await page.getByLabel("Manual prompts").fill(Array.from({ length: 1_000 }, (_, index) => `Prompt ${index + 1}`).join("\n"));

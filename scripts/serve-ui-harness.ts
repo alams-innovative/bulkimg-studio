@@ -44,10 +44,24 @@ const telemetryBase = {
 
 let guidedWaveStarted = false;
 let guidedWaveCancelled = false;
+let updateChannel: "stable" | "beta" = "stable";
+let downloadedUpdateVersion: string | null = null;
+const updateReleases = [
+  { version: "1.0.8", tag: "v1.0.8", channel: "stable", publishedAt: "2026-08-08T00:00:00.000Z", releaseNotesUrl: "https://github.com/alams-innovative/bulkimg-studio/releases/tag/v1.0.8", minimumSupportedVersion: "1.0.0", architectures: ["x64"], schemaVersion: 7, available: true, unavailableReason: null, isCurrent: false },
+  { version: "1.0.5", tag: "v1.0.5", channel: "stable", publishedAt: "2026-08-01T00:00:00.000Z", releaseNotesUrl: "https://github.com/alams-innovative/bulkimg-studio/releases/tag/v1.0.5", minimumSupportedVersion: "1.0.0", architectures: ["x64"], schemaVersion: 7, available: true, unavailableReason: null, isCurrent: false },
+  { version: "1.1.0-beta.1", tag: "v1.1.0-beta.1", channel: "beta", publishedAt: "2026-08-09T00:00:00.000Z", releaseNotesUrl: "https://github.com/alams-innovative/bulkimg-studio/releases/tag/v1.1.0-beta.1", minimumSupportedVersion: "1.0.0", architectures: ["x64"], schemaVersion: 7, available: false, unavailableReason: "Enable beta updates to install this release.", isCurrent: false },
+];
+const updateState = () => ({
+  configured: true, currentVersion: "1.0.7", channel: updateChannel, lastCheckedAt: new Date().toISOString(), lastError: null,
+  activity: downloadedUpdateVersion ? "ready" as const : "idle" as const, progress: null,
+  available: updateReleases.find((release) => release.version === "1.0.8") ?? null,
+  releases: updateReleases.map((release) => release.channel === "beta" ? { ...release, available: updateChannel === "beta", unavailableReason: updateChannel === "beta" ? null : release.unavailableReason } : release),
+  downloadedVersion: downloadedUpdateVersion, fallbackStableVersions: ["1.0.5"],
+});
 
 const mocks: Record<string, (params: any) => any> = {
   getBootstrap: () => ({
-    brand: { appName: "BulkImg Studio", version: "1.0.6" },
+    brand: { appName: "BulkImg Studio", version: "1.0.7" },
     models: { defaultModel: "gpt-image-2", models: [{ id: "gpt-image-2", label: "GPT Image 2", enabled: true }] },
     keyCount: 1,
     platform: "win32-x64",
@@ -86,6 +100,11 @@ const mocks: Record<string, (params: any) => any> = {
   getGeneratorDraft: () => null,
   saveGeneratorDraft: (draft: any) => ({ ...draft, updatedAt: new Date().toISOString() }),
   clearGeneratorDraft: () => ({ success: true }),
+  getUpdateState: () => updateState(),
+  checkForUpdates: () => updateState(),
+  setUpdateChannel: ({ channel }: { channel: "stable" | "beta" }) => { updateChannel = channel; return updateState(); },
+  downloadUpdate: ({ version }: { version: string }) => { downloadedUpdateVersion = version; return updateState(); },
+  installUpdate: () => ({ scheduled: true }),
   parseManualPrompts: ({ text }: { text: string }) => promptMatrix(text),
   importCSV: ({ csvText, sourceName }: { csvText: string; sourceName: string }) => parseCSV(csvText, sourceName),
   estimateRunCost: ({ promptCount }: { promptCount: number }) => ({ costUsd: promptCount * 0.053, costPkr: promptCount * 0.053 * 278, fxRate: 278, pricingVersion: "test", isEstimate: true }),
@@ -373,7 +392,7 @@ const mocks: Record<string, (params: any) => any> = {
   ],
   getDiagnosticLogs: () => ({
     lines: [
-      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.6"}',
+      '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.7"}',
       '{"ts":"2026-08-04T06:01:12.000Z","event":"session_created","sessionId":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","mode":"batch"}',
       '{"ts":"2026-08-04T06:02:40.000Z","event":"batch_poll","status":"processing","completed":42,"total":100}',
       '{"ts":"2026-08-04T06:03:10.000Z","event":"batch_download_error","category":"timeout","message":"Download stalled; will retry"}',

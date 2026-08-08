@@ -1662,6 +1662,73 @@ textarea {
   padding-top: 10px
 }
 
+.update-status {
+  margin: 14px 0;
+  color: var(--text3);
+  font-size: 12px
+}
+
+.update-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 16px
+}
+
+.update-card h3,
+.update-card p { margin: 0 }
+.update-card h3 { font: 700 14px Manrope, sans-serif }
+.update-card p { margin-top: 4px; color: var(--text3); font-size: 11px; line-height: 1.45 }
+
+.update-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px
+}
+
+.update-channel-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 680px;
+  padding: 11px;
+  border: 1px solid var(--subtle);
+  border-radius: var(--r1);
+  background: var(--muted);
+  cursor: pointer
+}
+
+.update-channel-toggle input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent) }
+.update-channel-toggle span { display: grid; gap: 3px }
+.update-channel-toggle strong { font-size: 12px }
+.update-channel-toggle small { color: var(--text3); font-size: 11px; line-height: 1.4 }
+
+.update-progress { display: grid; gap: 6px }
+.update-progress > div:first-child { display: flex; justify-content: space-between; gap: 12px; color: var(--text3); font-size: 11px }
+.update-progress > div:last-child { height: 7px; overflow: hidden; border-radius: 99px; background: var(--raised) }
+.update-progress i { display: block; width: 0; height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease }
+
+.update-history { display: grid; gap: 7px }
+.update-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 11px;
+  border: 1px solid var(--subtle);
+  border-radius: var(--r1);
+  background: var(--muted)
+}
+.update-history-row strong,
+.update-history-row span { display: block }
+.update-history-row strong { font-size: 12px }
+.update-history-row span { margin-top: 2px; color: var(--text3); font-size: 10px }
+.update-history-actions { display: flex; align-items: center; gap: 9px }
+.update-history-actions a { color: var(--text2); font-size: 11px; text-decoration-color: var(--cool) }
+.update-history-actions button { min-height: 30px; padding: 5px 8px; font-size: 10px }
+.update-history-note { max-width: 210px; text-align: right; white-space: normal !important }
+
 .data-row {
   display: grid;
   grid-template-columns: minmax(180px, 1.5fr) repeat(4, minmax(90px, .7fr));

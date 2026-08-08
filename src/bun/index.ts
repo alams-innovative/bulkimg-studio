@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import type { AdminConfigView, AppRPC, BrandTheme, RateLimitHeaderProbe, RateLimitSnapshot } from "../shared/contracts";
+import type { UpdateConfig } from "../shared/update-contracts";
 import { APP_LIMITS } from "../shared/contracts";
 import { AppDatabase } from "./database";
 import { BatchEngine } from "./services/batch-engine";
@@ -16,15 +17,16 @@ import { parseCSV, parseManualPrompts } from "./services/prompt-parser";
 import { pickOpenFile, readClipboardCsv, readClipboardImages } from "./services/windows-native";
 import { cleanupStaleTemporaryFiles, DiagnosticLog } from "./services/diagnostics";
 import { setNativeWindowIcon } from "./services/window-icon";
+import { UpdateService } from "./services/update-service";
 import { getInitialWindowFrame } from "./window-layout";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.6 supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.0.7 supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.6",
+  version: "1.0.7",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -79,7 +81,7 @@ function pipeHash(value: string): string {
   return hash.toString(36);
 }
 
-// Keep stable and canary installs independent while ensuring an updated build
+// Keep stable and beta installs independent while ensuring an updated build
 // in the same install location activates its existing background scheduler.
 const INSTANCE_PIPE = `\\\\.\\pipe\\bulkimg-studio-${(process.env["USERNAME"] || "user").replace(/[^a-z0-9_-]/gi, "_").toLowerCase()}-${pipeHash(`${process.execPath}|${process.cwd()}`.toLowerCase())}`;
 let mainWindow: BrowserWindow | null = null;
@@ -141,7 +143,7 @@ const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
 void diagnosticLog.write("startup", {
   cleanedFiles,
-  version: "1.0.6",
+  version: "1.0.7",
   userData: dataDirectory,
   pid: process.pid,
 });
@@ -154,6 +156,16 @@ await pricingService.load();
 const batchEngine = new BatchEngine(database, keyVault, fxService, historyService, pricingService, dataDirectory, diagnosticLog);
 const exportService = new ExportService(database, dataDirectory);
 const converterService = new ConverterService(database, dataDirectory);
+const activeUpdateWork = new Set<string>();
+
+async function withUpdateWork<T>(label: string, work: () => T | Promise<T>): Promise<T> {
+  activeUpdateWork.add(label);
+  try {
+    return await work();
+  } finally {
+    activeUpdateWork.delete(label);
+  }
+}
 const recovered = batchEngine.recoverOnStartup();
 if (recovered > 0) {
   console.log(`Recovered ${recovered} session(s) after restart.`);
@@ -171,6 +183,13 @@ const models = await readJson(assetRoots.map((root) => join(root, "config", "mod
     maxResolution: "2048x2048", ratios: ["1:1"], features: ["Image generation"],
   }],
 });
+const updateConfig = await readJson<UpdateConfig>(assetRoots.map((root) => join(root, "config", "update.json")), {
+  repository: "alams-innovative/bulkimg-studio",
+  publicKeyPem: "",
+});
+const updateService = new UpdateService(database, dataDirectory, brand.version, updateConfig, process.arch === "arm64" ? "arm64" : "x64");
+updateService.markHealthyStartup();
+if (updateConfig.publicKeyPem.trim()) void updateService.check();
 
 const ADMIN_WARNING = "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works with your normal API keys.";
 
@@ -238,6 +257,22 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       clearGeneratorDraft: () => logged("generator_draft_clear", {}, () => {
         database.clearGeneratorDraft();
         return { success: true as const };
+      }),
+      getUpdateState: () => updateService.state(),
+      checkForUpdates: () => logged("update_check", {}, () => updateService.check()),
+      setUpdateChannel: ({ channel }) => logged("update_channel", { channel }, () => updateService.setChannel(channel)),
+      downloadUpdate: ({ version }) => logged("update_download", { version }, () => updateService.download(version)),
+      installUpdate: ({ version }) => logged("update_install", { version }, async () => {
+        const result = await updateService.scheduleInstall(version, () => {
+          const hasActiveRun = database.listRuns().some((run) => run.status === "pending" || run.status === "processing");
+          if (hasActiveRun) return "Finish or cancel the active image run before installing an update.";
+          if (activeUpdateWork.size) {
+            return `Wait for the active ${[...activeUpdateWork].join(" and ")} operation to finish before installing an update.`;
+          }
+          return null;
+        });
+        setTimeout(() => { isQuitting = true; Utils.quit(); }, 700);
+        return result;
       }),
       pickCsvFile: async () => logged("pick_csv_file", {}, async () => {
         const path = await pickOpenFile({
@@ -331,13 +366,13 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       listExports: () => exportService.list(),
       revealExportsFolder: () => ({ directory: exportService.revealFolder() }),
       exportSessionZip: async ({ sessionId, pickPath }) => logged("export_session", { sessionId }, async () => ({
-        filePath: await exportService.export(sessionId, { pickPath: Boolean(pickPath) }),
+        filePath: await withUpdateWork("export", () => exportService.export(sessionId, { pickPath: Boolean(pickPath) })),
       })),
       exportRunZip: async ({ runId, pickPath }) => logged("export_run", { runId }, async () => ({
-        filePath: await exportService.exportRun(runId, { pickPath: Boolean(pickPath) }),
+        filePath: await withUpdateWork("export", () => exportService.exportRun(runId, { pickPath: Boolean(pickPath) })),
       })),
       exportSelectedHistoryZip: async ({ assetIds, pickPath }) => logged("export_history_selected", { count: assetIds.length }, async () => ({
-        filePath: await exportService.exportSelectedHistory(assetIds, { pickPath: Boolean(pickPath) }),
+        filePath: await withUpdateWork("export", () => exportService.exportSelectedHistory(assetIds, { pickPath: Boolean(pickPath) })),
       })),
       getDiagnosticLogs: ({ limit, query, event }) => diagnosticLog.read({ limit, query, event }),
       revealLogsFolder: () => {
@@ -375,7 +410,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       convertImages: ({ inputs, options }) => logged("converter_convert", {
         count: inputs.length,
         defaultFormat: options.defaultFormat,
-      }, () => converterService.convert(inputs, options)),
+      }, () => withUpdateWork("conversion", () => converterService.convert(inputs, options))),
       listConverterJobs: () => converterService.listJobs(),
       getConverterOutput: async ({ jobId, itemId }) => ({ dataUrl: await converterService.outputDataUrl(jobId, itemId) }),
       getConverterProperties: ({ jobId, itemId }) => converterService.outputProperties(jobId, itemId),

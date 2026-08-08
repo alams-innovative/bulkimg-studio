@@ -2,8 +2,8 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const channel = Bun.argv[2] ?? "stable";
-if (channel !== "stable" && channel !== "canary") {
-  throw new Error(`Unsupported release channel: ${channel}. Use stable or canary.`);
+if (channel !== "stable" && channel !== "beta") {
+  throw new Error(`Unsupported release channel: ${channel}. Use stable or beta.`);
 }
 
 if (process.platform !== "win32") {
