@@ -1439,6 +1439,27 @@ textarea {
   margin-bottom: 10px
 }
 
+.nav-item .about-update-dot {
+  width: 8px;
+  min-width: 8px;
+  height: 8px;
+  margin-left: auto;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--success) 58%, var(--subtle));
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 14%, transparent)
+}
+
+.app-shell[data-sidebar=collapsed] .nav-item .about-update-dot {
+  width: 8px;
+  min-width: 8px;
+  height: 8px;
+  padding: 0;
+  top: 7px;
+  right: 7px
+}
+
 .usage-table-wrap {
   max-width: 100%;
   overflow: auto;
@@ -1797,6 +1818,11 @@ textarea {
 .update-history-actions a { color: var(--text2); font-size: 11px; text-decoration-color: var(--cool) }
 .update-history-actions button { min-height: 30px; padding: 5px 8px; font-size: 10px }
 .update-history-note { max-width: 210px; text-align: right; white-space: normal !important }
+
+.update-install-dialog { width: min(470px, calc(100vw - 32px)) }
+.update-install-notice { margin: 14px 0; padding: 11px 12px; border: 1px solid var(--subtle); border-radius: var(--r1); background: var(--muted) }
+.update-install-notice strong { font-size: 12px }
+.update-install-notice p { margin: 4px 0 0; color: var(--text3); font-size: 11px; line-height: 1.45 }
 
 .data-row {
   display: grid;

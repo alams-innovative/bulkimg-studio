@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import type { AdminConfigView, AppRPC, BrandTheme, RateLimitHeaderProbe, RateLimitSnapshot } from "../shared/contracts";
-import type { UpdateConfig } from "../shared/update-contracts";
+import type { UpdateConfig, UpdateState } from "../shared/update-contracts";
 import { APP_LIMITS } from "../shared/contracts";
 import { AppDatabase } from "./database";
 import { BatchEngine } from "./services/batch-engine";
@@ -26,7 +26,7 @@ if (process.platform !== "win32") {
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.1.0-beta.1",
+  version: "1.1.0-beta.7",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -189,13 +189,10 @@ const updateConfig = await readJson<UpdateConfig>(assetRoots.map((root) => join(
 });
 const updateService = new UpdateService(database, dataDirectory, brand.version, updateConfig, process.arch === "arm64" ? "arm64" : "x64", diagnosticLog);
 const UPDATE_CHECK_INTERVAL_MS = 15 * 60 * 1000;
+let updatePreparationInFlight: Promise<UpdateState> | null = null;
 updateService.markHealthyStartup();
 const recoveredUpdateFailure = updateService.recoverInstallerFailure();
 if (recoveredUpdateFailure) void diagnosticLog.write("update_install_recovery", { ok: false, message: recoveredUpdateFailure });
-if (updateConfig.publicKeyPem.trim()) {
-  void updateService.check();
-  setInterval(() => void updateService.check(), UPDATE_CHECK_INTERVAL_MS);
-}
 
 const ADMIN_WARNING = "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works with your normal API keys.";
 
@@ -272,7 +269,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         return { success: true as const };
       }),
       getUpdateState: () => updateService.state(),
-      checkForUpdates: () => logged("update_check", {}, () => updateService.check()),
+      checkForUpdates: () => logged("update_check", { source: "manual" }, () => checkAndPrepareUpdate()),
       setUpdateChannel: ({ channel }) => logged("update_channel", { channel }, () => updateService.setChannel(channel)),
       downloadUpdate: ({ version }) => logged("update_download", { version }, () => updateService.download(version)),
       installUpdate: ({ version }) => logged("update_install", { version }, async () => {
@@ -447,6 +444,38 @@ const rpc = BrowserView.defineRPC<AppRPC>({
     messages: {},
   },
 });
+
+function checkAndPrepareUpdate(): Promise<UpdateState> {
+  if (updatePreparationInFlight) return updatePreparationInFlight;
+  const work = (async (): Promise<UpdateState> => {
+    const checked = await updateService.check();
+    const available = checked.available;
+    if (!available || checked.activity === "checking" || checked.activity === "downloading") return checked;
+    if (checked.downloadedVersion === available.version) return checked;
+    try {
+      const ready = await updateService.download(available.version);
+      void diagnosticLog.write("update_auto_download_ready", { version: available.version, channel: available.channel });
+      try { rpc.send.updateReady(ready); } catch { /* The view may not be ready yet. */ }
+      return ready;
+    } catch (error) {
+      void diagnosticLog.write("update_auto_download_failed", {
+        version: available.version,
+        message: error instanceof Error ? error.message.slice(0, 240) : "error",
+      });
+      return updateService.state();
+    }
+  })();
+  updatePreparationInFlight = work;
+  void work.finally(() => {
+    if (updatePreparationInFlight === work) updatePreparationInFlight = null;
+  });
+  return work;
+}
+
+if (updateConfig.publicKeyPem.trim()) {
+  void checkAndPrepareUpdate();
+  setInterval(() => void checkAndPrepareUpdate(), UPDATE_CHECK_INTERVAL_MS);
+}
 
 batchEngine.setProgressSink((telemetry) => {
   updateTrayStatus(telemetry.status, telemetry.message);

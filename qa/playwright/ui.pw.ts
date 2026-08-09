@@ -50,10 +50,14 @@ test("About keeps beta opt-in and verified update actions together", async ({ pa
   await expect(page.getByText("v1.0.9 · Stable", { exact: true })).toBeVisible();
   await page.getByLabel("Receive beta updates").check();
   await expect(page.getByText("v1.1.0-beta.1")).toBeVisible();
-  await page.getByRole("button", { name: "Download update" }).click();
+  await page.getByRole("button", { name: "Download & verify" }).click();
   await expect(page.getByRole("button", { name: "Install and restart" })).toBeEnabled();
+  await page.getByRole("button", { name: "Install and restart" }).click();
+  await expect(page.getByRole("dialog", { name: "Install verified update?" })).toBeVisible();
+  await page.getByRole("button", { name: "Cancel" }).click();
   await page.locator('[data-update-version="1.0.5"]').click();
-  await expect(page.getByRole("button", { name: "Install and restart" })).toHaveAttribute("data-version", "1.0.5");
+  await expect(page.getByRole("button", { name: "Download & verify" })).toHaveAttribute("data-version", "1.0.5");
+  await expect(page.getByRole("button", { name: "Install and restart" })).toBeDisabled();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 

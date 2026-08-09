@@ -19,7 +19,7 @@
           <img class="brand-logo-light"
             src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
           <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
-              id="brand-version">1.1.0-beta.6</small></span>
+              id="brand-version">1.1.0-beta.7</small></span>
         </div>
         <div class="sidebar-controls"><button id="currency-toggle" type="button" class="currency-status" aria-pressed="false" aria-label="Show costs in Pakistani rupees" title="Switch displayed costs between USD and PKR">USD · PKR</button><button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
           title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
@@ -39,7 +39,7 @@
         <button id="nav-logs" class="nav-item" data-view="logs" title="Logs"><i
             data-lucide="scroll-text"></i><span>Logs</span></button>
         <button id="nav-about" class="nav-item" data-view="about" title="About and updates"><i
-            data-lucide="info"></i><span>About</span></button>
+            data-lucide="info"></i><span>About</span><b id="about-update-dot" class="about-update-dot hidden" aria-label="Update ready to install" hidden></b></button>
       </nav>
       <button id="manage-keys" class="nav-item" title="API keys"><i data-lucide="key-round"></i><span>API keys</span><b
           id="key-count" class="hidden" hidden>0</b></button>
@@ -390,7 +390,7 @@
         </section>
         <section class="update-card panel" aria-labelledby="update-available-title">
           <div class="update-card-head"><div><h3 id="update-available-title">Available update</h3><p id="update-available-copy">Check GitHub Releases to see compatible updates.</p></div><span id="update-current-version" class="status-badge">—</span></div>
-          <div class="button-row"><button id="download-update" class="primary-button" type="button" disabled><i data-lucide="download"></i>Download update</button><button id="install-update" class="secondary-button" type="button" disabled><i data-lucide="package-open"></i>Install and restart</button></div>
+          <div class="button-row"><button id="download-update" class="primary-button" type="button" disabled><i data-lucide="download"></i>Download &amp; verify</button><button id="install-update" class="secondary-button" type="button" disabled><i data-lucide="package-open"></i>Install and restart</button></div>
         </section>
         <section class="update-card panel" aria-labelledby="update-history-title">
           <div class="update-card-head"><div><h3 id="update-history-title">Version history</h3><p>Only compatible published releases can be installed.</p></div></div>
@@ -400,6 +400,14 @@
       </section>
     </main>
   </div>
+
+  <dialog id="install-update-dialog" class="keys-dialog panel update-install-dialog" aria-labelledby="install-update-title">
+    <form method="dialog">
+      <div class="dialog-head"><div><h2 id="install-update-title">Install verified update?</h2><p id="install-update-message">The app will close and restart after installation.</p></div><button class="icon-button" aria-label="Close install confirmation" value="cancel"><i data-lucide="x"></i></button></div>
+      <div class="update-install-notice"><strong>Ready to install</strong><p>Your downloaded update has already passed signature and checksum verification. Installation is the only remaining step.</p></div>
+      <div class="dialog-actions"><button id="confirm-install-update" class="primary-button" type="button"><i data-lucide="package-open"></i>Install and restart</button><button id="cancel-install-update" class="secondary-button" value="cancel">Cancel</button></div>
+    </form>
+  </dialog>
 
   <dialog id="keys-dialog" class="keys-dialog panel" aria-labelledby="keys-title">
     <form method="dialog" class="dialog-head">

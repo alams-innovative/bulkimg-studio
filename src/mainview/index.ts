@@ -83,6 +83,10 @@ const rpc = Electroview.defineRPC<AppRPC>({
       sessionProgress: (telemetry) => {
         renderTelemetry(telemetry);
       },
+      updateReady: (state) => {
+        renderUpdateState(state);
+        announceUpdateReady(state);
+      },
     },
   },
 });
@@ -117,6 +121,11 @@ const elements = {
   updateAvailableCopy: byId("update-available-copy"),
   downloadUpdate: byId<HTMLButtonElement>("download-update"),
   installUpdate: byId<HTMLButtonElement>("install-update"),
+  aboutUpdateDot: byId("about-update-dot"),
+  installUpdateDialog: byId<HTMLDialogElement>("install-update-dialog"),
+  installUpdateMessage: byId("install-update-message"),
+  confirmInstallUpdate: byId<HTMLButtonElement>("confirm-install-update"),
+  cancelInstallUpdate: byId<HTMLButtonElement>("cancel-install-update"),
   updateHistory: byId("update-history"),
   converterView: byId("converter-view"),
   converterTabWorkspace: byId<HTMLButtonElement>("converter-tab-workspace"),
@@ -652,6 +661,7 @@ function showToast(message: string, isError = false): void {
   elements.toastProgress.style.animation = "";
   elements.toastProgress.style.animationDuration = `${duration}ms`;
   elements.toast.classList.add("show");
+  if (isError) logUi("ui_error_toast", { message: message.slice(0, 240) });
   refreshIcons();
   toastTickTimer = window.setInterval(() => {
     const left = secondsLeft();
@@ -1308,6 +1318,7 @@ async function converterInput(item: ConverterQueueItem): Promise<ConverterInput>
 }
 
 async function setView(view: "generator" | "converter" | "sessions" | "usage" | "history" | "exports" | "logs" | "about"): Promise<void> {
+  logUi("ui_navigation", { view });
   document.querySelectorAll<HTMLElement>("[data-view]").forEach((button) => {
     const active = button.dataset["view"] === view;
     button.classList.toggle("active", active);
@@ -2643,6 +2654,8 @@ function renderUpdateState(state: UpdateState): void {
   setHidden(elements.downloadUpdate, !selectedRelease);
   setHidden(elements.installUpdate, !selectedRelease);
   const downloaded = Boolean(selectedRelease && state.downloadedVersion === selectedRelease.version);
+  const updateReady = Boolean(state.available && state.downloadedVersion === state.available.version);
+  setHidden(elements.aboutUpdateDot, !updateReady);
   elements.downloadUpdate.disabled = busy || !selectedRelease || downloaded;
   elements.installUpdate.disabled = busy || !selectedRelease || !downloaded;
   elements.downloadUpdate.dataset["version"] = selectedRelease?.version ?? "";
@@ -2659,7 +2672,7 @@ function renderUpdateState(state: UpdateState): void {
   elements.updateHistory.innerHTML = state.releases.length
     ? state.releases.map((release) => {
       const action = release.isCurrent ? "Installed" : release.available
-        ? `<button type="button" class="secondary-button update-history-action" data-update-version="${escapeHtml(release.version)}">${compareVersionsForUi(release.version, state.currentVersion) < 0 ? "Install this version" : "Choose version"}</button>`
+        ? `<button type="button" class="secondary-button update-history-action" data-update-version="${escapeHtml(release.version)}">Select version</button>`
         : `<span class="update-history-note">${escapeHtml(release.unavailableReason ?? "Unavailable")}</span>`;
       return `<article class="update-history-row"><div><strong>v${escapeHtml(release.version)}</strong><span>${escapeHtml(release.channel === "beta" ? "Beta" : "Stable")} · ${escapeHtml(formatDate(release.publishedAt))}</span></div><div class="update-history-actions"><a href="${escapeHtml(release.releaseNotesUrl)}" target="_blank" rel="noreferrer">Notes</a>${action}</div></article>`;
     }).join("")
@@ -2667,21 +2680,25 @@ function renderUpdateState(state: UpdateState): void {
   refreshIcons();
 }
 
-function compareVersionsForUi(left: string, right: string): number {
-  const parse = (value: string) => value.replace(/^v/, "").split(/[.-]/).map((part) => Number(part) || 0);
-  const a = parse(left); const b = parse(right);
-  for (let index = 0; index < Math.max(a.length, b.length); index += 1) if ((a[index] ?? 0) !== (b[index] ?? 0)) return (a[index] ?? 0) > (b[index] ?? 0) ? 1 : -1;
-  return 0;
+async function loadUpdateState(): Promise<void> {
+  try {
+    const state = await app.rpc!.request.getUpdateState({});
+    renderUpdateState(state);
+    announceUpdateReady(state);
+  }
+  catch (error) { elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not load update status."; }
 }
 
-async function loadUpdateState(): Promise<void> {
-  try { renderUpdateState(await app.rpc!.request.getUpdateState({})); }
-  catch (error) { elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not load update status."; }
+function announceUpdateReady(state: UpdateState): void {
+  const version = state.available?.version;
+  if (!version || state.downloadedVersion !== version) return;
+  showToast(`v${version} is downloaded and ready to install.`);
+  logUi("update_ready_notification", { version, channel: state.available?.channel });
 }
 
 async function checkForUpdates(): Promise<void> {
   elements.checkUpdates.disabled = true;
-  elements.updateStatus.textContent = "Checking GitHub Releases…";
+  elements.updateStatus.textContent = "Checking GitHub Releases and preparing any signed update…";
   try { renderUpdateState(await app.rpc!.request.checkForUpdates({})); }
   catch (error) { elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not check for updates."; }
   finally { elements.checkUpdates.disabled = false; }
@@ -2690,19 +2707,38 @@ async function checkForUpdates(): Promise<void> {
 async function downloadSelectedUpdate(version: string): Promise<void> {
   elements.downloadUpdate.disabled = true;
   elements.updateStatus.textContent = `Downloading and verifying v${version}…`;
-  try { renderUpdateState(await app.rpc!.request.downloadUpdate({ version })); }
-  catch (error) { elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not download the update."; }
+  try {
+    renderUpdateState(await app.rpc!.request.downloadUpdate({ version }));
+    elements.updateStatus.textContent = `v${version} is downloaded and verified. Choose Install and restart when you are ready.`;
+    logUi("update_download_verified", { version });
+  }
+  catch (error) {
+    const message = error instanceof Error ? error.message : "Could not download the update.";
+    elements.updateStatus.textContent = message;
+    logUi("update_download_failed", { version, message });
+  }
+}
+
+function openInstallUpdateDialog(version: string): void {
+  elements.confirmInstallUpdate.dataset["version"] = version;
+  elements.installUpdateMessage.textContent = `Install BulkImg Studio v${version}? The app will close and restart after installation.`;
+  if (!elements.installUpdateDialog.open) elements.installUpdateDialog.showModal();
+  window.requestAnimationFrame(() => elements.cancelInstallUpdate.focus());
+  logUi("update_install_confirmation_opened", { version });
 }
 
 async function installSelectedUpdate(version: string): Promise<void> {
-  if (!window.confirm(`Install BulkImg Studio v${version} now? The app will close and reopen after the verified installer finishes.`)) return;
   elements.installUpdate.disabled = true;
+  elements.confirmInstallUpdate.disabled = true;
   try {
     await app.rpc!.request.installUpdate({ version });
     elements.updateStatus.textContent = "Installer started. BulkImg Studio is restarting… If it cannot finish, the current app will remain available and the reason will appear here after it reopens.";
+    logUi("update_install_started", { version });
   } catch (error) {
     elements.installUpdate.disabled = false;
+    elements.confirmInstallUpdate.disabled = false;
     elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not start the installer.";
+    logUi("update_install_failed", { version, message: error instanceof Error ? error.message : "error" });
   }
 }
 
@@ -3246,7 +3282,13 @@ elements.downloadUpdate.addEventListener("click", () => {
 });
 elements.installUpdate.addEventListener("click", () => {
   const version = elements.installUpdate.dataset["version"];
-  if (version) void installSelectedUpdate(version);
+  if (version) openInstallUpdateDialog(version);
+});
+elements.confirmInstallUpdate.addEventListener("click", () => {
+  const version = elements.confirmInstallUpdate.dataset["version"];
+  if (!version) return;
+  elements.installUpdateDialog.close();
+  void installSelectedUpdate(version);
 });
 elements.updateHistory.addEventListener("click", (event) => {
   const button = (event.target as Element | null)?.closest<HTMLButtonElement>(".update-history-action");
@@ -3258,7 +3300,8 @@ elements.updateHistory.addEventListener("click", (event) => {
   if (updateState?.releases.some((release) => release.version === version && release.available)) {
     elements.downloadUpdate.disabled = false;
   }
-  void downloadSelectedUpdate(version);
+  elements.updateStatus.textContent = `v${version} selected. Download and verify it before installing.`;
+  logUi("update_version_selected", { version });
 });
 elements.converterTabWorkspace.addEventListener("click", () => { converterTab = "workspace"; renderConverterTab(); });
 elements.converterTabHistory.addEventListener("click", () => { converterTab = "history"; renderConverterTab(); });
@@ -4098,8 +4141,21 @@ elements.openLogsFolder.addEventListener("click", async () => {
 });
 
 await bootstrap();
+void loadUpdateState();
 startFxRefresh();
 await restoreGeneratorWorkspace();
+
+window.addEventListener("error", (event) => {
+  const message = event.error instanceof Error ? event.error.message : event.message;
+  logUi("ui_runtime_error", { message: String(message).slice(0, 240), file: event.filename, line: event.lineno });
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const message = event.reason instanceof Error ? event.reason.message : String(event.reason);
+  logUi("ui_unhandled_rejection", { message: message.slice(0, 240) });
+});
+elements.installUpdateDialog.addEventListener("click", (event) => {
+  if (event.target === elements.installUpdateDialog) elements.installUpdateDialog.close();
+});
 
 window.addEventListener("beforeunload", (event) => {
   if (!session || !["pending", "processing"].includes(session.status)) return;

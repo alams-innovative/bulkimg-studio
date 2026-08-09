@@ -574,6 +574,7 @@ export type AppRPC = {
     requests: {};
     messages: {
       sessionProgress: SessionTelemetry;
+      updateReady: UpdateState;
     };
   };
 };
