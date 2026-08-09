@@ -40,7 +40,7 @@ test("About keeps beta opt-in and verified update actions together", async ({ pa
   await page.getByRole("button", { name: "About" }).click();
   await expect(page.locator("#about-view").getByRole("heading", { name: "About & updates" })).toBeVisible();
   await expect(page.getByText("Beta releases are newer but can disrupt your workflow. Stable is recommended.")).toBeVisible();
-  await expect(page.getByText("v1.0.8 · Stable", { exact: true })).toBeVisible();
+  await expect(page.getByText("v1.0.9 · Stable", { exact: true })).toBeVisible();
   await page.getByLabel("Receive beta updates").check();
   await expect(page.getByText("v1.1.0-beta.1")).toBeVisible();
   await page.getByRole("button", { name: "Download update" }).click();
