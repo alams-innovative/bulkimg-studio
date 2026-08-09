@@ -4,7 +4,7 @@ export default {
   app: {
     name: "BulkImg Studio",
     identifier: "com.bulkimg.studio",
-    version: "1.1.0-beta.2",
+    version: "1.1.0-beta.3",
     description: "A local-first workspace for high-volume AI image generation.",
   },
   runtime: {
