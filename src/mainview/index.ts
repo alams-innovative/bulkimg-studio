@@ -69,7 +69,6 @@ import type {
   SessionSummary,
   SessionTelemetry,
   UsageSummary,
-  UsageTotals,
 } from "../shared/contracts";
 import type { UpdateState } from "../shared/update-contracts";
 import { APP_LIMITS } from "../shared/contracts";
@@ -2080,23 +2079,10 @@ function renderUsageSummary(summary: UsageSummary): void {
     usageKpi("Tracked cost", money(summary.total.costUsd), `PKR ${summary.total.costPkr.toFixed(2)} · this app`),
   ].join("");
 
-  const modes: Array<[string, UsageTotals]> = [["Direct", summary.direct], ["Batch", summary.batch]];
-  elements.usageModeComparison.innerHTML = modes.map(([label, totals]) => {
-    const tokens = totals.inputTokens + totals.outputTokens;
-    return `<article class="usage-mode-card">
-      <div class="usage-mode-title"><strong>${label}</strong><span>${formatNumber(totals.requestCount)} requests</span></div>
-      <div class="usage-mode-value">${money(totals.costUsd)}</div>
-      <div class="usage-stat-list">
-        <div><span>Completed</span><strong>${formatNumber(totals.completedCount)}</strong></div>
-        <div><span>Tokens</span><strong>${formatNumber(tokens)}</strong></div>
-        <div><span>Input / output</span><strong>${formatNumber(totals.inputTokens)} / ${formatNumber(totals.outputTokens)}</strong></div>
-      </div>
-    </article>`;
-  }).join("");
+  // Mode-specific totals remain in the local ledger but no longer compete with
+  // the calculator-first layout; detailed pricing is available on demand.
+  elements.usageModeComparison.innerHTML = "";
   enter(elements.usageSummaryGrid, 0, 4);
-  elements.usageModeComparison.querySelectorAll<HTMLElement>(".usage-mode-card").forEach((card, index) => {
-    enter(card, index * 0.04, 4);
-  });
 }
 
 function renderUsageLimits(): void {
