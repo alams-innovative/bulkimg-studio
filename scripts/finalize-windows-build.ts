@@ -17,6 +17,10 @@ if (channel !== "stable" && channel !== "beta") {
   throw new Error(`Unsupported release channel: ${channel}. Use stable or beta.`);
 }
 const projectRoot = resolve(import.meta.dir, "..");
+const packageVersion = (JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")) as { version?: unknown }).version;
+if (typeof packageVersion !== "string" || !packageVersion.trim()) {
+  throw new Error("package.json must provide the version embedded in the installer verification step.");
+}
 // Beta is a release-discovery preference, not a second local app: it replaces
 // the stable installation selected by the verified update helper.
 const buildEnvironment = "stable";
@@ -142,6 +146,7 @@ try {
     [
       "$ErrorActionPreference = 'Stop'",
       `$channel = '${buildEnvironment}'`,
+      `$expectedVersion = '${packageVersion.replaceAll("'", "''")}'`,
       "$root = Split-Path -Parent $MyInvocation.MyCommand.Path",
       "$setup = Get-ChildItem -LiteralPath $root -Filter '*-Setup.exe' | Select-Object -First 1",
       "if (-not $setup) { throw 'The Electrobun setup executable was not found.' }",
@@ -152,18 +157,26 @@ try {
       "  Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue",
       "}",
       "Start-Sleep -Milliseconds 800",
-      "$result = Start-Process -FilePath $setup.FullName -WorkingDirectory $root -Wait -PassThru",
-      "if ($result.ExitCode -ne 0) { throw \"Installer exited with code $($result.ExitCode).\" }",
       "$appDir = Join-Path $env:LOCALAPPDATA \"com.bulkimg.studio\\$channel\\app\"",
       "$launcher = Join-Path $appDir 'bin\\launcher.exe'",
-      "for ($attempt = 0; $attempt -lt 60; $attempt++) {",
-      "  if (Test-Path -LiteralPath $launcher) {",
-      "    Start-Process -FilePath $launcher -WorkingDirectory (Split-Path -Parent $launcher)",
-      "    exit 0",
+      "$versionFile = Join-Path $appDir 'Resources\\version.json'",
+      // Electrobun setup can keep a launched app as a descendant. Waiting on
+      // the setup process therefore waits until that app exits, despite a
+      // successful installation. Start it asynchronously and verify the
+      // installed package version instead.
+      "Start-Process -FilePath $setup.FullName -WorkingDirectory $root",
+      "for ($attempt = 0; $attempt -lt 240; $attempt++) {",
+      "  if ((Test-Path -LiteralPath $launcher) -and (Test-Path -LiteralPath $versionFile)) {",
+      "    try { $installedVersion = (Get-Content -LiteralPath $versionFile -Raw | ConvertFrom-Json).version } catch { $installedVersion = $null }",
+      "    if ($installedVersion -eq $expectedVersion) {",
+      "      Start-Sleep -Milliseconds 800",
+      "      Start-Process -FilePath $launcher -WorkingDirectory (Split-Path -Parent $launcher)",
+      "      exit 0",
+      "    }",
       "  }",
       "  Start-Sleep -Milliseconds 500",
       "}",
-      "throw \"Installation completed, but the app launcher was not found at $launcher.\"",
+      "throw \"Setup did not install BulkImg Studio $expectedVersion within two minutes.\"",
       "",
     ].join("\r\n"),
   );

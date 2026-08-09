@@ -1,6 +1,6 @@
 # Release Guide
 
-Current version: `1.0.9`.
+Current version: `1.1.0-beta.1`.
 
 ## Build and verify
 
@@ -15,7 +15,7 @@ The stable package is written to `artifacts/stable-win-x64-BulkImgStudio-Setup.z
 
 ## Install or upgrade
 
-Extract the ZIP without separating its contents, then run `Install-BulkImgStudio.cmd`. It stops the existing stable app, runs the setup executable, waits for installation, and starts the installed launcher.
+Extract the ZIP without separating its contents, then run `Install-BulkImgStudio.cmd`. It stops the existing stable app, starts the setup executable, confirms the expected installed version, and starts the installed launcher. It does not wait on the setup process itself, because Windows can treat the running app as that process's descendant.
 
 For local release verification:
 

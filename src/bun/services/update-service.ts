@@ -344,8 +344,12 @@ export class UpdateService {
       "  [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $extract)",
       "  $installer = Join-Path $extract 'Install-BulkImgStudio.cmd'",
       "  if (-not (Test-Path -LiteralPath $installer)) { throw 'The verified update ZIP does not contain Install-BulkImgStudio.cmd.' }",
-      "  $result = Start-Process -FilePath $installer -WorkingDirectory $extract -Wait -PassThru",
+      "  $commandProcessor = [Environment]::GetEnvironmentVariable('ComSpec')",
+      "  if (-not $commandProcessor -or -not (Test-Path -LiteralPath $commandProcessor)) { throw 'Windows Command Prompt (ComSpec) is unavailable.' }",
+      "  Write-UpdateLog (\"Running Install-BulkImgStudio.cmd for \" + $name + \".\")",
+      "  $result = Start-Process -FilePath $commandProcessor -ArgumentList @('/d', '/c', $installer) -WorkingDirectory $extract -Wait -PassThru",
       "  if ($result.ExitCode -ne 0) { throw \"Installer exited with code $($result.ExitCode).\" }",
+      "  Write-UpdateLog (\"Install-BulkImgStudio.cmd completed for \" + $name + \".\")",
       "}",
       "Install-VerifiedArchive $zip 'target'",
       "Write-UpdateLog 'Target installer completed; waiting for app startup health signal.'",
@@ -367,18 +371,28 @@ export class UpdateService {
     ].join("\r\n"));
     this.database.setSetting(SETTINGS.previousWorkingVersion, this.currentVersion);
     this.activity = "installing";
-    const child = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helperPath], {
-      stdout: "ignore", stderr: "ignore", detached: true,
+    const escapedHelperPath = helperPath.replaceAll("'", "''");
+    const launcherCommand = [
+      "$helperArguments = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', '" + escapedHelperPath + "')",
+      "Start-Process -FilePath 'powershell.exe' -ArgumentList $helperArguments -WorkingDirectory '" + escapedDirectory + "' -WindowStyle Hidden",
+    ].join("; ");
+    const child = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", launcherCommand], {
+      stdout: "ignore", stderr: "ignore",
     });
-    child.unref();
-    const deadline = Date.now() + 2_000;
+    const launcherExitCode = await child.exited;
+    if (launcherExitCode !== 0) {
+      this.activity = "error";
+      this.record("update_helper_start_failed", { version, launcherExitCode });
+      throw new Error("Windows could not launch the installer helper. Your verified update is still ready; try Install again.");
+    }
+    const deadline = Date.now() + 5_000;
     while (!existsSync(helperStartedPath) && Date.now() < deadline) await Bun.sleep(25);
     if (!existsSync(helperStartedPath)) {
       this.activity = "error";
-      this.record("update_helper_start_failed", { version, timeoutMs: 2_000 });
+      this.record("update_helper_start_failed", { version, timeoutMs: 5_000 });
       throw new Error("The installer did not start. Your verified update is still ready. Try Install again; if it keeps failing, open Logs and share the updater error.");
     }
-    this.record("update_helper_started", { version, helperPid: child.pid });
+    this.record("update_helper_started", { version, launcherPid: child.pid });
     return { scheduled: true };
   }
 }
