@@ -189,6 +189,8 @@ const updateConfig = await readJson<UpdateConfig>(assetRoots.map((root) => join(
 });
 const updateService = new UpdateService(database, dataDirectory, brand.version, updateConfig, process.arch === "arm64" ? "arm64" : "x64");
 updateService.markHealthyStartup();
+const recoveredUpdateFailure = updateService.recoverInstallerFailure();
+if (recoveredUpdateFailure) void diagnosticLog.write("update_install_recovery", { ok: false, message: recoveredUpdateFailure });
 if (updateConfig.publicKeyPem.trim()) void updateService.check();
 
 const ADMIN_WARNING = "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works with your normal API keys.";

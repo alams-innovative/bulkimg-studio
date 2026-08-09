@@ -1,5 +1,5 @@
 import { createHash, createPublicKey, verify } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { AppDatabase } from "../database";
 import type { UpdateChannel, UpdateConfig, UpdateManifest, UpdateRelease, UpdateState } from "../../shared/update-contracts";
@@ -98,6 +98,25 @@ export class UpdateService {
     writeFileSync(join(healthDirectory, `${this.currentVersion}.ok`), new Date().toISOString());
   }
 
+  recoverInstallerFailure(): string | null {
+    try {
+      const helperLogs = readdirSync(this.updateDirectory, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(this.updateDirectory, entry.name, "update-helper.log"))
+        .filter(existsSync)
+        .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs);
+      const latestLog = helperLogs[0];
+      if (!latestLog) return null;
+      const failure = readFileSync(latestLog, "utf8").match(/Updater helper failed:\s*(.+)/)?.[1]?.trim();
+      if (!failure) return null;
+      const message = `Update did not finish: ${failure} Your current app was kept unchanged. Try again from About & updates.`;
+      this.database.setSetting(SETTINGS.lastError, message);
+      return message;
+    } catch {
+      return null;
+    }
+  }
+
   private stableFallbackFor(target: ResolvedRelease): ResolvedRelease | null {
     return [...this.releases.values()]
       .filter((candidate) => candidate.manifest.channel === "stable")
@@ -184,7 +203,6 @@ export class UpdateService {
     if (this.checking) return this.state();
     this.checking = true;
     this.activity = "checking";
-    this.database.setSetting(SETTINGS.lastError, "");
     try {
       const response = await fetch(`${GITHUB_API}/repos/${this.config.repository}/releases?per_page=40`, {
         headers: { accept: "application/vnd.github+json", "user-agent": "BulkImg-Studio-Updater" }, signal: AbortSignal.timeout(15_000),
@@ -244,7 +262,7 @@ export class UpdateService {
         receivedBytes += part.value.byteLength;
         this.progress = { receivedBytes, totalBytes: release.manifest.zipBytes };
       }
-      writer.end();
+      await writer.end();
       if (receivedBytes !== release.manifest.zipBytes || statSync(temporaryPath).size !== release.manifest.zipBytes) throw new Error("Downloaded update size does not match the signed manifest.");
       if (hash.digest("hex") !== release.manifest.zipSha256.toLowerCase()) throw new Error("Downloaded update checksum does not match the signed manifest.");
       renameSync(temporaryPath, finalPath);
@@ -279,8 +297,10 @@ export class UpdateService {
     }
     const helperPath = join(resolve(zipPath, ".."), "install-update.ps1");
     const helperLogPath = join(resolve(zipPath, ".."), "update-helper.log");
+    const helperStartedPath = join(resolve(zipPath, ".."), "update-helper-started");
     const healthPath = join(this.updateDirectory, "health", `${version}.ok`);
     rmSync(healthPath, { force: true });
+    rmSync(helperStartedPath, { force: true });
     const fallback = release.manifest.channel === "beta" ? this.stableFallbackFor(release) : null;
     if (release.manifest.channel === "beta" && !fallback) {
       throw new Error("This beta update has no compatible signed Stable recovery release yet.");
@@ -289,6 +309,7 @@ export class UpdateService {
     const escapedZip = zipPath.replaceAll("'", "''");
     const escapedDirectory = resolve(zipPath, "..").replaceAll("'", "''");
     const escapedLogPath = helperLogPath.replaceAll("'", "''");
+    const escapedStartedPath = helperStartedPath.replaceAll("'", "''");
     const escapedHealthPath = healthPath.replaceAll("'", "''");
     const escapedFallbackZipPath = fallbackZipPath.replaceAll("'", "''");
     writeFileSync(helperPath, [
@@ -296,11 +317,13 @@ export class UpdateService {
       "$zip = '" + escapedZip + "'",
       "$root = '" + escapedDirectory + "'",
       "$logPath = '" + escapedLogPath + "'",
+      "$startedPath = '" + escapedStartedPath + "'",
       "$healthPath = '" + escapedHealthPath + "'",
       "$fallbackZip = '" + escapedFallbackZipPath + "'",
       "function Write-UpdateLog([string]$message) {",
       "  Add-Content -LiteralPath $logPath -Value \"$([DateTime]::UtcNow.ToString('o')) $message\"",
       "}",
+      "Set-Content -LiteralPath $startedPath -Value $PID -NoNewline",
       "Write-UpdateLog 'Updater helper started.'",
       "try {",
       "Add-Type -AssemblyName System.IO.Compression.FileSystem",
@@ -333,8 +356,16 @@ export class UpdateService {
     ].join("\r\n"));
     this.database.setSetting(SETTINGS.previousWorkingVersion, this.currentVersion);
     this.activity = "installing";
-    const child = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helperPath], { stdout: "ignore", stderr: "ignore" });
+    const child = Bun.spawn(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", helperPath], {
+      stdout: "ignore", stderr: "ignore", detached: true,
+    });
     child.unref();
+    const deadline = Date.now() + 2_000;
+    while (!existsSync(helperStartedPath) && Date.now() < deadline) await Bun.sleep(25);
+    if (!existsSync(helperStartedPath)) {
+      this.activity = "error";
+      throw new Error("The installer did not start. Your verified update is still ready. Try Install again; if it keeps failing, open Logs and share the updater error.");
+    }
     return { scheduled: true };
   }
 }

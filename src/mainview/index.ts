@@ -2551,7 +2551,7 @@ async function installSelectedUpdate(version: string): Promise<void> {
   elements.installUpdate.disabled = true;
   try {
     await app.rpc!.request.installUpdate({ version });
-    elements.updateStatus.textContent = "Installer started. BulkImg Studio is restarting…";
+    elements.updateStatus.textContent = "Installer started. BulkImg Studio is restarting… If it cannot finish, the current app will remain available and the reason will appear here after it reopens.";
   } catch (error) {
     elements.installUpdate.disabled = false;
     elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not start the installer.";
