@@ -2841,6 +2841,12 @@ button:disabled {
   font-variant-numeric: tabular-nums
 }
 
+.logs-hint {
+  margin: 8px 0;
+  color: var(--text3);
+  font-size: 11px
+}
+
 .logs-list {
   margin: 0;
   min-height: 280px;
@@ -2866,12 +2872,30 @@ button:disabled {
 }
 
 .logs-list .log-line {
-  display: block;
-  padding: 2px 0
+  display: grid;
+  grid-template-columns: 174px minmax(160px, auto) max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--subtle) 72%, transparent)
 }
+
+.logs-list .log-line:last-child { border-bottom: 0 }
+.logs-list .log-line time { color: var(--text3); font-variant-numeric: tabular-nums }
+.logs-list .log-line strong { color: var(--text); font-weight: 500 }
+.logs-list .log-line em { color: var(--success); font-style: normal; font-size: 10px }
+.logs-list .log-line.error em { color: inherit }
+.logs-list .log-line .log-fields { display: flex; flex-wrap: wrap; gap: 3px 10px; color: var(--text2); font-family: Inter, sans-serif; font-size: 11px }
+.logs-list .log-line .log-fields b { color: var(--text3); font-weight: 600 }
+.logs-list .log-line.raw { display: block; padding: 3px 0 }
 
 .logs-list .log-line.error {
   color: #d98689
+}
+
+@media(max-width:780px) {
+  .logs-list .log-line { grid-template-columns: 1fr auto; gap: 3px 8px }
+  .logs-list .log-line .log-fields { grid-column: 1 / -1 }
 }
 
 .logs-path {

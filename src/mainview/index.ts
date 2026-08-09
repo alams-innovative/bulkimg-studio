@@ -2414,7 +2414,33 @@ async function loadExports(): Promise<void> {
   }
 }
 
-function isErrorLogLine(line: string): boolean {
+type DisplayLogEntry = { at?: unknown; event?: unknown; ok?: unknown; [key: string]: unknown };
+
+function logEventLabel(event: string): string {
+  return event.replaceAll(/[_-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function logFieldLabel(key: string): string {
+  return key.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatLogField(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 1024 && Number.isInteger(value)) return formatBytes(value);
+  if (typeof value === "string") return value;
+  return JSON.stringify(value);
+}
+
+function parseLogLine(line: string): DisplayLogEntry | null {
+  try {
+    const value = JSON.parse(line) as DisplayLogEntry;
+    return typeof value === "object" && value ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function isErrorLogLine(line: string, entry: DisplayLogEntry | null): boolean {
+  if (entry?.ok === false || /(?:error|failed|failure)/i.test(String(entry?.event ?? ""))) return true;
   if (/_error"|"category":"(timeout|network|provider|auth)"|"level":"error"/i.test(line)) return true;
   return /\berror\b/i.test(line) && /batch_|session_|download_|poll_|persist_/i.test(line);
 }
@@ -2423,8 +2449,15 @@ function renderLogLines(lines: string[]): void {
   logsLines = lines;
   elements.logsCount.textContent = `${lines.length} line${lines.length === 1 ? "" : "s"}`;
   elements.logsList.innerHTML = lines.map((line) => {
-    const error = isErrorLogLine(line);
-    return `<code class="log-line${error ? " error" : ""}">${escapeHtml(line)}</code>`;
+    const entry = parseLogLine(line);
+    const error = isErrorLogLine(line, entry);
+    if (!entry || typeof entry.event !== "string") return `<code class="log-line raw${error ? " error" : ""}">${escapeHtml(line)}</code>`;
+    const fields = Object.entries(entry)
+      .filter(([key]) => !["at", "event", "ok", "source"].includes(key))
+      .map(([key, value]) => `<span><b>${escapeHtml(logFieldLabel(key))}:</b> ${escapeHtml(formatLogField(value))}</span>`)
+      .join("");
+    const outcome = entry.ok === false ? "Failed" : entry.ok === true ? "Done" : "";
+    return `<code class="log-line${error ? " error" : ""}"><time title="${escapeHtml(String(entry.at ?? ""))}">${escapeHtml(formatDate(typeof entry.at === "string" ? entry.at : null))}</time><strong>${escapeHtml(logEventLabel(entry.event))}</strong>${outcome ? `<em>${outcome}</em>` : ""}${fields ? `<span class="log-fields">${fields}</span>` : ""}</code>`;
   }).join("");
   elements.copyLogs.disabled = lines.length === 0;
   elements.logsList.scrollTop = elements.logsList.scrollHeight;

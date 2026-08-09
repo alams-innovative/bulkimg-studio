@@ -187,7 +187,7 @@ const updateConfig = await readJson<UpdateConfig>(assetRoots.map((root) => join(
   repository: "alams-innovative/bulkimg-studio",
   publicKeyPem: "",
 });
-const updateService = new UpdateService(database, dataDirectory, brand.version, updateConfig, process.arch === "arm64" ? "arm64" : "x64");
+const updateService = new UpdateService(database, dataDirectory, brand.version, updateConfig, process.arch === "arm64" ? "arm64" : "x64", diagnosticLog);
 updateService.markHealthyStartup();
 const recoveredUpdateFailure = updateService.recoverInstallerFailure();
 if (recoveredUpdateFailure) void diagnosticLog.write("update_install_recovery", { ok: false, message: recoveredUpdateFailure });

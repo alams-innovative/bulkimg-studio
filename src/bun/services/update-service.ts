@@ -2,6 +2,7 @@ import { createHash, createPublicKey, verify } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { AppDatabase } from "../database";
+import type { DiagnosticLog } from "./diagnostics";
 import type { UpdateChannel, UpdateConfig, UpdateManifest, UpdateRelease, UpdateState } from "../../shared/update-contracts";
 import { compareVersions, isAtLeast, isEligibleForChannel, parseVersion } from "./versioning";
 
@@ -79,6 +80,7 @@ export class UpdateService {
     private readonly currentVersion: string,
     private readonly config: UpdateConfig,
     private readonly architecture: "x64" | "arm64",
+    private readonly diagnostics?: DiagnosticLog,
   ) {
     this.updateDirectory = join(dataDirectory, "updates");
     mkdirSync(this.updateDirectory, { recursive: true });
@@ -96,6 +98,10 @@ export class UpdateService {
     const healthDirectory = join(this.updateDirectory, "health");
     mkdirSync(healthDirectory, { recursive: true });
     writeFileSync(join(healthDirectory, `${this.currentVersion}.ok`), new Date().toISOString());
+  }
+
+  private record(event: string, fields: Record<string, unknown> = {}): void {
+    void this.diagnostics?.write(event, fields);
   }
 
   recoverInstallerFailure(): string | null {
@@ -203,6 +209,7 @@ export class UpdateService {
     if (this.checking) return this.state();
     this.checking = true;
     this.activity = "checking";
+    this.record("update_check_started", { channel: this.channel, currentVersion: this.currentVersion, architecture: this.architecture });
     try {
       const response = await fetch(`${GITHUB_API}/repos/${this.config.repository}/releases?per_page=40`, {
         headers: { accept: "application/vnd.github+json", "user-agent": "BulkImg-Studio-Updater" }, signal: AbortSignal.timeout(15_000),
@@ -225,6 +232,7 @@ export class UpdateService {
         }
       }
       this.database.setSetting(SETTINGS.lastCheckedAt, new Date().toISOString());
+      this.record("update_check_complete", { channel: this.channel, publishedReleaseCount: releases.length, compatibleReleaseCount: this.releases.size });
     } catch (error) {
       this.database.setSetting(SETTINGS.lastError, asErrorMessage(error));
       this.activity = "error";
@@ -243,6 +251,7 @@ export class UpdateService {
     this.downloading = true;
     this.activity = "downloading";
     this.progress = { receivedBytes: 0, totalBytes: release.manifest.zipBytes };
+    this.record("update_download_started", { version, expectedBytes: release.manifest.zipBytes, channel: release.manifest.channel });
     const directory = join(this.updateDirectory, `${release.manifest.version}-${crypto.randomUUID()}`);
     const temporaryPath = join(directory, "download.part");
     const finalPath = join(directory, "BulkImgStudio-Setup.zip");
@@ -271,6 +280,7 @@ export class UpdateService {
       this.database.setSetting(SETTINGS.downloadedPath, finalPath);
       this.database.setSetting(SETTINGS.lastError, "");
       this.activity = "ready";
+      this.record("update_download_verified", { version, bytes: receivedBytes, sha256: release.manifest.zipSha256.slice(0, 12) });
     } catch (error) {
       rmSync(directory, { recursive: true, force: true });
       this.database.setSetting(SETTINGS.lastError, asErrorMessage(error));
@@ -306,6 +316,7 @@ export class UpdateService {
       throw new Error("This beta update has no compatible signed Stable recovery release yet.");
     }
     const fallbackZipPath = fallback ? await this.cacheFallback(fallback) : "";
+    this.record("update_install_prepared", { version, channel: release.manifest.channel, zipBytes: statSync(zipPath).size, hasFallback: Boolean(fallbackZipPath) });
     const escapedZip = zipPath.replaceAll("'", "''");
     const escapedDirectory = resolve(zipPath, "..").replaceAll("'", "''");
     const escapedLogPath = helperLogPath.replaceAll("'", "''");
@@ -364,8 +375,10 @@ export class UpdateService {
     while (!existsSync(helperStartedPath) && Date.now() < deadline) await Bun.sleep(25);
     if (!existsSync(helperStartedPath)) {
       this.activity = "error";
+      this.record("update_helper_start_failed", { version, timeoutMs: 2_000 });
       throw new Error("The installer did not start. Your verified update is still ready. Try Install again; if it keeps failing, open Logs and share the updater error.");
     }
+    this.record("update_helper_started", { version, helperPid: child.pid });
     return { scheduled: true };
   }
 }
