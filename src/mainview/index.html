@@ -41,7 +41,6 @@
             data-lucide="info"></i><span>About</span></button>
       </nav>
       <div class="sidebar-spacer"></div>
-      <p class="sidebar-credit">Powered by Alams Innovate<br />© 2026 All rights reserved.</p>
       <button id="manage-keys" class="nav-item" title="API keys"><i data-lucide="key-round"></i><span>API keys</span><b
           id="key-count" class="hidden" hidden>0</b></button>
       <button id="theme-toggle" class="nav-item" title="Theme" aria-label="Switch to light theme"><i
@@ -406,6 +405,10 @@
           <button id="check-updates" class="secondary-button" type="button"><i data-lucide="refresh-cw"></i>Check for updates</button>
         </div>
         <div id="update-status" class="update-status" role="status" aria-live="polite"></div>
+        <section class="about-ownership panel" aria-labelledby="ownership-title">
+          <div class="about-ownership-mark" aria-hidden="true"><i data-lucide="sparkles"></i></div>
+          <div><h3 id="ownership-title">Built by Alams Innovate</h3><p>BulkImg Studio is proprietary software. © 2026 Alams Innovate. All rights reserved.</p></div>
+        </section>
         <section class="update-card panel" aria-labelledby="update-channel-title">
           <div><h3 id="update-channel-title">Update channel</h3><p>Stable is recommended for normal production work.</p></div>
           <label class="update-channel-toggle"><input id="receive-beta-updates" type="checkbox" /><span><strong>Receive beta updates</strong><small>Beta releases are newer but can disrupt your workflow. Stable is recommended.</small></span></label>
