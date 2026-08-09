@@ -243,6 +243,10 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         };
       },
       getUsageSummary: ({ startAt, endAt }) => database.getUsageSummary({ startAt, endAt }),
+      getFxRate: async () => {
+        const rate = await fxService.getUsdPkrRate();
+        return { rate, ...fxService.getState() };
+      },
       getObservedCost: (input) => database.getObservedCost(input),
       getSettings: () => database.getAppSettings(),
       setSettings: (partial) => logged("settings_update", { keys: Object.keys(partial) }, () => database.setAppSettings(partial)),

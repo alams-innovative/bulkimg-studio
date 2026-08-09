@@ -55,6 +55,7 @@ import type {
   ConverterRule,
   ConverterSourceImage,
   ExportSummary,
+  DisplayCurrency,
   GeneratorDraft,
   HistoryItem,
   PromptCell,
@@ -97,6 +98,7 @@ const elements = {
   brandName: byId("brand-name"),
   brandVersion: byId("brand-version"),
   keyCount: byId("key-count"),
+  currencyToggle: byId<HTMLButtonElement>("currency-toggle"),
   themeToggle: byId<HTMLButtonElement>("theme-toggle"),
   themeLabel: byId("theme-label"),
   pageTitle: byId("page-title"),
@@ -349,6 +351,8 @@ const TOAST_MS_ERR = 7000;
 let logsLines: string[] = [];
 let logsSearchTimer: number | null = null;
 let currentFxRate = 276.61;
+let displayCurrency: DisplayCurrency = "USD";
+let fxRefreshTimer: number | null = null;
 let historyItems: HistoryItem[] = [];
 let librarySessions = new Map<string, SessionSummary>();
 let libraryRuns = new Map<string, RunSummary>();
@@ -392,6 +396,7 @@ let generatorDraftTimer: number | null = null;
 let restoringGeneratorWorkspace = false;
 let bootstrapData: AppBootstrap | null = null;
 let pricingView: PricingView | null = null;
+let latestUsageSummary: UsageSummary | null = null;
 let selectedUpdateVersion: string | null = null;
 let updateState: UpdateState | null = null;
 let appLimits: {
@@ -1377,12 +1382,17 @@ async function refreshEstimate(): Promise<void> {
       format: elements.size.value as OutputFormatId,
       referenceCount: referenceImages.length,
     });
-    elements.fxRate.textContent = `PKR ${estimate.fxRate.toFixed(2)}`;
+    currentFxRate = estimate.fxRate;
+    updateFxRateLabel();
     setHidden(elements.estimatedCost, false);
     setHidden(elements.estimateBox, false);
-    elements.estimatedCost.textContent = `$${estimate.costUsd.toFixed(2)}`;
-    elements.railEstimate.textContent = `$${estimate.costUsd.toFixed(3)}`;
-    elements.railPkr.textContent = `PKR ${estimate.costPkr.toFixed(2)}`;
+    elements.estimatedCost.textContent = money(estimate.costUsd, 2);
+    elements.railEstimate.textContent = displayCurrency === "USD"
+      ? `$${estimate.costUsd.toFixed(3)} USD`
+      : `PKR ${estimate.costPkr.toFixed(2)}`;
+    elements.railPkr.textContent = displayCurrency === "USD"
+      ? `PKR ${estimate.costPkr.toFixed(2)}`
+      : `$${estimate.costUsd.toFixed(3)} USD`;
     elements.railEstimateLabel.textContent = `${count} image${count === 1 ? "" : "s"} · ${referenceImages.length} ref · ${currentMode() === "batch" ? "Batch" : "Direct"}`;
     animateState(elements.railEstimate);
   } catch {
@@ -2041,7 +2051,67 @@ function usageRangeBounds(value: string): { startAt: string | null; endAt: strin
 }
 
 function money(value: number, decimals = 3): string {
-  return `PKR ${(value * currentFxRate).toFixed(2)} ($${value.toFixed(decimals)} USD)`;
+  const usd = `$${value.toFixed(decimals)} USD`;
+  const pkr = `PKR ${(value * currentFxRate).toFixed(2)}`;
+  return displayCurrency === "USD" ? `${usd} (${pkr})` : `${pkr} (${usd})`;
+}
+
+function updateFxRateLabel(): void {
+  elements.fxRate.textContent = `1 USD = PKR ${currentFxRate.toFixed(2)}`;
+}
+
+function updateCurrencyToggle(): void {
+  const showingPkr = displayCurrency === "PKR";
+  elements.currencyToggle.textContent = showingPkr ? "PKR · USD" : "USD · PKR";
+  elements.currencyToggle.setAttribute("aria-pressed", String(showingPkr));
+  elements.currencyToggle.setAttribute("aria-label", showingPkr ? "Show costs in US dollars" : "Show costs in Pakistani rupees");
+  elements.currencyToggle.title = showingPkr ? "Switch displayed costs to USD" : "Switch displayed costs to PKR";
+}
+
+function refreshMoneyDisplays(): void {
+  if (latestUsageSummary) renderUsageSummary(latestUsageSummary);
+  renderPricing();
+  if (bootstrapData) void refreshCalculator();
+  if (selected.size > 0) void refreshEstimate();
+}
+
+async function setDisplayCurrency(next: DisplayCurrency): Promise<void> {
+  const previous = displayCurrency;
+  displayCurrency = next;
+  updateCurrencyToggle();
+  refreshMoneyDisplays();
+  try {
+    const settings = await app.rpc!.request.setSettings({ displayCurrency: next });
+    displayCurrency = settings.displayCurrency;
+    if (bootstrapData) bootstrapData = { ...bootstrapData, settings };
+    updateCurrencyToggle();
+    refreshMoneyDisplays();
+  } catch (error) {
+    displayCurrency = previous;
+    updateCurrencyToggle();
+    refreshMoneyDisplays();
+    showToast(error instanceof Error ? error.message : "Could not save the currency preference.", true);
+  }
+}
+
+async function refreshFxRate(): Promise<void> {
+  try {
+    const fx = await app.rpc!.request.getFxRate({});
+    currentFxRate = fx.rate;
+    if (bootstrapData) bootstrapData = { ...bootstrapData, fxRate: fx.rate };
+    updateFxRateLabel();
+    refreshMoneyDisplays();
+    logUi("fx_refresh", { source: fx.source, cacheAgeSeconds: fx.cacheAgeSeconds });
+  } catch (error) {
+    logUi("fx_refresh", { ok: false, message: error instanceof Error ? error.message : "error" });
+  }
+}
+
+function startFxRefresh(): void {
+  if (fxRefreshTimer !== null) window.clearInterval(fxRefreshTimer);
+  fxRefreshTimer = window.setInterval(() => {
+    if (!document.hidden) void refreshFxRate();
+  }, 15 * 60 * 1000);
 }
 
 async function refreshCalculator(): Promise<void> {
@@ -2072,7 +2142,7 @@ function syncCalculatorFromGenerator(): void {
 }
 
 function moneyWithRate(value: number, decimals = 3): string {
-  return `${money(value, decimals)} <small>$${value.toFixed(decimals)} USD · Rate: PKR ${currentFxRate.toFixed(2)}/USD</small>`;
+  return `${money(value, decimals)} <small>Rate: 1 USD = PKR ${currentFxRate.toFixed(2)}</small>`;
 }
 
 function usageKpi(label: string, value: string, detail: string): string {
@@ -2085,12 +2155,15 @@ function renderUsageSummary(summary: UsageSummary): void {
     usageKpi("Requests", formatNumber(summary.total.requestCount), `${formatNumber(summary.total.completedCount)} completed`),
     usageKpi("Images", formatNumber(summary.total.completedCount), `${formatNumber(summary.total.failedCount)} failed`),
     usageKpi("Tokens", formatNumber(totalTokens), `in ${formatNumber(summary.total.inputTokens)} · out ${formatNumber(summary.total.outputTokens)}`),
-    usageKpi("Tracked cost", money(summary.total.costUsd), `PKR ${summary.total.costPkr.toFixed(2)} · this app`),
+    usageKpi("Tracked cost", money(summary.total.costUsd), "This app · current display rate"),
   ].join("");
 
-  // Mode-specific totals remain in the local ledger but no longer compete with
-  // the calculator-first layout; detailed pricing is available on demand.
-  elements.usageModeComparison.innerHTML = "";
+  const rows: Array<[string, UsageSummary["direct"]]> = [["Direct", summary.direct], ["Batch", summary.batch]];
+  elements.usageModeComparison.innerHTML = `
+    <div class="usage-card-head"><div><h3>Runs by mode</h3><p>Completed work from this device for the selected period.</p></div></div>
+    <div class="usage-table-wrap"><table class="usage-table"><thead><tr><th scope="col">Mode</th><th scope="col">Requests</th><th scope="col">Images</th><th scope="col">Tokens</th><th scope="col">Tracked cost</th></tr></thead><tbody>
+      ${rows.map(([label, totals]) => `<tr><th scope="row">${label}</th><td>${formatNumber(totals.requestCount)}</td><td>${formatNumber(totals.completedCount)}</td><td>${formatNumber(totals.inputTokens + totals.outputTokens)}</td><td>${money(totals.costUsd)}</td></tr>`).join("")}
+    </tbody></table></div>`;
 }
 
 function renderUsageLimits(): void {
@@ -2149,19 +2222,18 @@ function renderUsageLimits(): void {
 function renderPricing(): void {
   const pricing = pricingView;
   if (!pricing) return;
-  elements.usagePricingMeta.textContent = "Estimates in USD";
+  elements.usagePricingMeta.textContent = `Estimates shown in ${displayCurrency}`;
   const formats: Array<keyof PricingView["imageEstimatesUsd"]> = ["square", "portrait", "landscape", "story"];
   elements.usagePricing.innerHTML = `
-    <div class="usage-image-prices">
-      <div class="usage-price-row usage-price-heading"><span>Image size</span><strong>Direct · Batch</strong></div>
+    <div class="usage-table-wrap usage-pricing-table-wrap" tabindex="0" aria-label="Image pricing table. Scroll horizontally to see all prices."><table class="usage-table usage-pricing-table"><thead><tr><th scope="col">Image size</th><th scope="col">Direct · Low</th><th scope="col">Direct · Medium</th><th scope="col">Direct · High</th><th scope="col">Batch · Low</th><th scope="col">Batch · Medium</th><th scope="col">Batch · High</th></tr></thead><tbody>
       ${formats.map((key) => {
         const rates = pricing.imageEstimatesUsd[key];
         const format = OUTPUT_FORMATS[key];
-        return `<div class="usage-price-row"><span>${format.label} · ${format.ratio} · ${format.size}</span><strong>Low ${money(rates.low)} / ${money(rates.low * pricing.batchDiscount)} · Medium ${money(rates.medium)} / ${money(rates.medium * pricing.batchDiscount)} · High ${money(rates.high)} / ${money(rates.high * pricing.batchDiscount)}</strong></div>`;
+        return `<tr><th scope="row">${format.label}<small>${format.ratio} · ${format.size}</small></th><td>${money(rates.low)}</td><td>${money(rates.medium)}</td><td>${money(rates.high)}</td><td>${money(rates.low * pricing.batchDiscount)}</td><td>${money(rates.medium * pricing.batchDiscount)}</td><td>${money(rates.high * pricing.batchDiscount)}</td></tr>`;
       }).join("")}
-      <small class="usage-limit-note">Reference image estimate: ${money(pricing.referenceInputEstimateUsd)} each direct · ${money(pricing.referenceInputEstimateUsd * pricing.batchDiscount)} each in Batch. Actual reference cost depends on the image input and is recorded after the run.</small>
-    </div>
-    <p class="usage-limit-note">Your selected prompt count, quality, size, and reference-image count are calculated automatically in the Generator. Batch totals already include the Batch rate.</p>`;
+    </tbody></table></div>
+    <p class="usage-limit-note">Reference image estimate: ${money(pricing.referenceInputEstimateUsd)} each direct · ${money(pricing.referenceInputEstimateUsd * pricing.batchDiscount)} each in Batch. Actual reference cost depends on the image input and is recorded after the run.</p>
+    <p class="usage-limit-note">The selected prompt count, quality, size, and reference-image count are calculated automatically in the Generator. Batch totals already include the Batch rate.</p>`;
 }
 
 async function loadUsage(): Promise<void> {
@@ -2177,6 +2249,10 @@ async function loadUsage(): Promise<void> {
     bootstrapData = latestBootstrap;
     pricingView = latestBootstrap.pricing;
     currentFxRate = latestBootstrap.fxRate;
+    displayCurrency = latestBootstrap.settings.displayCurrency;
+    latestUsageSummary = summary;
+    updateFxRateLabel();
+    updateCurrencyToggle();
     renderUsageSummary(summary);
     renderUsageLimits();
     renderPricing();
@@ -3052,7 +3128,8 @@ async function bootstrap(): Promise<void> {
   elements.keyCount.textContent = String(data.keyCount);
   activeKeyCount = data.keyCount;
   syncKeyCountBadge(data.keyCount);
-  elements.fxRate.textContent = `PKR ${data.fxRate.toFixed(2)}`;
+  displayCurrency = data.settings.displayCurrency;
+  updateCurrencyToggle();
   elements.model.innerHTML = data.models.models.map((model) =>
     `<option value="${escapeHtml(model.id)}" ${model.enabled ? "" : "disabled"}>${escapeHtml(model.label)}</option>`,
   ).join("");
@@ -3071,6 +3148,7 @@ async function bootstrap(): Promise<void> {
     elements.waveStrategy.value = data.settings.waveSize > 0 ? "guided" : "all";
   }
   currentFxRate = data.fxRate;
+  updateFxRateLabel();
   elements.calculatorFormat.innerHTML = Object.values(OUTPUT_FORMATS).map((format) => `<option value="${format.id}">${format.label}</option>`).join("");
   syncCalculatorFromGenerator();
   if (data.admin) applyAdminView(data.admin);
@@ -3136,6 +3214,7 @@ async function restoreGeneratorWorkspace(): Promise<void> {
 applyTheme(getInitialTheme());
 restoreSidebar();
 refreshIcons();
+updateCurrencyToggle();
 syncEstimateChrome(0);
 syncActionState();
 
@@ -3259,6 +3338,10 @@ elements.converterRun.addEventListener("click", async () => {
     refreshIcons(); showToast(`${job.completedCount} image${job.completedCount === 1 ? "" : "s"} converted.`);
   } catch (error) { showToast(error instanceof Error ? error.message : "Could not convert images.", true); }
   finally { const runLabel = elements.converterRun.querySelector("span"); if (runLabel) runLabel.textContent = "Convert"; elements.converterRun.disabled = converterQueue.length === 0; elements.converterRun.removeAttribute("aria-busy"); }
+});
+
+elements.currencyToggle.addEventListener("click", () => {
+  void setDisplayCurrency(displayCurrency === "USD" ? "PKR" : "USD");
 });
 elements.csvTab.addEventListener("click", () => setTab("csv"));
 elements.manualTab.addEventListener("click", () => setTab("manual"));
@@ -4015,6 +4098,7 @@ elements.openLogsFolder.addEventListener("click", async () => {
 });
 
 await bootstrap();
+startFxRefresh();
 await restoreGeneratorWorkspace();
 
 window.addEventListener("beforeunload", (event) => {

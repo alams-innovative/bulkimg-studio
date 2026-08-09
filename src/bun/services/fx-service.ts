@@ -1,6 +1,7 @@
 import type { AppDatabase } from "../database";
 
 const FALLBACK_RATE = Number(Bun.env["USD_PKR_FALLBACK_RATE"] ?? 276.61);
+export const FX_CACHE_TTL_SECONDS = 15 * 60;
 
 export class FxService {
   private state: { source: "live" | "cache" | "fallback"; cacheAgeSeconds: number | null } = { source: "fallback", cacheAgeSeconds: null };
@@ -10,7 +11,7 @@ export class FxService {
 
   async getUsdPkrRate(): Promise<number> {
     const cached = this.database.getCachedFx();
-    if (cached && cached.ageSeconds < 3600) {
+    if (cached && cached.ageSeconds < FX_CACHE_TTL_SECONDS) {
       this.state = { source: "cache", cacheAgeSeconds: cached.ageSeconds };
       return cached.rate;
     }

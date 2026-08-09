@@ -105,6 +105,12 @@ export type AppSettings = {
   displayCurrency: DisplayCurrency;
 };
 
+export type FxRateView = {
+  rate: number;
+  source: "live" | "cache" | "fallback";
+  cacheAgeSeconds: number | null;
+};
+
 export type RateLimitSnapshot = {
   model: string;
   maxImagesPerMinute: number | null;
@@ -458,6 +464,7 @@ export type AppRPC = {
   bun: {
     requests: {
       getBootstrap: { params: {}; response: AppBootstrap };
+      getFxRate: { params: {}; response: FxRateView };
       getSettings: { params: {}; response: AppSettings };
       setSettings: { params: Partial<AppSettings>; response: AppSettings };
       importCSV: { params: { csvText: string; sourceName: string }; response: PromptMatrix };

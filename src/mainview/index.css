@@ -216,7 +216,9 @@ svg {
 
 .primary-nav {
   display: grid;
-  gap: 4px
+  gap: 4px;
+  flex: 1 1 auto;
+  align-content: start
 }
 
 .nav-item {
@@ -461,7 +463,8 @@ svg {
 
 /* Beta 1.1: calculator-first usage page and quieter sidebar controls. */
 .sidebar-controls { display:flex; align-items:center; gap:6px }
-.currency-status { padding:5px 7px; border:1px solid var(--subtle); border-radius:6px; color:var(--text2); font:700 10px "JetBrains Mono"; white-space:nowrap }
+.currency-status { padding:5px 7px; border:1px solid var(--subtle); border-radius:6px; background:var(--surface); color:var(--text2); font:700 10px "JetBrains Mono"; white-space:nowrap; cursor:pointer }
+.currency-status:hover { background:var(--hover); color:var(--text) }
 .calculator-card { display:grid; gap:16px }
 .calculator-inputs { display:grid; grid-template-columns:repeat(5,minmax(110px,1fr)); gap:10px }
 .calculator-inputs label { display:grid; gap:5px; color:var(--text3); font-size:11px; font-weight:700 }
@@ -1432,9 +1435,40 @@ textarea {
 
 .usage-mode-comparison {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px
+  gap: 0;
+  margin-bottom: 10px
 }
+
+.usage-table-wrap {
+  max-width: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--text3);
+  font-size: 11px
+}
+
+.usage-table th,
+.usage-table td {
+  min-height: 34px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--subtle);
+  text-align: right;
+  vertical-align: middle;
+  white-space: nowrap
+}
+
+.usage-table th:first-child,
+.usage-table td:first-child { text-align: left }
+.usage-table thead th { color: var(--text3); font: 700 10px "JetBrains Mono"; background: var(--surface) }
+.usage-table tbody th { color: var(--text2); font-weight: 700 }
+.usage-table tbody tr:last-child th,
+.usage-table tbody tr:last-child td { border-bottom: 0 }
 
 .usage-mode-card {
   padding: 11px;
@@ -1545,11 +1579,19 @@ textarea {
   margin-bottom: 4px
 }
 
+.pricing-card summary { align-items: center }
+.pricing-card[open] summary { margin-bottom: 2px }
+
 .usage-pricing {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
-  gap: 14px
+  gap: 8px
 }
+
+.usage-pricing-table-wrap { border: 1px solid var(--subtle); border-radius: var(--r1); background: var(--surface) }
+.usage-pricing-table { min-width: 920px }
+.usage-pricing-table th:first-child { min-width: 145px }
+.usage-pricing-table td { font: 500 10px "JetBrains Mono"; color: var(--text2) }
+.usage-pricing-table tbody th small { display: block; margin-top: 2px; color: var(--text3); font: 500 9px "JetBrains Mono" }
 
 .usage-pricing-tokens,
 .usage-image-prices {
@@ -2760,13 +2802,24 @@ button:disabled {
 
 /* Compact laptop windows keep the controls in reach without scaling the app canvas. */
 @media(max-height:820px) {
+  .sidebar { padding: 10px 8px 8px }
+  .sidebar-head { gap: 6px; margin-bottom: 9px }
+  .sidebar-head .brand-lockup { min-height: 34px }
+  .brand-lockup>img { width: 30px; height: 30px }
+  .brand-text strong { font-size: 12px }
+  .brand-text small { font-size: 9px }
+  .primary-nav { gap: 2px }
+  .nav-item { height: 34px; padding-inline: 8px; font-size: 12px }
+  .sidebar-toggle { height: 28px }
+  .currency-status { padding: 4px 6px; font-size: 9px }
+
   .topbar {
     padding-top: 10px;
-    height: 64px
+    height: 56px
   }
 
   .app-main {
-    grid-template-rows: 64px minmax(0, 1fr)
+    grid-template-rows: 56px minmax(0, 1fr)
   }
 
   .brand-lockup {
@@ -2774,15 +2827,26 @@ button:disabled {
   }
 
   .run-panel-content {
-    gap: 9px;
-    padding: 14px
+    gap: 7px;
+    padding: 11px
   }
 
-  .run-panel-footer { padding: 9px 14px 12px }
+  .run-panel-footer { padding: 7px 11px 9px }
 
   .composer {
-    padding: 14px
+    padding: 11px
   }
+
+  .view-content { padding-bottom: 11px }
+  .section-heading h2 { font-size: 16px }
+  .section-heading p, .field-hint { font-size: 10px }
+  .mode-option { min-height: 42px; padding: 7px 8px }
+  .mode-option small { font-size: 9px }
+  .reference-control[data-count="0"] .reference-dock { padding: 6px 8px }
+  .reference-dock { gap: 7px }
+  .reference-dock strong { font-size: 12px }
+  .reference-dock small { font-size: 9px }
+  .secondary-button { min-height: 30px; padding: 5px 8px; font-size: 11px }
 
   .input-panel {
     margin-top: 9px
@@ -2793,7 +2857,7 @@ button:disabled {
   }
 
   .prompt-matrix {
-    height: clamp(210px, 30vh, 250px)
+    height: clamp(180px, 26vh, 220px)
   }
 
   .reference-dock {
@@ -2838,6 +2902,16 @@ button:disabled {
   color: var(--text2);
   font-size: 11px;
   font-variant-numeric: tabular-nums
+}
+
+@media(max-height:680px) and (min-width:821px) {
+  .topbar { height: 50px; padding-top: 7px }
+  .app-main { grid-template-rows: 50px minmax(0, 1fr) }
+  .page-heading h1 { font-size: 22px }
+  .nav-item { height: 31px; font-size: 11px }
+  .sidebar-head { margin-bottom: 6px }
+  .run-panel-content, .composer { padding: 9px }
+  .prompt-matrix { height: clamp(150px, 22vh, 190px) }
 }
 
 .logs-hint {
@@ -3472,7 +3546,8 @@ button.history-image:disabled {
 
 .app-shell[data-sidebar=collapsed] .brand-text,
 .app-shell[data-sidebar=collapsed] .nav-item>span,
-.app-shell[data-sidebar=collapsed] #theme-label {
+.app-shell[data-sidebar=collapsed] #theme-label,
+.app-shell[data-sidebar=collapsed] .currency-status {
   display: none
 }
 

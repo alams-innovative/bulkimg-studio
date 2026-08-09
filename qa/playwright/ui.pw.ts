@@ -25,16 +25,20 @@ test("generator remains accessible and keyboard operable", async ({ page }) => {
   await expect(page.locator(":focus")).toBeVisible();
 });
 
-test("usage page provides a calculator, observed-cost guidance, limits, and progressive pricing details", async ({ page }) => {
+test("usage page provides a calculator, observed-cost guidance, limits, and visible pricing details", async ({ page }) => {
   await page.getByRole("button", { name: "Usage" }).click();
   await expect(page.locator("#usage-view").getByRole("heading", { name: "Usage & limits" })).toBeVisible();
   await expect(page.getByText("This app only — local requests, tokens, and calculated cost.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Calculator" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Your observed cost" })).toBeVisible();
   await expect(page.getByText("View pricing details", { exact: true })).toBeVisible();
-  await expect(page.getByText("PKR · SBP", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show costs in Pakistani rupees" })).toHaveText("USD · PKR");
   await expect(page.getByLabel("Display currency")).toHaveCount(0);
-  await expect(page.locator("#calculator-result")).toContainText("PKR");
+  await expect(page.locator("#calculator-result")).toContainText("USD");
+  await expect(page.locator("details.pricing-card")).toHaveAttribute("open", "");
+  await expect(page.locator("#usage-pricing").getByRole("table")).toBeVisible();
+  await page.getByRole("button", { name: "Show costs in Pakistani rupees" }).click();
+  await expect(page.getByRole("button", { name: "Show costs in US dollars" })).toHaveText("PKR · USD");
   await expect(page.getByText("Add an Admin key in API keys to load project limits. Generation keys still track this app’s usage.")).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

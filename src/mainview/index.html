@@ -19,9 +19,9 @@
           <img class="brand-logo-light"
             src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
           <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
-              id="brand-version">1.1.0-beta.4</small></span>
+              id="brand-version">1.1.0-beta.5</small></span>
         </div>
-        <div class="sidebar-controls"><span class="currency-status" title="USD costs are automatically shown in Pakistani rupees using the State Bank of Pakistan rate">PKR · SBP</span><button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
+        <div class="sidebar-controls"><button id="currency-toggle" type="button" class="currency-status" aria-pressed="false" aria-label="Show costs in Pakistani rupees" title="Switch displayed costs between USD and PKR">USD · PKR</button><button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
           title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
         </div>
       </div>
@@ -315,9 +315,9 @@
         <section class="usage-card calculator-card"><div class="usage-card-head"><div><h3>Calculator</h3><p>Plan a run before importing prompts. Generator selections sync here automatically.</p></div></div><div class="calculator-inputs"><label>Images<input id="calculator-count" type="number" min="1" max="365" value="1" /></label><label>Format<select id="calculator-format"></select></label><label>Quality<select id="calculator-quality"><option value="low">Low</option><option value="medium" selected>Medium</option><option value="high">High</option></select></label><label>Run mode<select id="calculator-mode"><option value="batch">Batch</option><option value="direct">Direct</option></select></label><label>References<input id="calculator-references" type="number" min="0" max="16" value="0" /></label></div><div id="calculator-result" class="calculator-result" aria-live="polite"></div></section>
         <section class="usage-card"><div class="usage-card-head"><div><h3>Your observed cost</h3><p>Completed images with the same mode, format, quality, and reference count.</p></div></div><div id="usage-observed" class="usage-observed"></div></section>
         <div id="usage-summary-grid" class="usage-summary-grid" aria-live="polite"></div>
-        <div id="usage-mode-comparison" hidden></div><span id="usage-batch-discount" hidden></span><span id="usage-pricing-meta" hidden></span>
+        <section id="usage-mode-comparison" class="usage-card usage-mode-comparison" aria-live="polite"></section><span id="usage-batch-discount" hidden></span><span id="usage-pricing-meta" hidden></span>
         <section class="usage-card"><div class="usage-card-head"><div><h3>Limits</h3><p>App caps and the latest scoped provider snapshot.</p></div><div class="button-row compact-header-actions"><button id="usage-refresh-limits" class="icon-button" type="button" aria-label="Refresh limits" title="Refresh limits"><i data-lucide="refresh-cw"></i></button><button id="usage-open-keys" class="icon-button" type="button" aria-label="Open API keys" title="Open API keys"><i data-lucide="key-round"></i></button></div></div><div id="usage-limits" class="usage-limits"></div></section>
-        <details class="usage-card pricing-card"><summary><span><strong>View pricing details</strong><small>Official estimates, including formats and reference inputs.</small></span></summary><div id="usage-pricing" class="usage-pricing"></div></details>
+        <details class="usage-card pricing-card" open><summary><span><strong>View pricing details</strong><small>Official estimates, including formats and reference inputs.</small></span></summary><div id="usage-pricing" class="usage-pricing"></div></details>
       </section>
       <section id="history-view" class="view-content management-view hidden">
         <div class="management-head">

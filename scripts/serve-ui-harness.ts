@@ -47,6 +47,7 @@ type HarnessState = {
   guidedWaveCancelled: boolean;
   updateChannel: "stable" | "beta";
   downloadedUpdateVersion: string | null;
+  displayCurrency: "USD" | "PKR";
 };
 
 const harnessStates = new Map<string, HarnessState>();
@@ -56,7 +57,7 @@ function stateFor(request?: Request): HarnessState {
   const id = new URL(referer || "http://127.0.0.1/").searchParams.get("test-run") ?? "default";
   const existing = harnessStates.get(id);
   if (existing) return existing;
-  const state: HarnessState = { guidedWaveStarted: false, guidedWaveCancelled: false, updateChannel: "stable", downloadedUpdateVersion: null };
+  const state: HarnessState = { guidedWaveStarted: false, guidedWaveCancelled: false, updateChannel: "stable", downloadedUpdateVersion: null, displayCurrency: "USD" };
   harnessStates.set(id, state);
   return state;
 }
@@ -74,13 +75,13 @@ const updateState = (state: HarnessState) => ({
 });
 
 const mocks: Record<string, (params: any) => any> = {
-  getBootstrap: () => ({
+  getBootstrap: (_params: unknown, request?: Request) => ({
     brand: { appName: "BulkImg Studio", version: "1.0.9" },
     models: { defaultModel: "gpt-image-2", models: [{ id: "gpt-image-2", label: "GPT Image 2", enabled: true }] },
     keyCount: 1,
     platform: "win32-x64",
     fxRate: 278,
-    settings: { waveSize: APP_LIMITS.defaultWaveSize },
+    settings: { waveSize: APP_LIMITS.defaultWaveSize, firstWaveSize: 10, displayCurrency: stateFor(request).displayCurrency },
     admin: { configured: false, projectId: null, keyHint: null, rateLimits: null, lastError: null },
     adminWarning: "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works.",
     rateHeaderProbe: null,
@@ -109,8 +110,13 @@ const mocks: Record<string, (params: any) => any> = {
       batchPromptLimit: APP_LIMITS.batchPromptLimit,
     },
   }),
-  getSettings: () => ({ waveSize: APP_LIMITS.defaultWaveSize }),
-  setSettings: (partial: { waveSize?: number }) => ({ waveSize: partial.waveSize ?? APP_LIMITS.defaultWaveSize }),
+  getSettings: (_params: unknown, request?: Request) => ({ waveSize: APP_LIMITS.defaultWaveSize, firstWaveSize: 10, displayCurrency: stateFor(request).displayCurrency }),
+  setSettings: (partial: { waveSize?: number; displayCurrency?: "USD" | "PKR" }, request?: Request) => {
+    const state = stateFor(request);
+    if (partial.displayCurrency) state.displayCurrency = partial.displayCurrency;
+    return { waveSize: partial.waveSize ?? APP_LIMITS.defaultWaveSize, firstWaveSize: 10, displayCurrency: state.displayCurrency };
+  },
+  getFxRate: () => ({ rate: 278, source: "live" as const, cacheAgeSeconds: 0 }),
   getGeneratorDraft: () => null,
   saveGeneratorDraft: (draft: any) => ({ ...draft, updatedAt: new Date().toISOString() }),
   clearGeneratorDraft: () => ({ success: true }),
