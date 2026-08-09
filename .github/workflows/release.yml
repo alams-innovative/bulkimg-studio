@@ -50,6 +50,11 @@ jobs:
             "artifacts/release/bulkimg-update.json.sig"
           )
           $notesFile = "docs/releases/$env:GITHUB_REF_NAME.md"
-          $notes = if (Test-Path -LiteralPath $notesFile) { @("--notes-file", $notesFile) } else { @("--generate-notes") }
-          $pre = if ($env:CHANNEL -eq "beta") { @("--prerelease") } else { @() }
-          gh release create $env:GITHUB_REF_NAME @assets --title "BulkImg Studio $env:GITHUB_REF_NAME" @notes @pre
+          if ($env:CHANNEL -eq "beta") {
+            if (Test-Path -LiteralPath $notesFile) { gh release create $env:GITHUB_REF_NAME @assets --title "BulkImg Studio $env:GITHUB_REF_NAME" --notes-file $notesFile --prerelease }
+            else { gh release create $env:GITHUB_REF_NAME @assets --title "BulkImg Studio $env:GITHUB_REF_NAME" --generate-notes --prerelease }
+          } elseif (Test-Path -LiteralPath $notesFile) {
+            gh release create $env:GITHUB_REF_NAME @assets --title "BulkImg Studio $env:GITHUB_REF_NAME" --notes-file $notesFile
+          } else {
+            gh release create $env:GITHUB_REF_NAME @assets --title "BulkImg Studio $env:GITHUB_REF_NAME" --generate-notes
+          }
