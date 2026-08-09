@@ -2082,7 +2082,6 @@ function renderUsageSummary(summary: UsageSummary): void {
   // Mode-specific totals remain in the local ledger but no longer compete with
   // the calculator-first layout; detailed pricing is available on demand.
   elements.usageModeComparison.innerHTML = "";
-  enter(elements.usageSummaryGrid, 0, 4);
 }
 
 function renderUsageLimits(): void {
@@ -2154,7 +2153,6 @@ function renderPricing(): void {
       <small class="usage-limit-note">Reference image estimate: ${money(pricing.referenceInputEstimateUsd)} each direct · ${money(pricing.referenceInputEstimateUsd * pricing.batchDiscount)} each in Batch. Actual reference cost depends on the image input and is recorded after the run.</small>
     </div>
     <p class="usage-limit-note">Your selected prompt count, quality, size, and reference-image count are calculated automatically in the Generator. Batch totals already include the Batch rate.</p>`;
-  enter(elements.usagePricing, 0.08, 4);
 }
 
 async function loadUsage(): Promise<void> {
