@@ -196,13 +196,15 @@ if (updateConfig.publicKeyPem.trim()) void updateService.check();
 const ADMIN_WARNING = "No Admin API key — org rate limits (images/min, TPM) won’t show. Generation still works with your normal API keys.";
 
 async function logged<T>(event: string, fields: Record<string, unknown>, work: () => T | Promise<T>): Promise<T> {
+  const startedAt = performance.now();
   try {
     const result = await work();
-    void diagnosticLog.write(event, { ok: true, ...fields });
+    void diagnosticLog.write(event, { ok: true, durationMs: Math.round(performance.now() - startedAt), ...fields });
     return result;
   } catch (error) {
     void diagnosticLog.write(event, {
       ok: false,
+      durationMs: Math.round(performance.now() - startedAt),
       ...fields,
       message: error instanceof Error ? error.message.slice(0, 240) : "error",
     });

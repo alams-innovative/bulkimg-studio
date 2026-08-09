@@ -40,13 +40,11 @@
         <button id="nav-about" class="nav-item" data-view="about" title="About and updates"><i
             data-lucide="info"></i><span>About</span></button>
       </nav>
-      <div class="sidebar-spacer"></div>
       <button id="manage-keys" class="nav-item" title="API keys"><i data-lucide="key-round"></i><span>API keys</span><b
           id="key-count" class="hidden" hidden>0</b></button>
       <button id="theme-toggle" class="nav-item" title="Theme" aria-label="Switch to light theme"><i
           class="theme-icon-moon" data-lucide="moon"></i><i class="theme-icon-sun" data-lucide="sun"></i><span
           id="theme-label">Dark theme</span></button>
-      <div class="platform-pill"><span id="platform">Windows</span><span class="platform-meta">Local-first</span></div>
     </aside>
 
     <main class="app-main">
@@ -416,7 +414,6 @@
         </section>
         <section class="update-card panel" aria-labelledby="update-available-title">
           <div class="update-card-head"><div><h3 id="update-available-title">Available update</h3><p id="update-available-copy">Check GitHub Releases to see compatible updates.</p></div><span id="update-current-version" class="status-badge">—</span></div>
-          <div id="update-progress" class="update-progress hidden" hidden><div><span id="update-progress-label">Preparing download</span><strong id="update-progress-value">0%</strong></div><div><i id="update-progress-bar"></i></div></div>
           <div class="button-row"><button id="download-update" class="primary-button" type="button" disabled><i data-lucide="download"></i>Download update</button><button id="install-update" class="secondary-button" type="button" disabled><i data-lucide="package-open"></i>Install and restart</button></div>
         </section>
         <section class="update-card panel" aria-labelledby="update-history-title">

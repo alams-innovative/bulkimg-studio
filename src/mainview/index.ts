@@ -96,7 +96,6 @@ function byId<T extends HTMLElement>(id: string): T {
 const elements = {
   brandName: byId("brand-name"),
   brandVersion: byId("brand-version"),
-  platform: byId("platform"),
   keyCount: byId("key-count"),
   themeToggle: byId<HTMLButtonElement>("theme-toggle"),
   themeLabel: byId("theme-label"),
@@ -114,10 +113,6 @@ const elements = {
   receiveBetaUpdates: byId<HTMLInputElement>("receive-beta-updates"),
   updateCurrentVersion: byId("update-current-version"),
   updateAvailableCopy: byId("update-available-copy"),
-  updateProgress: byId("update-progress"),
-  updateProgressLabel: byId("update-progress-label"),
-  updateProgressValue: byId("update-progress-value"),
-  updateProgressBar: byId("update-progress-bar"),
   downloadUpdate: byId<HTMLButtonElement>("download-update"),
   installUpdate: byId<HTMLButtonElement>("install-update"),
   updateHistory: byId("update-history"),
@@ -2528,18 +2523,6 @@ function renderUpdateState(state: UpdateState): void {
     elements.updateAvailableCopy.textContent = state.releases.length ? "You are on the newest compatible release for this channel." : "Check GitHub Releases to see compatible updates.";
   }
 
-  const progress = state.progress;
-  const showProgress = Boolean(progress) || state.activity === "downloading";
-  setHidden(elements.updateProgress, !showProgress);
-  if (showProgress) {
-    const received = progress?.receivedBytes ?? 0;
-    const total = progress?.totalBytes ?? null;
-    const percent = total ? Math.min(100, Math.round((received / total) * 100)) : null;
-    elements.updateProgressLabel.textContent = total ? `${formatBytes(received)} of ${formatBytes(total)}` : "Downloading verified update…";
-    elements.updateProgressValue.textContent = percent === null ? "Working" : `${percent}%`;
-    elements.updateProgressBar.style.width = `${percent ?? 8}%`;
-  }
-
   elements.updateHistory.innerHTML = state.releases.length
     ? state.releases.map((release) => {
       const action = release.isCurrent ? "Installed" : release.available
@@ -2574,7 +2557,6 @@ async function checkForUpdates(): Promise<void> {
 async function downloadSelectedUpdate(version: string): Promise<void> {
   elements.downloadUpdate.disabled = true;
   elements.updateStatus.textContent = `Downloading and verifying v${version}…`;
-  setHidden(elements.updateProgress, false);
   try { renderUpdateState(await app.rpc!.request.downloadUpdate({ version })); }
   catch (error) { elements.updateStatus.textContent = error instanceof Error ? error.message : "Could not download the update."; }
 }
@@ -3010,7 +2992,6 @@ async function bootstrap(): Promise<void> {
   document.title = `${data.brand.appName} ${data.brand.version}`;
   elements.brandName.textContent = data.brand.appName;
   elements.brandVersion.textContent = data.brand.version;
-  elements.platform.textContent = data.platform;
   elements.keyCount.textContent = String(data.keyCount);
   activeKeyCount = data.keyCount;
   syncKeyCountBadge(data.keyCount);
