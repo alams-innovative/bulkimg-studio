@@ -310,7 +310,7 @@ const elements = {
   matrixPage: byId("matrix-page"),
   railEstimate: byId("rail-estimate"),
   railPkr: byId("rail-pkr"),
-  railEstimateDetail: byId("rail-estimate-detail"),
+  railEstimateLabel: byId("rail-estimate-label"),
   waveControls: byId("wave-controls"),
   waveStrategy: byId<HTMLSelectElement>("wave-strategy"),
   waveList: byId("wave-list"),
@@ -550,7 +550,7 @@ function syncEstimateChrome(count: number): void {
     elements.estimatedCost.textContent = "";
     elements.railEstimate.textContent = "";
     elements.railPkr.textContent = "";
-    elements.railEstimateDetail.textContent = "";
+    elements.railEstimateLabel.textContent = "Estimated cost";
   }
 }
 
@@ -1356,7 +1356,7 @@ async function refreshEstimate(): Promise<void> {
     elements.estimatedCost.textContent = `$${estimate.costUsd.toFixed(2)}`;
     elements.railEstimate.textContent = `$${estimate.costUsd.toFixed(3)}`;
     elements.railPkr.textContent = `PKR ${estimate.costPkr.toFixed(2)}`;
-    elements.railEstimateDetail.textContent = `${count} image${count === 1 ? "" : "s"} · ${referenceImages.length} reference${referenceImages.length === 1 ? "" : "s"} · ${currentMode() === "batch" ? "Batch rate" : "Direct rate"}`;
+    elements.railEstimateLabel.textContent = `${count} image${count === 1 ? "" : "s"} · ${referenceImages.length} ref · ${currentMode() === "batch" ? "Batch" : "Direct"}`;
     animateState(elements.railEstimate);
   } catch {
     setHidden(elements.estimatedCost, false);

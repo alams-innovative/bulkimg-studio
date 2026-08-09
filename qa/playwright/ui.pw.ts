@@ -31,7 +31,7 @@ test("usage page shows app-scoped totals, limits, modes, and pricing", async ({ 
   await expect(page.getByText("This app only — local requests, tokens, and calculated cost.")).toBeVisible();
   await expect(page.locator("#usage-summary-grid .usage-kpi")).toHaveCount(4);
   await expect(page.getByRole("heading", { name: "Direct vs Batch" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Pricing reference" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Estimated image cost" })).toBeVisible();
   await expect(page.getByText("Add an Admin key in API keys to load project limits. Generation keys still track this app’s usage.")).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
@@ -40,7 +40,7 @@ test("About keeps beta opt-in and verified update actions together", async ({ pa
   await page.getByRole("button", { name: "About" }).click();
   await expect(page.locator("#about-view").getByRole("heading", { name: "About & updates" })).toBeVisible();
   await expect(page.getByText("Beta releases are newer but can disrupt your workflow. Stable is recommended.")).toBeVisible();
-  await expect(page.getByText("v1.0.8 · Stable")).toBeVisible();
+  await expect(page.getByText("v1.0.8 · Stable", { exact: true })).toBeVisible();
   await page.getByLabel("Receive beta updates").check();
   await expect(page.getByText("v1.1.0-beta.1")).toBeVisible();
   await page.getByRole("button", { name: "Download update" }).click();
