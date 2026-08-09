@@ -347,8 +347,12 @@ export class UpdateService {
       "  $commandProcessor = [Environment]::GetEnvironmentVariable('ComSpec')",
       "  if (-not $commandProcessor -or -not (Test-Path -LiteralPath $commandProcessor)) { throw 'Windows Command Prompt (ComSpec) is unavailable.' }",
       "  Write-UpdateLog (\"Running Install-BulkImgStudio.cmd for \" + $name + \".\")",
-      "  $result = Start-Process -FilePath $commandProcessor -ArgumentList @('/d', '/c', $installer) -WorkingDirectory $extract -Wait -PassThru",
-      "  if ($result.ExitCode -ne 0) { throw \"Installer exited with code $($result.ExitCode).\" }",
+      // Invoke Command Prompt directly so PowerShell waits for the installer
+      // command, but not for the app process that the installer relaunches.
+      // Start-Process -Wait follows that child process tree on Windows, which
+      // made the helper wait indefinitely after a successful installation.
+      "  & $commandProcessor /d /c $installer",
+      "  if ($LASTEXITCODE -ne 0) { throw \"Installer exited with code $LASTEXITCODE.\" }",
       "  Write-UpdateLog (\"Install-BulkImgStudio.cmd completed for \" + $name + \".\")",
       "}",
       "Install-VerifiedArchive $zip 'target'",

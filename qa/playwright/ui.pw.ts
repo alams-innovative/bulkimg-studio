@@ -358,6 +358,39 @@ for (const viewport of [{ width: 1366, height: 768 }, { width: 1280, height: 720
   });
 }
 
+test("long error toast stays contained on a compact laptop window", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 540 });
+  await page.evaluate(() => {
+    const toast = document.querySelector<HTMLElement>("#toast");
+    const message = document.querySelector<HTMLElement>("#toast-message");
+    if (!toast || !message) throw new Error("Toast elements are unavailable.");
+    message.textContent = "The verified update was downloaded, but Windows could not finish the installer handoff. Open Logs for the exact diagnostic details, then try Install again.";
+    toast.hidden = false;
+    toast.classList.add("show", "error");
+  });
+  await expect(page.locator("body")).toHaveScreenshot("toast-compact-laptop.png", { animations: "disabled", maxDiffPixels: 10 });
+  const layout = await page.evaluate(() => {
+    const toast = document.querySelector<HTMLElement>("#toast")?.getBoundingClientRect();
+    const message = document.querySelector<HTMLElement>("#toast-message")?.getBoundingClientRect();
+    return {
+      clientWidth: document.documentElement.clientWidth,
+      scrollWidth: document.documentElement.scrollWidth,
+      viewportHeight: window.innerHeight,
+      toast: toast ? { left: toast.left, right: toast.right, top: toast.top, bottom: toast.bottom } : null,
+      message: message ? { left: message.left, right: message.right, top: message.top, bottom: message.bottom } : null,
+    };
+  });
+  expect(layout.scrollWidth, JSON.stringify(layout)).toBe(layout.clientWidth);
+  expect(layout.toast).not.toBeNull();
+  expect(layout.message).not.toBeNull();
+  expect(layout.toast!.left).toBeGreaterThanOrEqual(0);
+  expect(layout.toast!.right).toBeLessThanOrEqual(layout.clientWidth + 0.5);
+  expect(layout.toast!.top).toBeGreaterThanOrEqual(0);
+  expect(layout.toast!.bottom).toBeLessThanOrEqual(layout.viewportHeight + 0.5);
+  expect(layout.message!.left).toBeGreaterThanOrEqual(layout.toast!.left);
+  expect(layout.message!.right).toBeLessThanOrEqual(layout.toast!.right);
+});
+
 for (const viewport of [
   { width: 900, height: 540 },
   { width: 1024, height: 576 },

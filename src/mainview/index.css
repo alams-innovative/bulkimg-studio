@@ -2758,7 +2758,8 @@ button:disabled {
   .converter-result-head,.converter-job header { flex-direction:column }.converter-result-grid { grid-template-columns:repeat(auto-fill,minmax(140px,1fr)) }
 }
 
-@media(max-height:700px) {
+/* Compact laptop windows keep the controls in reach without scaling the app canvas. */
+@media(max-height:820px) {
   .topbar {
     padding-top: 10px;
     height: 64px
@@ -2792,7 +2793,7 @@ button:disabled {
   }
 
   .prompt-matrix {
-    height: 210px
+    height: clamp(210px, 30vh, 250px)
   }
 
   .reference-dock {
@@ -3717,11 +3718,14 @@ button.history-image:disabled {
 
 .toast {
   position: fixed;
-  right: 18px;
-  bottom: 18px;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
   z-index: 40;
-  max-width: min(380px, calc(100vw - 28px));
-  min-width: 220px;
+  width: min(380px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  min-width: min(220px, calc(100vw - 24px));
+  max-height: min(220px, calc(100vh - 24px));
+  box-sizing: border-box;
   padding: 0;
   overflow: hidden;
   border: 1px solid var(--border);
@@ -3750,6 +3754,9 @@ button.history-image:disabled {
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: start;
   gap: 8px;
+  max-height: calc(min(220px, calc(100vh - 24px)) - 3px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 10px 10px 10px 13px
 }
 
@@ -3759,7 +3766,9 @@ button.history-image:disabled {
   line-height: 1.4;
   color: var(--text);
   grid-column: 1;
-  grid-row: 1
+  grid-row: 1;
+  min-width: 0;
+  overflow-wrap: anywhere
 }
 
 .toast-timer {
@@ -3831,6 +3840,13 @@ button.history-image:disabled {
 
   .app-shell {
     transition: none
+  }
+}
+
+/* Keep transient notices above the pinned Generate rail on shorter laptop windows. */
+@media(max-height:820px) {
+  .toast {
+    bottom: max(112px, env(safe-area-inset-bottom))
   }
 }
 
