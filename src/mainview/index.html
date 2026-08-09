@@ -19,9 +19,9 @@
           <img class="brand-logo-light"
             src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
           <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
-              id="brand-version">1.1.0-beta.1</small></span>
+              id="brand-version">1.1.0-beta.2</small></span>
         </div>
-        <div class="sidebar-controls"><select id="currency-toggle" class="currency-toggle" aria-label="Display currency"><option value="USD">USD</option><option value="PKR">PKR</option></select><button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
+        <div class="sidebar-controls"><span class="currency-status" title="USD costs are automatically shown in Pakistani rupees using the State Bank of Pakistan rate">PKR · SBP</span><button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
           title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
         </div>
       </div>
@@ -148,13 +148,11 @@
             <div id="reference-control" class="reference-control" data-count="0">
               <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i
                   data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small
-                    id="reference-hint">Drop, Ctrl+V, or Win+V · up to 16 images · 50 MB each</small></span><b
+                    id="reference-hint">Drop or browse · up to 16 images · 50 MB each</small></span><b
                   id="reference-badge" class="hidden" hidden>0/16</b></button>
               <div class="reference-actions">
                 <button id="pick-reference" class="secondary-button" type="button"><i
                     data-lucide="folder-open"></i>Browse images</button>
-                <button id="paste-reference" class="secondary-button" type="button"
-                  title="Paste images from the Windows clipboard"><i data-lucide="clipboard-paste"></i>Paste</button>
               </div>
               <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
               <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images"

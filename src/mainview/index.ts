@@ -54,7 +54,6 @@ import type {
   ConverterOptions,
   ConverterRule,
   ConverterSourceImage,
-  DisplayCurrency,
   ExportSummary,
   GeneratorDraft,
   HistoryItem,
@@ -72,6 +71,7 @@ import type {
 } from "../shared/contracts";
 import type { UpdateState } from "../shared/update-contracts";
 import { APP_LIMITS } from "../shared/contracts";
+import { converterBatchSize, MAX_CONVERTER_QUEUE_ITEMS, splitConverterBatches } from "../shared/converter-batching";
 import { OUTPUT_FORMATS, type OutputFormatId } from "../shared/output-formats";
 
 const rpc = Electroview.defineRPC<AppRPC>({
@@ -180,7 +180,6 @@ const elements = {
   appShell: byId("app-shell"),
   sidebar: byId("sidebar"),
   sidebarToggle: byId<HTMLButtonElement>("sidebar-toggle"),
-  currencyToggle: byId<HTMLSelectElement>("currency-toggle"),
   waveSizeField: byId("wave-size-field"),
   toastMessage: byId("toast-message"),
   toastTimerLabel: byId("toast-timer"),
@@ -251,7 +250,6 @@ const elements = {
   editAdminKey: byId<HTMLButtonElement>("edit-admin-key"),
   cancelAdminEdit: byId<HTMLButtonElement>("cancel-admin-edit"),
   pasteCsv: byId<HTMLButtonElement>("paste-csv"),
-  pasteReference: byId<HTMLButtonElement>("paste-reference"),
   pickReference: byId<HTMLButtonElement>("pick-reference"),
   sessionStatus: byId("session-status"),
   sessionMessage: byId("session-message"),
@@ -350,7 +348,6 @@ const TOAST_MS_OK = 4200;
 const TOAST_MS_ERR = 7000;
 let logsLines: string[] = [];
 let logsSearchTimer: number | null = null;
-let displayCurrency: DisplayCurrency = "USD";
 let currentFxRate = 276.61;
 let historyItems: HistoryItem[] = [];
 let librarySessions = new Map<string, SessionSummary>();
@@ -362,7 +359,7 @@ try {
   if (Array.isArray(stored)) collapsedLibraryGroups = new Set(stored.filter((value): value is string => typeof value === "string"));
 } catch { /* local preference is optional */ }
 let historyImageObserver: IntersectionObserver | null = null;
-type ConverterQueueItem = { clientId: string; sourceKind: "session" | "upload" | "clipboard"; name: string; assetId?: string; dataBase64?: string; previewUrl?: string; format?: ConverterFormat };
+type ConverterQueueItem = { clientId: string; sourceKind: "session" | "upload" | "clipboard"; name: string; assetId?: string; dataBase64?: string; file?: File; previewUrl?: string; format?: ConverterFormat };
 let converterQueue: ConverterQueueItem[] = [];
 let converterRules: ConverterRule[] = [];
 let converterJobs: ConverterJob[] = [];
@@ -370,7 +367,7 @@ let converterSessionImages: ConverterSourceImage[] = [];
 let converterTab: "workspace" | "history" = "workspace";
 let converterSessionLayout: "cards" | "list" = "cards";
 let selectedConverterSessionAssets = new Set<string>();
-let clipboardHistoryTarget: "reference" | "converter" | null = null;
+let clipboardHistoryTarget: "converter" | null = null;
 let clipboardHistoryTargetExpiresAt = 0;
 let waveSizes: number[] = [];
 let lightboxItems: HistoryItem[] = [];
@@ -1132,10 +1129,14 @@ async function loadConverterSessionPreview(preview: HTMLElement): Promise<void> 
 
 function addSelectedConverterSessionImages(): void {
   const alreadyQueued = new Set(converterQueue.filter((item) => item.assetId).map((item) => item.assetId!));
+  let remaining = MAX_CONVERTER_QUEUE_ITEMS - converterQueue.length;
   for (const image of converterSessionImages) {
     if (!selectedConverterSessionAssets.has(image.assetId) || alreadyQueued.has(image.assetId)) continue;
+    if (remaining <= 0) break;
     converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "session", assetId: image.assetId, name: image.name });
+    remaining -= 1;
   }
+  if (remaining <= 0 && selectedConverterSessionAssets.size > 0) showToast(`The converter keeps up to ${MAX_CONVERTER_QUEUE_ITEMS.toLocaleString()} images in one plan.`, true);
   selectedConverterSessionAssets.clear();
   renderConverterSessionSources(); renderConverterQueue();
 }
@@ -1155,13 +1156,16 @@ async function loadConverterSessionSources(): Promise<void> {
 
 function renderConverterQueue(): void {
   const hasItems = converterQueue.length > 0;
+  const batchSize = converterBatchSize(navigator.hardwareConcurrency);
   elements.converterGrid.classList.toggle("has-queue", hasItems);
   elements.converterControls.classList.toggle("hidden", !hasItems);
   elements.converterControls.hidden = !hasItems;
   elements.converterQueueColumns.classList.toggle("hidden", !hasItems);
   elements.converterQueueColumns.hidden = !hasItems;
   elements.converterQueueTitle.textContent = hasItems ? "Conversion plan" : "Add more images";
-  elements.converterQueueSubtitle.textContent = hasItems ? "Set one format for all images, then override individual rows only where needed." : "Upload, drag and drop, or paste images when they are not in a session.";
+  elements.converterQueueSubtitle.textContent = hasItems
+    ? `${converterQueue.length.toLocaleString()} image${converterQueue.length === 1 ? "" : "s"} queued · converts in batches of up to ${batchSize} for this PC.`
+    : "Upload, drag and drop, or paste images when they are not in a session.";
   elements.converterRun.disabled = converterQueue.length === 0;
   if (!converterQueue.length) {
     elements.converterQueue.innerHTML = '<div class="empty-state"><i data-lucide="images"></i><strong>No images added</strong><small>Choose a source to start a local conversion.</small></div>';
@@ -1169,12 +1173,15 @@ function renderConverterQueue(): void {
     return;
   }
   const formats = ["png", "jpg", "webp", "avif", "tiff", "bmp"] as ConverterFormat[];
-  elements.converterQueue.innerHTML = converterQueue.map((item, index) => {
+  const visibleItems = converterQueue.slice(0, 100);
+  elements.converterQueue.innerHTML = visibleItems.map((item, index) => {
     const ordinal = index + 1;
     const effective = effectiveConverterFormat(item, ordinal);
     const preview = item.previewUrl ? `<img src="${escapeHtml(item.previewUrl)}" alt="" />` : `<span class="image-placeholder"><i data-lucide="image"></i></span>`;
     return `<div class="converter-queue-item" role="listitem" data-client-id="${item.clientId}"><div class="converter-thumb">${preview}</div><div><strong>${escapeHtml(item.name)}</strong><small>${item.sourceKind === "session" ? "From session" : item.sourceKind === "clipboard" ? "Pasted image" : "Uploaded image"} · Image ${ordinal}</small></div><label class="sr-only" for="converter-format-${item.clientId}">Output format for ${escapeHtml(item.name)}</label><select id="converter-format-${item.clientId}" class="converter-item-format" data-client-id="${item.clientId}"><option value="">Default (${converterDefaultFormat().toUpperCase()})</option>${formats.map((format) => `<option value="${format}"${item.format === format ? " selected" : ""}>${format.toUpperCase()}</option>`).join("")}</select><b>${effective.toUpperCase()}</b><button type="button" class="icon-button converter-source-properties" data-client-id="${item.clientId}" aria-label="Properties for ${escapeHtml(item.name)}"><i data-lucide="info"></i></button><button type="button" class="icon-button converter-remove-item" data-client-id="${item.clientId}" aria-label="Remove ${escapeHtml(item.name)}"><i data-lucide="x"></i></button></div>`;
-  }).join("");
+  }).join("") + (converterQueue.length > visibleItems.length
+    ? `<div class="converter-queue-summary" role="status">Showing the first ${visibleItems.length}. The remaining ${(converterQueue.length - visibleItems.length).toLocaleString()} images stay queued and will be converted automatically.</div>`
+    : "");
   elements.converterQueue.querySelectorAll<HTMLSelectElement>(".converter-item-format").forEach((select) => select.addEventListener("change", () => {
     const item = converterQueue.find((candidate) => candidate.clientId === select.dataset["clientId"]);
     if (!item) return;
@@ -1194,10 +1201,11 @@ function renderConverterQueue(): void {
 async function queueConverterFiles(files: File[], sourceKind: "upload" | "clipboard" = "upload"): Promise<void> {
   const usable = files.filter((file) => file.size > 0 && file.size <= 50 * 1024 * 1024);
   if (!usable.length) { showToast("Choose images up to 50 MB each.", true); return; }
-  for (const file of usable.slice(0, 100 - converterQueue.length)) {
-    const dataBase64 = await fileToBase64(file);
-    converterQueue.push({ clientId: crypto.randomUUID(), sourceKind, name: file.name || "image.png", dataBase64, previewUrl: URL.createObjectURL(file) });
+  const remaining = Math.max(0, MAX_CONVERTER_QUEUE_ITEMS - converterQueue.length);
+  for (const file of usable.slice(0, remaining)) {
+    converterQueue.push({ clientId: crypto.randomUUID(), sourceKind, name: file.name || "image.png", file, previewUrl: URL.createObjectURL(file) });
   }
+  if (usable.length > remaining) showToast(`The converter keeps up to ${MAX_CONVERTER_QUEUE_ITEMS.toLocaleString()} images in one plan. The rest were not added.`, true);
   renderConverterQueue();
 }
 
@@ -1277,9 +1285,7 @@ async function showConverterProperties(jobId: string, itemId: string): Promise<v
 async function showConverterSourceProperties(clientId: string): Promise<void> {
   const item = converterQueue.find((candidate) => candidate.clientId === clientId);
   if (!item) return;
-  const input: ConverterInput = item.sourceKind === "session"
-    ? { clientId: item.clientId, sourceKind: "session", assetId: item.assetId!, name: item.name }
-    : { clientId: item.clientId, sourceKind: item.sourceKind, name: item.name, dataBase64: item.dataBase64! };
+  const input = await converterInput(item);
   try {
     const properties = await app.rpc!.request.getConverterSourceProperties({ input });
     elements.converterPropertiesSubtitle.textContent = properties.name;
@@ -1287,6 +1293,13 @@ async function showConverterSourceProperties(clientId: string): Promise<void> {
     elements.converterPropertiesList.innerHTML = rows.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(value)}</dd></div>`).join("");
     elements.converterPropertiesDialog.showModal();
   } catch (error) { showToast(error instanceof Error ? error.message : "Could not read image properties.", true); }
+}
+
+async function converterInput(item: ConverterQueueItem): Promise<ConverterInput> {
+  if (item.sourceKind === "session") return { clientId: item.clientId, sourceKind: "session", assetId: item.assetId!, name: item.name };
+  const dataBase64 = item.dataBase64 ?? (item.file ? await fileToBase64(item.file) : "");
+  if (!dataBase64) throw new Error(`${item.name} is no longer available. Add it again before converting.`);
+  return { clientId: item.clientId, sourceKind: item.sourceKind, name: item.name, dataBase64 };
 }
 
 async function setView(view: "generator" | "converter" | "sessions" | "usage" | "history" | "exports" | "logs" | "about"): Promise<void> {
@@ -1814,8 +1827,8 @@ function renderReferenceImages(announcement?: string): void {
   elements.referenceDock.disabled = count >= limit;
   elements.referenceTitle.textContent = count === 0 ? "Add reference images" : count >= limit ? "References ready" : "Add another reference";
   elements.referenceHint.textContent = count === 0
-    ? `Drop, Ctrl+V, or Win+V · up to ${limit} images · 50 MB each`
-    : count >= limit ? "Remove an image to add another" : "Click, drop, Ctrl+V, or Win+V to add more";
+    ? `Drop or browse · up to ${limit} images · 50 MB each`
+    : count >= limit ? "Remove an image to add another" : "Click, browse, or drop to add more";
   elements.referenceBadge.textContent = `${count}/${limit}`;
   setHidden(elements.referenceBadge, count === 0);
   setHidden(elements.referenceList, count === 0);
@@ -1849,10 +1862,9 @@ function renderReferenceImages(announcement?: string): void {
   });
 }
 
-function setReferencePasteBusy(busy: boolean, label = "Uploading reference image…", hint = "Saving it to this run…"): void {
+function setReferenceUploadBusy(busy: boolean, label = "Uploading reference image…", hint = "Saving it to this run…"): void {
   elements.referenceControl.classList.toggle("uploading", busy);
   elements.referenceDock.toggleAttribute("aria-busy", busy);
-  elements.pasteReference.disabled = busy;
   elements.pickReference.disabled = busy;
   if (!busy) {
     renderReferenceImages();
@@ -1891,7 +1903,7 @@ async function attachReferenceFiles(files: File[], alreadyInFlight = false): Pro
   const accepted = nonEmpty.slice(0, remaining);
   if (nonEmpty.length > accepted.length) showToast("You can attach at most 16 reference images.", true);
   if (!alreadyInFlight) referencePasteInFlight = true;
-  setReferencePasteBusy(true, `Uploading ${accepted.length} reference image${accepted.length === 1 ? "" : "s"}…`);
+  setReferenceUploadBusy(true, `Uploading ${accepted.length} reference image${accepted.length === 1 ? "" : "s"}…`);
   let uploaded = 0;
   let skippedEmpty = files.length - nonEmpty.length;
   let skippedInvalid = 0;
@@ -1942,7 +1954,7 @@ async function attachReferenceFiles(files: File[], alreadyInFlight = false): Pro
     });
   } finally {
     if (!alreadyInFlight) referencePasteInFlight = false;
-    if (!referencePasteInFlight) setReferencePasteBusy(false);
+    if (!referencePasteInFlight) setReferenceUploadBusy(false);
   }
 }
 
@@ -2029,9 +2041,7 @@ function usageRangeBounds(value: string): { startAt: string | null; endAt: strin
 }
 
 function money(value: number, decimals = 3): string {
-  return displayCurrency === "PKR"
-    ? `PKR ${(value * currentFxRate).toFixed(2)}`
-    : `$${value.toFixed(decimals)}`;
+  return `PKR ${(value * currentFxRate).toFixed(2)} ($${value.toFixed(decimals)} USD)`;
 }
 
 async function refreshCalculator(): Promise<void> {
@@ -2062,7 +2072,6 @@ function syncCalculatorFromGenerator(): void {
 }
 
 function moneyWithRate(value: number, decimals = 3): string {
-  if (displayCurrency === "USD") return money(value, decimals);
   return `${money(value, decimals)} <small>$${value.toFixed(decimals)} USD · Rate: PKR ${currentFxRate.toFixed(2)}/USD</small>`;
 }
 
@@ -3060,8 +3069,6 @@ async function bootstrap(): Promise<void> {
   }
   if (data.settings) {
     elements.waveStrategy.value = data.settings.waveSize > 0 ? "guided" : "all";
-    displayCurrency = data.settings.displayCurrency;
-    elements.currencyToggle.value = displayCurrency;
   }
   currentFxRate = data.fxRate;
   elements.calculatorFormat.innerHTML = Object.values(OUTPUT_FORMATS).map((format) => `<option value="${format.id}">${format.label}</option>`).join("");
@@ -3214,12 +3221,36 @@ elements.converterRun.addEventListener("click", async () => {
   if (!converterQueue.length) return;
   elements.converterRun.disabled = true; elements.converterRun.setAttribute("aria-busy", "true");
   try {
-    const inputs: ConverterInput[] = converterQueue.map((item) => item.sourceKind === "session"
-      ? { clientId: item.clientId, sourceKind: "session", assetId: item.assetId!, name: item.name }
-      : { clientId: item.clientId, sourceKind: item.sourceKind, name: item.name, dataBase64: item.dataBase64! });
-    const job = await app.rpc!.request.convertImages({ inputs, options: converterOptions() });
-    converterJobs = [job, ...converterJobs.filter((candidate) => candidate.id !== job.id)];
+    const batches = splitConverterBatches(converterQueue, converterBatchSize(navigator.hardwareConcurrency));
+    const completedJobs: ConverterJob[] = [];
+    for (const [batchIndex, batch] of batches.entries()) {
+      const runLabel = elements.converterRun.querySelector("span");
+      if (runLabel) runLabel.textContent = `Converting batch ${batchIndex + 1} of ${batches.length}`;
+      const firstOrdinal = batchIndex * converterBatchSize(navigator.hardwareConcurrency);
+      const options = {
+        ...converterOptions(),
+        // Resolve rules before splitting so "every third image" stays true for
+        // the whole 1,000-image plan, not just each individual renderer batch.
+        overrides: Object.fromEntries(batch.map((item, index) => [item.clientId, effectiveConverterFormat(item, firstOrdinal + index + 1)])),
+      };
+      // Read one file at a time before sending this bounded batch to Bun. A
+      // large selection should not create a browser-side base64 memory spike.
+      const inputs: ConverterInput[] = [];
+      for (const item of batch) inputs.push(await converterInput(item));
+      const job = await app.rpc!.request.convertImages({ inputs, options });
+      completedJobs.push(job);
+      converterJobs = [job, ...converterJobs.filter((candidate) => candidate.id !== job.id)];
+    }
+    const job = completedJobs.at(-1)!;
     elements.converterResult.hidden = false; elements.converterResult.classList.remove("hidden");
+    if (completedJobs.length > 1) {
+      const completedCount = completedJobs.reduce((total, candidate) => total + candidate.completedCount, 0);
+      const totalCount = completedJobs.reduce((total, candidate) => total + candidate.totalCount, 0);
+      elements.converterResult.innerHTML = `<div class="converter-result-head"><div><h2>Batch conversion complete</h2><p>${completedCount} of ${totalCount} images are ready across ${completedJobs.length} batches. Each batch is saved separately so this PC stays responsive.</p></div><div class="button-row"><button id="converter-result-history" class="secondary-button" type="button">View history</button></div></div>`;
+      byId<HTMLButtonElement>("converter-result-history").addEventListener("click", () => { converterTab = "history"; renderConverterTab(); });
+      refreshIcons(); showToast(`${completedCount} images converted across ${completedJobs.length} batches.`);
+      return;
+    }
     elements.converterResult.innerHTML = `<div class="converter-result-head"><div><h2>Conversion complete</h2><p>${job.completedCount} of ${job.totalCount} images are ready. Copy or save whenever you want.</p></div><div class="button-row"><button id="converter-result-copy-files" class="secondary-button" type="button"><i data-lucide="copy"></i>Copy files</button><button id="converter-result-save-all" class="secondary-button" type="button"><i data-lucide="download"></i>Save all</button><button id="converter-result-history" class="secondary-button" type="button">View history</button></div></div><div class="converter-result-grid">${job.items.map((item) => `<div class="converter-output-card" data-job-id="${job.id}" data-item-id="${item.id}"><div class="converter-output-preview"><span class="image-placeholder"><i data-lucide="image"></i></span></div><strong>${escapeHtml(item.outputName ?? item.sourceName)}</strong><small>${item.format.toUpperCase()} · ${item.status}</small><div><button class="icon-button converter-copy-output" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Copy image"><i data-lucide="copy"></i></button><button class="icon-button converter-save-output" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Save image"><i data-lucide="download"></i></button><button class="icon-button converter-properties" type="button" data-job-id="${job.id}" data-item-id="${item.id}" aria-label="Image properties"><i data-lucide="info"></i></button></div></div>`).join("")}</div>`;
     wireConverterActions(elements.converterResult); elements.converterResult.querySelectorAll<HTMLElement>(".converter-output-card").forEach((card) => void loadConverterPreview(card));
     byId<HTMLButtonElement>("converter-result-copy-files").addEventListener("click", async () => { try { await app.rpc!.request.copyConverterFiles({ jobId: job.id, itemIds: job.items.filter((item) => item.status === "completed").map((item) => item.id) }); showToast("Converted files copied to clipboard."); } catch (error) { showToast(error instanceof Error ? error.message : "Could not copy files.", true); } });
@@ -3227,7 +3258,7 @@ elements.converterRun.addEventListener("click", async () => {
     byId<HTMLButtonElement>("converter-result-history").addEventListener("click", () => { converterTab = "history"; renderConverterTab(); });
     refreshIcons(); showToast(`${job.completedCount} image${job.completedCount === 1 ? "" : "s"} converted.`);
   } catch (error) { showToast(error instanceof Error ? error.message : "Could not convert images.", true); }
-  finally { elements.converterRun.disabled = converterQueue.length === 0; elements.converterRun.removeAttribute("aria-busy"); }
+  finally { const runLabel = elements.converterRun.querySelector("span"); if (runLabel) runLabel.textContent = "Convert"; elements.converterRun.disabled = converterQueue.length === 0; elements.converterRun.removeAttribute("aria-busy"); }
 });
 elements.csvTab.addEventListener("click", () => setTab("csv"));
 elements.manualTab.addEventListener("click", () => setTab("manual"));
@@ -3336,8 +3367,6 @@ elements.quality.addEventListener("change", () => { scheduleGeneratorDraftSave()
 elements.size.addEventListener("change", () => { scheduleGeneratorDraftSave(); void refreshEstimate(); });
 
 elements.referenceDock.addEventListener("click", () => elements.referenceFile.click());
-elements.referenceControl.addEventListener("pointerenter", () => armClipboardHistoryTarget("reference"));
-elements.referenceControl.addEventListener("focusin", () => armClipboardHistoryTarget("reference"));
 elements.referenceFile.addEventListener("change", () => {
   const files = [...(elements.referenceFile.files ?? [])];
   if (files.length) void attachReferenceFiles(files);
@@ -3392,24 +3421,17 @@ function updateLibrarySelection(): void {
   elements.librarySelection.textContent = count ? `${count} image${count === 1 ? "" : "s"} selected` : "No images selected";
 }
 
-function isReferencePasteTarget(): boolean {
-  const active = document.activeElement;
-  return (active instanceof Node && elements.referenceControl.contains(active))
-    || elements.referenceControl.matches(":hover")
-    || activeClipboardHistoryTarget() === "reference";
-}
-
 function isConverterPasteTarget(): boolean {
   return (document.querySelector("[data-view='converter']")?.classList.contains("active") ?? false)
     || activeClipboardHistoryTarget() === "converter";
 }
 
-function armClipboardHistoryTarget(target: "reference" | "converter"): void {
+function armClipboardHistoryTarget(target: "converter"): void {
   clipboardHistoryTarget = target;
   clipboardHistoryTargetExpiresAt = Date.now() + 30_000;
 }
 
-function activeClipboardHistoryTarget(): "reference" | "converter" | null {
+function activeClipboardHistoryTarget(): "converter" | null {
   if (Date.now() <= clipboardHistoryTargetExpiresAt) return clipboardHistoryTarget;
   clipboardHistoryTarget = null;
   return null;
@@ -3446,7 +3468,7 @@ async function imageFilesFromBrowserClipboard(maxCount: number): Promise<File[]>
 
 async function pasteConverterImages(via: string, transfer?: DataTransfer | null): Promise<void> {
   const startedAt = performance.now();
-  const remaining = Math.max(1, 100 - converterQueue.length);
+  const remaining = Math.max(1, MAX_CONVERTER_QUEUE_ITEMS - converterQueue.length);
   elements.converterPaste.disabled = true;
   logUi("ui_converter_paste_start", { via, remaining });
   try {
@@ -3468,7 +3490,7 @@ async function pasteConverterImages(via: string, transfer?: DataTransfer | null)
     }
     const result = await app.rpc!.request.readClipboardImages({ maxCount: remaining });
     if (result.error || !result.images.length) throw new Error(result.error || "Clipboard has no image.");
-    for (const image of result.images) converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "clipboard", name: image.filename || "clipboard.png", dataBase64: image.dataBase64, previewUrl: `data:${image.mimeType};base64,${image.dataBase64}` });
+    for (const image of result.images.slice(0, remaining)) converterQueue.push({ clientId: crypto.randomUUID(), sourceKind: "clipboard", name: image.filename || "clipboard.png", dataBase64: image.dataBase64, previewUrl: `data:${image.mimeType};base64,${image.dataBase64}` });
     renderConverterQueue();
     logUi("ui_converter_paste_native", { ok: true, via, found: result.images.length, durationMs: Math.round(performance.now() - startedAt) });
   } catch (error) {
@@ -3526,14 +3548,6 @@ window.addEventListener("paste", (event) => {
     if (isConverterPasteTarget()) {
       event.preventDefault();
       await pasteConverterImages("converter_ctrl_v", event.clipboardData);
-      return;
-    }
-    if (isReferencePasteTarget()) {
-      event.preventDefault();
-      const files = imageFilesFromTransfer(event.clipboardData);
-      logUi("ui_reference_paste_event", { found: files.length, via: "reference_hover_ctrl_v" });
-      if (files.length) await attachReferenceFiles(files);
-      else await pasteReferencesFromClipboard("reference_hover_ctrl_v");
       return;
     }
     if (!isCsvPasteTarget()) return;
@@ -3801,96 +3815,6 @@ elements.keysDialog.addEventListener("cancel", () => {
   adminEditingKey = false;
 });
 
-function base64PreviewUrl(dataBase64: string, mimeType: string): string {
-  try {
-    const binary = atob(dataBase64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-    return URL.createObjectURL(new Blob([bytes], { type: mimeType }));
-  } catch {
-    return `data:${mimeType};base64,${dataBase64}`;
-  }
-}
-
-async function pasteReferencesFromClipboard(via = "paste_button"): Promise<void> {
-  if (referencePasteInFlight) {
-    logUi("ui_reference_paste_ignored", { reason: "upload_in_progress", via });
-    return;
-  }
-  const startedAt = performance.now();
-  const remaining = referenceLimit() - referenceImages.length;
-  if (remaining <= 0) {
-    showToast("You can attach at most 16 reference images.", true);
-    return;
-  }
-  referencePasteInFlight = true;
-  setReferencePasteBusy(true, "Reading clipboard…", "Checking for reference images…");
-  logUi("ui_paste_images_start", { remaining, via });
-  try {
-    if (!app.rpc) throw new Error("App is not ready yet.");
-    try {
-      const files = await imageFilesFromBrowserClipboard(remaining);
-      if (files.length) {
-        logUi("ui_paste_images_browser", { found: files.length, via });
-        await attachReferenceFiles(files, true);
-        return;
-      }
-      logUi("ui_paste_images_browser", { found: 0, via });
-    } catch (error) {
-      logUi("ui_paste_images_browser", { ok: false, via, message: error instanceof Error ? error.message : "unavailable" });
-    }
-    const result = await app.rpc.request.readClipboardImages({ maxCount: remaining });
-    if (result.error || !result.images.length) {
-      showToast(result.error || "Clipboard has no image.", true);
-      logUi("ui_paste_images_native", { ok: false, error: result.error, via });
-      return;
-    }
-    let uploaded = 0;
-    setReferencePasteBusy(true, `Uploading ${result.images.length} reference image${result.images.length === 1 ? "" : "s"}…`);
-    for (const image of result.images) {
-      if (referenceImages.length >= referenceLimit()) break;
-      if (!image.dataBase64 || image.dataBase64.length < 8) continue;
-      try {
-        const upload = await app.rpc.request.uploadReferenceImage({
-          dataBase64: image.dataBase64,
-          filename: image.filename || `clipboard-${Date.now()}.png`,
-          mimeType: image.mimeType || "image/png",
-        });
-        referenceImages.push({
-          fileId: upload.fileId,
-          name: image.filename || "Pasted image",
-          previewUrl: base64PreviewUrl(image.dataBase64, image.mimeType || "image/png"),
-        });
-        uploaded += 1;
-      } catch (error) {
-        showToast(error instanceof Error ? error.message : "Could not upload pasted image.", true);
-        logUi("ui_reference_upload_error", {
-          name: image.filename,
-          message: error instanceof Error ? error.message : "error",
-        });
-      }
-    }
-    renderReferenceImages(uploaded
-      ? `${uploaded} reference image${uploaded === 1 ? "" : "s"} added. ${referenceImages.length} attached.`
-      : undefined);
-    if (uploaded) {
-      showToast(`${uploaded} reference image${uploaded === 1 ? "" : "s"} added.`);
-      void refreshEstimate();
-    } else {
-      showToast("Clipboard image was empty or could not be uploaded.", true);
-    }
-    logUi("ui_paste_images_native", { ok: uploaded > 0, uploaded, found: result.images.length, via, durationMs: Math.round(performance.now() - startedAt) });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not paste images.";
-    showToast(message, true);
-    logUi("ui_paste_images_native", { ok: false, message, via, durationMs: Math.round(performance.now() - startedAt) });
-  } finally {
-    referencePasteInFlight = false;
-    setReferencePasteBusy(false);
-  }
-}
-
-elements.pasteReference.addEventListener("click", () => void pasteReferencesFromClipboard("paste_button"));
 elements.pickReference.addEventListener("click", () => elements.referenceFile.click());
 
 elements.exportButton.addEventListener("click", async () => {
@@ -3930,12 +3854,6 @@ elements.previewSession.addEventListener("click", async () => {
 elements.refreshSessions.addEventListener("click", () => void loadSessions());
 elements.refreshUsage.addEventListener("click", () => void loadUsage());
 elements.usageRange.addEventListener("change", () => void loadUsage());
-elements.currencyToggle.addEventListener("change", async () => {
-  displayCurrency = elements.currencyToggle.value === "PKR" ? "PKR" : "USD";
-  try { await app.rpc!.request.setSettings({ displayCurrency }); logUi("currency_change", { currency: displayCurrency }); } catch { showToast("Could not save currency preference.", true); }
-  if (bootstrapData) { renderPricing(); await loadUsage(); }
-  syncCalculatorFromGenerator();
-});
 [elements.calculatorCount, elements.calculatorFormat, elements.calculatorQuality, elements.calculatorMode, elements.calculatorReferences].forEach((control) => control.addEventListener("input", () => void refreshCalculator()));
 [elements.calculatorFormat, elements.calculatorQuality, elements.calculatorMode].forEach((control) => control.addEventListener("change", () => void refreshCalculator()));
 elements.usageRefreshLimits.addEventListener("click", async () => {

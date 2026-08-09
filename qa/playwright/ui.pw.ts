@@ -32,7 +32,8 @@ test("usage page provides a calculator, observed-cost guidance, limits, and prog
   await expect(page.getByRole("heading", { name: "Calculator" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Your observed cost" })).toBeVisible();
   await expect(page.getByText("View pricing details", { exact: true })).toBeVisible();
-  await page.getByLabel("Display currency").selectOption("PKR");
+  await expect(page.getByText("PKR · SBP", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Display currency")).toHaveCount(0);
   await expect(page.locator("#calculator-result")).toContainText("PKR");
   await expect(page.getByText("Add an Admin key in API keys to load project limits. Generation keys still track this app’s usage.")).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
@@ -263,15 +264,15 @@ test("keeps image paste explicit to the reference section", async ({ page }) => 
   }, pixel.toString("base64"));
   await expect(page.locator(".reference-item")).toHaveCount(2);
 
-  await page.getByRole("button", { name: "Paste", exact: true }).click();
-  await expect(page.locator(".reference-item")).toHaveCount(4);
-  await expect(page.locator("#reference-badge")).toHaveText("4/16");
+  await expect(page.locator("#paste-reference")).toHaveCount(0);
+  await expect(page.locator("#reference-hint")).toContainText("Click, browse, or drop");
+  await expect(page.locator(".reference-item")).toHaveCount(2);
   await expect(page.locator("#reference-dock")).toBeEnabled();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   await page.getByRole("button", { name: "Remove brand portrait.png" }).click();
-  await expect(page.locator(".reference-item")).toHaveCount(3);
-  await expect(page.locator("#reference-badge")).toHaveText("3/16");
+  await expect(page.locator(".reference-item")).toHaveCount(1);
+  await expect(page.locator("#reference-badge")).toHaveText("1/16");
   await expect(page.locator("#reference-dock")).toBeEnabled();
 });
 
@@ -294,6 +295,15 @@ test("Converter keeps quick conversion simple and exposes per-image rules", asyn
   await expect(page.locator(".converter-queue-item").nth(2).locator("b")).toHaveText("AVIF");
   await expect(page.getByRole("button", { name: "Convert", exact: true })).toBeEnabled();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("Converter queues large selections in bounded batches", async ({ page }) => {
+  await page.getByRole("button", { name: "Converter" }).click();
+  const pixel = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+  await page.locator("#converter-file").setInputFiles(Array.from({ length: 101 }, (_, index) => ({ name: `large-plan-${index + 1}.png`, mimeType: "image/png", buffer: pixel })));
+  await expect(page.getByText("101 images queued", { exact: false })).toBeVisible();
+  await expect(page.getByText("remaining 1 images stay queued", { exact: false })).toBeVisible();
+  await expect(page.locator(".converter-queue-item")).toHaveCount(100);
 });
 
 for (const viewport of [{ width: 1440, height: 840 }, { width: 900, height: 640 }]) {

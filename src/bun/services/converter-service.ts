@@ -1,5 +1,6 @@
 import bmp from "bmp-js";
 import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { basename, extname, join, resolve } from "node:path";
 import sharp from "sharp";
 import type {
@@ -9,6 +10,7 @@ import type { AppDatabase } from "../database";
 import { copyFilesToClipboard, copyImageToClipboard, pickFolder } from "./windows-native";
 
 const MAX_IMAGE_BYTES = 50 * 1024 * 1024;
+const MAX_CONVERTER_WORKERS = 4;
 
 function safeName(value: string): string {
   const stem = basename(value, extname(value)).replace(/[<>:"/\\|?*\x00-\x1F]+/g, "-").trim();
@@ -92,20 +94,26 @@ export class ConverterService {
           sourcePath: item.sourcePath, format: item.format,
         })),
       });
-      for (const item of prepared) {
-        try {
-          const outputName = `${options.prefix ? `${safeName(options.prefix)}-` : ""}${String(item.ordinal).padStart(3, "0")}-${safeName(item.input.name)}.${extension(item.format)}`;
-          const outputPath = join(outputDirectory, outputName);
-          await this.convertOne(item.sourcePath, outputPath, item.format, options);
-          this.database.completeConverterItem(item.id, {
-            outputName,
-            outputPath,
-            properties: await this.properties(outputPath, outputName),
-          });
-        } catch (error) {
-          this.database.failConverterItem(item.id, error instanceof Error ? error.message : "Could not convert this image.");
+      const workers = Math.min(prepared.length, MAX_CONVERTER_WORKERS, Math.max(1, Math.floor(availableParallelism() / 2)));
+      let nextItem = 0;
+      await Promise.all(Array.from({ length: workers }, async () => {
+        while (nextItem < prepared.length) {
+          const item = prepared[nextItem++];
+          if (!item) break;
+          try {
+            const outputName = `${options.prefix ? `${safeName(options.prefix)}-` : ""}${String(item.ordinal).padStart(3, "0")}-${safeName(item.input.name)}.${extension(item.format)}`;
+            const outputPath = join(outputDirectory, outputName);
+            await this.convertOne(item.sourcePath, outputPath, item.format, options);
+            this.database.completeConverterItem(item.id, {
+              outputName,
+              outputPath,
+              properties: await this.properties(outputPath, outputName),
+            });
+          } catch (error) {
+            this.database.failConverterItem(item.id, error instanceof Error ? error.message : "Could not convert this image.");
+          }
         }
-      }
+      }));
       this.database.finishConverterJob(jobId);
       const job = this.database.listConverterJobs().find((candidate) => candidate.id === jobId);
       if (!job) throw new Error("Converter job was not saved.");
