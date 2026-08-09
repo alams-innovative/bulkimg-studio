@@ -15,10 +15,10 @@ export class FxService {
       return cached.rate;
     }
     try {
-      const response = await fetch("https://open.er-api.com/v6/latest/USD", { signal: AbortSignal.timeout(6000) });
+      const response = await fetch("https://api.frankfurter.dev/v2/rate/USD/PKR?providers=SBP", { signal: AbortSignal.timeout(6000) });
       if (!response.ok) throw new Error(`FX API returned ${response.status}`);
-      const payload = await response.json() as { rates?: { PKR?: number } };
-      const rate = payload.rates?.PKR;
+      const payload = await response.json() as { rate?: number };
+      const rate = payload.rate;
       if (!rate || !Number.isFinite(rate)) throw new Error("FX API response has no PKR rate");
       this.database.setCachedFx(rate);
       this.state = { source: "live", cacheAgeSeconds: 0 };

@@ -19,7 +19,8 @@ if (process.platform !== "win32") {
 }
 
 const projectRoot = resolve(import.meta.dir, "..");
-const buildDir = join(projectRoot, "build", `${channel}-win-x64`);
+const buildEnvironment = "stable";
+const buildDir = join(projectRoot, "build", `${buildEnvironment}-win-x64`);
 if (!existsSync(buildDir)) {
   throw new Error(
     `The ${channel} build directory does not exist. Run bun run build${channel === "beta" ? ":beta" : ""} first.`,
@@ -46,7 +47,7 @@ if (!localAppData) {
   throw new Error("LOCALAPPDATA is not set.");
 }
 
-const appDir = join(localAppData, "com.bulkimg.studio", channel, "app");
+const appDir = join(localAppData, "com.bulkimg.studio", buildEnvironment, "app");
 const stagingDir = mkdtempSync(join(tmpdir(), `bulkimg-${channel}-installer-`));
 const installerDataDir = join(stagingDir, ".installer");
 const stagedSetup = join(stagingDir, setupExeName);
@@ -55,7 +56,7 @@ const launcherCandidates = [
   join(appDir, "bin", "launcher"),
 ];
 
-const processFilter = `*\\com.bulkimg.studio\\${channel}\\*`;
+const processFilter = `*\\com.bulkimg.studio\\${buildEnvironment}\\*`;
 const stopInstalled = Bun.spawnSync([
   "powershell.exe",
   "-NoProfile",

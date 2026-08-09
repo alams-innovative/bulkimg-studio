@@ -42,6 +42,7 @@ export type PromptMatrix = {
 
 export type RunMode = "batch" | "direct";
 export type QualityTier = "low" | "medium" | "high";
+export type DisplayCurrency = "USD" | "PKR";
 
 /**
  * The local, unsubmitted Generator workspace. References deliberately do not
@@ -101,6 +102,7 @@ export type SubmitRunInput = {
 export type AppSettings = {
   waveSize: number;
   firstWaveSize: number;
+  displayCurrency: DisplayCurrency;
 };
 
 export type RateLimitSnapshot = {
@@ -166,6 +168,13 @@ export type CostEstimate = {
   fxRate: number;
   pricingVersion: string;
   isEstimate: true;
+};
+
+export type ObservedCost = {
+  sampleSize: number;
+  averageUsd: number | null;
+  lowUsd: number | null;
+  highUsd: number | null;
 };
 
 export type ImageTokenUsage = {
@@ -484,6 +493,10 @@ export type AppRPC = {
       getUsageSummary: {
         params: { startAt?: string | null; endAt?: string | null };
         response: UsageSummary;
+      };
+      getObservedCost: {
+        params: { mode: RunMode; format: OutputFormatId; quality: QualityTier; referenceCount: number };
+        response: ObservedCost;
       };
       uploadReferenceImage: {
         params: { dataBase64: string; filename: string; mimeType: string };

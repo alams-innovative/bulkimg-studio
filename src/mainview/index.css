@@ -458,6 +458,22 @@ svg {
 
 /* Keep each page in its own scroll area; wide Usage content may scroll horizontally without clipping the view. */
 .management-view { min-width: 0; min-height: 0; max-height: 100%; overflow: auto; overscroll-behavior: contain }
+
+/* Beta 1.1: calculator-first usage page and quieter sidebar controls. */
+.sidebar-controls { display:flex; align-items:center; gap:6px }
+.currency-toggle { width:56px; min-height:30px; padding:0 6px; font-size:11px; font-weight:700 }
+.calculator-card { display:grid; gap:16px }
+.calculator-inputs { display:grid; grid-template-columns:repeat(5,minmax(110px,1fr)); gap:10px }
+.calculator-inputs label { display:grid; gap:5px; color:var(--text3); font-size:11px; font-weight:700 }
+.calculator-inputs input,.calculator-inputs select { width:100%; min-height:34px }
+.calculator-result { display:grid; gap:6px; padding:15px; border-radius:var(--r1); background:var(--muted); border:1px solid var(--subtle) }
+.calculator-result > strong { font-size:18px; line-height:1.45 }.calculator-result strong small { display:block; font-size:11px; font-weight:500; color:var(--text3) }
+.calculator-result > small,.usage-observed small { color:var(--text3) }
+.usage-observed { display:grid; gap:7px; min-height:42px }.usage-observed strong { font-size:14px }
+.pricing-card { display:grid; gap:12px }.pricing-card summary { display:flex; cursor:pointer; list-style:none }.pricing-card summary::-webkit-details-marker { display:none }.pricing-card summary span { display:grid; gap:3px }.pricing-card summary small { color:var(--text3) }
+.about-footer { margin-top:auto; padding:18px 0 4px; color:var(--text3); font-size:12px }
+@media (max-width: 900px) { .calculator-inputs { grid-template-columns:repeat(2,minmax(0,1fr)) } }
+@media (max-width: 520px) { .calculator-inputs { grid-template-columns:1fr } }
 .usage-columns,
 .usage-pricing { min-width: 0 }
 .usage-pricing { overflow-x: auto; padding-bottom: 4px }

@@ -3,7 +3,7 @@ import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
   ApiKeyStats, AppSettings, ConverterJob, ConverterJobItem, ConverterOptions, ConverterSourceImage, GeneratorDraft, GeneratorDraftInput, HistoryItem, OutputFormatId, PromptStatus, QualityTier, RateLimitSnapshot,
-  RunMode, RunPhase, RunSummary, SanitizedProviderError, SessionPromptOutcome, SessionStatus,
+  ObservedCost, RunMode, RunPhase, RunSummary, SanitizedProviderError, SessionPromptOutcome, SessionStatus,
   SessionSummary, SessionTelemetry, SubmitRunInput, UsageSummary, UsageTotals,
 } from "../shared/contracts";
 import { APP_LIMITS } from "../shared/contracts";
@@ -377,9 +377,11 @@ export class AppDatabase {
   getAppSettings(): AppSettings {
     const waveSize = Number(this.getSetting("wave_size", String(APP_LIMITS.defaultWaveSize)));
     const firstWaveSize = Number(this.getSetting("first_wave_size", "10"));
+    const displayCurrency = this.getSetting("display_currency", "USD");
     return {
       waveSize: Number.isFinite(waveSize) ? Math.max(0, Math.floor(waveSize)) : APP_LIMITS.defaultWaveSize,
       firstWaveSize: Number.isFinite(firstWaveSize) ? Math.max(1, Math.min(APP_LIMITS.batchPromptLimit, Math.floor(firstWaveSize))) : 10,
+      displayCurrency: displayCurrency === "PKR" ? "PKR" : "USD",
     };
   }
 
@@ -396,6 +398,7 @@ export class AppDatabase {
       }
       this.setSetting("first_wave_size", String(partial.firstWaveSize));
     }
+    if (partial.displayCurrency !== undefined) this.setSetting("display_currency", partial.displayCurrency);
     return this.getAppSettings();
   }
 
@@ -1365,6 +1368,23 @@ export class AppDatabase {
       direct: directTotals,
       batch: batchTotals,
     };
+  }
+
+  getObservedCost(input: { mode: RunMode; format: OutputFormatId; quality: QualityTier; referenceCount: number }): ObservedCost {
+    const rows = this.db.query<{ cost_usd: number }, [RunMode, OutputFormatId, QualityTier, number]>(`
+      SELECT p.cost_usd
+      FROM session_prompts p
+      JOIN batch_sessions s ON s.session_id = p.session_id
+      WHERE p.status = 'completed' AND p.cost_usd > 0
+        AND s.run_mode = ? AND s.output_format = ? AND s.quality = ?
+        AND (SELECT COUNT(*) FROM session_reference_files r WHERE r.session_id = s.session_id) = ?
+      ORDER BY p.completed_at DESC LIMIT 250
+    `).all(input.mode, input.format, input.quality, input.referenceCount);
+    if (rows.length < 3) return { sampleSize: rows.length, averageUsd: null, lowUsd: null, highUsd: null };
+    const values = rows.map((row) => Number(row.cost_usd)).filter(Number.isFinite).sort((a, b) => a - b);
+    const averageUsd = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const percentile = (fraction: number) => values[Math.min(values.length - 1, Math.round((values.length - 1) * fraction))]!;
+    return { sampleSize: values.length, averageUsd, lowUsd: percentile(0.1), highUsd: percentile(0.9) };
   }
 
   isSessionCancelled(sessionId: string): boolean {

@@ -54,6 +54,7 @@ import type {
   ConverterOptions,
   ConverterRule,
   ConverterSourceImage,
+  DisplayCurrency,
   ExportSummary,
   GeneratorDraft,
   HistoryItem,
@@ -166,6 +167,8 @@ const elements = {
   copyLogs: byId<HTMLButtonElement>("copy-logs"),
   openLogsFolder: byId<HTMLButtonElement>("open-logs-folder"),
   logsEvent: byId<HTMLSelectElement>("logs-event"),
+  logsRange: byId<HTMLSelectElement>("logs-range"),
+  logsOutcome: byId<HTMLSelectElement>("logs-outcome"),
   logsSearch: byId<HTMLInputElement>("logs-search"),
   logsCount: byId("logs-count"),
   logsList: byId("logs-list"),
@@ -178,6 +181,7 @@ const elements = {
   appShell: byId("app-shell"),
   sidebar: byId("sidebar"),
   sidebarToggle: byId<HTMLButtonElement>("sidebar-toggle"),
+  currencyToggle: byId<HTMLSelectElement>("currency-toggle"),
   waveSizeField: byId("wave-size-field"),
   toastMessage: byId("toast-message"),
   toastTimerLabel: byId("toast-timer"),
@@ -273,6 +277,13 @@ const elements = {
   usageOpenKeys: byId<HTMLButtonElement>("usage-open-keys"),
   usagePricingMeta: byId("usage-pricing-meta"),
   usagePricing: byId("usage-pricing"),
+  calculatorCount: byId<HTMLInputElement>("calculator-count"),
+  calculatorFormat: byId<HTMLSelectElement>("calculator-format"),
+  calculatorQuality: byId<HTMLSelectElement>("calculator-quality"),
+  calculatorMode: byId<HTMLSelectElement>("calculator-mode"),
+  calculatorReferences: byId<HTMLInputElement>("calculator-references"),
+  calculatorResult: byId("calculator-result"),
+  usageObserved: byId("usage-observed"),
   refreshHistory: byId<HTMLButtonElement>("refresh-history"),
   clearHistory: byId<HTMLButtonElement>("clear-history"),
   libraryDownloadSelected: byId<HTMLButtonElement>("library-download-selected"),
@@ -340,6 +351,8 @@ const TOAST_MS_OK = 4200;
 const TOAST_MS_ERR = 7000;
 let logsLines: string[] = [];
 let logsSearchTimer: number | null = null;
+let displayCurrency: DisplayCurrency = "USD";
+let currentFxRate = 276.61;
 let historyItems: HistoryItem[] = [];
 let librarySessions = new Map<string, SessionSummary>();
 let libraryRuns = new Map<string, RunSummary>();
@@ -959,7 +972,13 @@ function formatDate(value: string | null): string {
   if (!value) return "Never";
   const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value.replace(" ", "T")}Z`;
   const date = new Date(normalized);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+  if (Number.isNaN(date.getTime())) return value;
+  const now = new Date();
+  const day = (candidate: Date) => new Date(candidate.getFullYear(), candidate.getMonth(), candidate.getDate()).getTime();
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (day(date) === day(now)) return `Today, ${time}`;
+  if (day(date) === day(new Date(now.getTime() - 86_400_000))) return `Yesterday, ${time}`;
+  return date.toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }) + `, ${time}`;
 }
 
 function formatEta(ms: number | null | undefined): string {
@@ -1322,6 +1341,7 @@ function updateSelection(): void {
   elements.selectedCount.textContent = String(count);
   if (previousCount !== String(count)) animateState(elements.selectedCount);
   updateWaveUi();
+  if (bootstrapData) syncCalculatorFromGenerator();
   syncEstimateChrome(count);
   syncActionState();
   if (estimateTimer !== null) window.clearTimeout(estimateTimer);
@@ -2010,7 +2030,41 @@ function usageRangeBounds(value: string): { startAt: string | null; endAt: strin
 }
 
 function money(value: number, decimals = 3): string {
-  return `$${value.toFixed(decimals)}`;
+  return displayCurrency === "PKR"
+    ? `PKR ${(value * currentFxRate).toFixed(2)}`
+    : `$${value.toFixed(decimals)}`;
+}
+
+async function refreshCalculator(): Promise<void> {
+  const promptCount = Math.max(1, Math.min(365, Number(elements.calculatorCount.value) || 1));
+  const referenceCount = Math.max(0, Math.min(appLimits.maxReferences, Number(elements.calculatorReferences.value) || 0));
+  try {
+    const input = { model: elements.model.value || "gpt-image-2", promptCount, mode: elements.calculatorMode.value as RunMode, quality: elements.calculatorQuality.value as "low" | "medium" | "high", format: elements.calculatorFormat.value as OutputFormatId, referenceCount };
+    const [estimate, observed] = await Promise.all([app.rpc!.request.estimateRunCost(input), app.rpc!.request.getObservedCost({ mode: input.mode, format: input.format, quality: input.quality, referenceCount })]);
+    currentFxRate = estimate.fxRate;
+    const label = `${promptCount} image${promptCount === 1 ? "" : "s"} · ${input.quality[0]!.toUpperCase()}${input.quality.slice(1)} · ${OUTPUT_FORMATS[input.format].label} · ${referenceCount} reference image${referenceCount === 1 ? "" : "s"}`;
+    elements.calculatorResult.innerHTML = `<span>${escapeHtml(label)}</span><strong>Estimated ${input.mode === "batch" ? "Batch" : "Direct"} cost<br>${moneyWithRate(estimate.costUsd)}</strong><small>References: ${referenceCount} included · estimated reference input ${money(estimate.costUsd - (pricingView?.imageEstimatesUsd[input.format][input.quality] ?? 0) * promptCount * (input.mode === "batch" ? 0.5 : 1))} total<br>Rate updated ${formatDate(new Date().toISOString())} · State Bank of Pakistan daily bank rate</small>`;
+    const observedCost = observed ?? { sampleSize: 0, averageUsd: null, lowUsd: null, highUsd: null };
+    if (observedCost.averageUsd == null) {
+      elements.usageObserved.innerHTML = `<p class="usage-limit-empty">Not enough matching completed images yet (${observedCost.sampleSize}/3). We only compare runs with the same mode, format, quality, and reference count so the estimate stays honest.</p>`;
+    } else {
+      elements.usageObserved.innerHTML = `<strong>Observed cost from ${observedCost.sampleSize} similar completed images</strong><div>Average: ${money(observedCost.averageUsd)}/image · Typical range: ${money(observedCost.lowUsd!)}–${money(observedCost.highUsd!)}</div><small>This plan: approximately ${money(observedCost.lowUsd! * promptCount)}–${money(observedCost.highUsd! * promptCount)}</small>`;
+    }
+  } catch (error) { elements.calculatorResult.textContent = error instanceof Error ? error.message : "Could not calculate this estimate."; }
+}
+
+function syncCalculatorFromGenerator(): void {
+  elements.calculatorCount.value = String(Math.max(1, selected.size));
+  elements.calculatorFormat.value = elements.size.value;
+  elements.calculatorQuality.value = elements.quality.value;
+  elements.calculatorMode.value = currentMode();
+  elements.calculatorReferences.value = String(referenceImages.length);
+  void refreshCalculator();
+}
+
+function moneyWithRate(value: number, decimals = 3): string {
+  if (displayCurrency === "USD") return money(value, decimals);
+  return `${money(value, decimals)} <small>$${value.toFixed(decimals)} USD · Rate: PKR ${currentFxRate.toFixed(2)}/USD</small>`;
 }
 
 function usageKpi(label: string, value: string, detail: string): string {
@@ -2129,6 +2183,7 @@ async function loadUsage(): Promise<void> {
     ]);
     bootstrapData = latestBootstrap;
     pricingView = latestBootstrap.pricing;
+    currentFxRate = latestBootstrap.fxRate;
     renderUsageSummary(summary);
     renderUsageLimits();
     renderPricing();
@@ -2472,7 +2527,16 @@ async function loadLogs(): Promise<void> {
       .concat(result.events.map((event) => `<option value="${escapeHtml(event)}">${escapeHtml(event)}</option>`));
     elements.logsEvent.innerHTML = options.join("");
     if (selectedEvent && result.events.includes(selectedEvent)) elements.logsEvent.value = selectedEvent;
-    renderLogLines(result.lines);
+    const now = Date.now();
+    const rangeMs = elements.logsRange.value === "today" ? new Date().setHours(0, 0, 0, 0) : elements.logsRange.value === "7d" ? now - 7 * 86_400_000 : elements.logsRange.value === "30d" ? now - 30 * 86_400_000 : 0;
+    const filtered = result.lines.filter((line) => {
+      const entry = parseLogLine(line);
+      if (rangeMs && (!entry?.at || Number(new Date(String(entry.at))) < rangeMs)) return false;
+      if (elements.logsOutcome.value === "success" && entry?.ok !== true) return false;
+      if (elements.logsOutcome.value === "failure" && !isErrorLogLine(line, entry)) return false;
+      return true;
+    });
+    renderLogLines(filtered);
     elements.logsPath.textContent = result.path;
     elements.logsPath.title = result.path;
   } catch (error) {
@@ -3012,7 +3076,12 @@ async function bootstrap(): Promise<void> {
   }
   if (data.settings) {
     elements.waveStrategy.value = data.settings.waveSize > 0 ? "guided" : "all";
+    displayCurrency = data.settings.displayCurrency;
+    elements.currencyToggle.value = displayCurrency;
   }
+  currentFxRate = data.fxRate;
+  elements.calculatorFormat.innerHTML = Object.values(OUTPUT_FORMATS).map((format) => `<option value="${format.id}">${format.label}</option>`).join("");
+  syncCalculatorFromGenerator();
   if (data.admin) applyAdminView(data.admin);
   else if (data.adminWarning) {
     elements.rateLimitsLine.textContent = "Org limits optional — Admin key in API keys.";
@@ -3877,6 +3946,14 @@ elements.previewSession.addEventListener("click", async () => {
 elements.refreshSessions.addEventListener("click", () => void loadSessions());
 elements.refreshUsage.addEventListener("click", () => void loadUsage());
 elements.usageRange.addEventListener("change", () => void loadUsage());
+elements.currencyToggle.addEventListener("change", async () => {
+  displayCurrency = elements.currencyToggle.value === "PKR" ? "PKR" : "USD";
+  try { await app.rpc!.request.setSettings({ displayCurrency }); logUi("currency_change", { currency: displayCurrency }); } catch { showToast("Could not save currency preference.", true); }
+  if (bootstrapData) { renderPricing(); await loadUsage(); }
+  syncCalculatorFromGenerator();
+});
+[elements.calculatorCount, elements.calculatorFormat, elements.calculatorQuality, elements.calculatorMode, elements.calculatorReferences].forEach((control) => control.addEventListener("input", () => void refreshCalculator()));
+[elements.calculatorFormat, elements.calculatorQuality, elements.calculatorMode].forEach((control) => control.addEventListener("change", () => void refreshCalculator()));
 elements.usageRefreshLimits.addEventListener("click", async () => {
   elements.usageRefreshLimits.disabled = true;
   try {
@@ -3892,6 +3969,8 @@ elements.usageRefreshLimits.addEventListener("click", async () => {
   }
 });
 elements.usageOpenKeys.addEventListener("click", () => elements.manageKeys.click());
+elements.logsRange.addEventListener("change", () => void loadLogs());
+elements.logsOutcome.addEventListener("change", () => void loadLogs());
 elements.refreshHistory.addEventListener("click", () => void loadHistory());
 elements.historySearch.addEventListener("input", () => renderHistory(false));
 elements.historyFilter.addEventListener("change", () => renderHistory(false));

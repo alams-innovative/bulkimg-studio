@@ -141,4 +141,21 @@ describe("database migrations and job state", () => {
     expect(summary.total).toMatchObject({ requestCount: 3, completedCount: 2, failedCount: 1, inputTokens: 400, outputTokens: 600, costUsd: 0.03 });
     database.db.close();
   });
+
+  test("persists the display currency and only observes genuinely comparable completed images", () => {
+    const directory = mkdtempSync(join(tmpdir(), "bulkimg-observed-cost-test-"));
+    temporaryDirectories.push(directory);
+    const database = new AppDatabase(directory);
+    expect(database.getAppSettings().displayCurrency).toBe("USD");
+    database.setAppSettings({ displayCurrency: "PKR" });
+    expect(database.getAppSettings().displayCurrency).toBe("PKR");
+    for (const [id, quality, cost] of [["matching-1", "medium", 0.03], ["matching-2", "medium", 0.04], ["matching-3", "medium", 0.05], ["different-quality", "high", 0.9]] as const) {
+      database.createSession(id, { ...input("batch"), quality }, 280);
+      const prompt = database.getSessionPrompts(id)[0]!;
+      database.completePrompt(prompt.prompt_id, { inputTokens: 10, outputTokens: 20, costUsd: cost });
+    }
+    expect(database.getObservedCost({ mode: "batch", format: "square", quality: "medium", referenceCount: 0 })).toMatchObject({ sampleSize: 3, averageUsd: 0.04, lowUsd: 0.03, highUsd: 0.05 });
+    expect(database.getObservedCost({ mode: "direct", format: "square", quality: "medium", referenceCount: 0 })).toMatchObject({ sampleSize: 0, averageUsd: null });
+    database.db.close();
+  });
 });

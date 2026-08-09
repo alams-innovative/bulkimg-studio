@@ -17,8 +17,11 @@ if (channel !== "stable" && channel !== "beta") {
   throw new Error(`Unsupported release channel: ${channel}. Use stable or beta.`);
 }
 const projectRoot = resolve(import.meta.dir, "..");
+// Beta is a release-discovery preference, not a second local app: it replaces
+// the stable installation selected by the verified update helper.
+const buildEnvironment = "stable";
 const platformName = `${channel}-win-x64`;
-const buildDir = join(projectRoot, "build", platformName);
+const buildDir = join(projectRoot, "build", `${buildEnvironment}-win-x64`);
 const artifactsDir = join(projectRoot, "artifacts");
 const iconPath = join(projectRoot, "assets", "brand", "app_icon.ico");
 const zstdPath = join(projectRoot, "node_modules", "electrobun", "dist-win-x64", "zig-zstd.exe");
@@ -138,7 +141,7 @@ try {
     join(zipStaging, "Install-BulkImgStudio.ps1"),
     [
       "$ErrorActionPreference = 'Stop'",
-      `$channel = '${channel}'`,
+      `$channel = '${buildEnvironment}'`,
       "$root = Split-Path -Parent $MyInvocation.MyCommand.Path",
       "$setup = Get-ChildItem -LiteralPath $root -Filter '*-Setup.exe' | Select-Object -First 1",
       "if (-not $setup) { throw 'The Electrobun setup executable was not found.' }",

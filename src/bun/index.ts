@@ -26,7 +26,7 @@ if (process.platform !== "win32") {
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.0.9",
+  version: "1.1.0-beta.1",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -243,6 +243,7 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         };
       },
       getUsageSummary: ({ startAt, endAt }) => database.getUsageSummary({ startAt, endAt }),
+      getObservedCost: (input) => database.getObservedCost(input),
       getSettings: () => database.getAppSettings(),
       setSettings: (partial) => logged("settings_update", { keys: Object.keys(partial) }, () => database.setAppSettings(partial)),
       importCSV: ({ csvText, sourceName }) => logged("import_csv", {
@@ -303,7 +304,9 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       resumeRun: (params) => batchEngine.resumeRun(params),
       continueRun: ({ runId }) => batchEngine.continueRun(runId),
       cancelRemainingWaves: ({ runId }) => batchEngine.cancelRemainingWaves(runId),
-      estimateRunCost: async (input) => batchEngine.estimate(input, await fxService.getUsdPkrRate()),
+      estimateRunCost: async (input) => logged("estimate_create", {
+        promptCount: input.promptCount, mode: input.mode, format: input.format, quality: input.quality, referenceCount: input.referenceCount,
+      }, async () => batchEngine.estimate(input, await fxService.getUsdPkrRate())),
       uploadReferenceImage: async ({ dataBase64, filename, mimeType }) => logged("reference_upload", {
         filename,
         mimeType,

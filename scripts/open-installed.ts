@@ -15,7 +15,7 @@ if (!localAppData) {
   throw new Error("LOCALAPPDATA is not set.");
 }
 
-const appDir = join(localAppData, "com.bulkimg.studio", channel, "app");
+const appDir = join(localAppData, "com.bulkimg.studio", "stable", "app");
 const launcher = [
   join(appDir, "bin", "launcher.exe"),
   join(appDir, "bin", "launcher"),

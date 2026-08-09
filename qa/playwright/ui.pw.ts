@@ -25,13 +25,16 @@ test("generator remains accessible and keyboard operable", async ({ page }) => {
   await expect(page.locator(":focus")).toBeVisible();
 });
 
-test("usage page shows app-scoped totals, limits, modes, and pricing", async ({ page }) => {
+test("usage page provides a calculator, observed-cost guidance, limits, and progressive pricing details", async ({ page }) => {
   await page.getByRole("button", { name: "Usage" }).click();
   await expect(page.locator("#usage-view").getByRole("heading", { name: "Usage & limits" })).toBeVisible();
   await expect(page.getByText("This app only — local requests, tokens, and calculated cost.")).toBeVisible();
   await expect(page.locator("#usage-summary-grid .usage-kpi")).toHaveCount(4);
-  await expect(page.getByRole("heading", { name: "Direct vs Batch" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Estimated image cost" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Calculator" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Your observed cost" })).toBeVisible();
+  await expect(page.getByText("View pricing details", { exact: true })).toBeVisible();
+  await page.getByLabel("Display currency").selectOption("PKR");
+  await expect(page.locator("#calculator-result")).toContainText("PKR");
   await expect(page.getByText("Add an Admin key in API keys to load project limits. Generation keys still track this app’s usage.")).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
