@@ -15,7 +15,7 @@ Recommendation: use one installed app and save the selected update channel as a 
 
 ## Current state
 
-The updater implementation is in this repository's working tree. It discovers signed GitHub Releases, verifies manifests and ZIPs, lets the user choose Stable or Beta, and hands installation to a separate helper. The first updater-enabled build must still be installed manually; afterward, compatible releases can update it from the About area.
+The updater implementation is in this repository's working tree. It discovers signed GitHub Releases, verifies manifests and ZIPs, lets the user choose Stable or Beta, and hands installation to a separate helper. It checks once at startup and then every 15 minutes while the app is open; unchanged polls use GitHub ETag caching and do not download installers or manifests again. The first updater-enabled build must still be installed manually; afterward, compatible releases can update it from the About area.
 
 ## About and update experience
 

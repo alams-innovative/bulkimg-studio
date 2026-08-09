@@ -71,6 +71,7 @@ export class UpdateService {
   private readonly releases = new Map<string, ResolvedRelease>();
   private checking = false;
   private downloading = false;
+  private releasesEtag: string | null = null;
   private activity: UpdateState["activity"] = "idle";
   private progress: UpdateState["progress"] = null;
 
@@ -211,11 +212,20 @@ export class UpdateService {
     this.activity = "checking";
     this.record("update_check_started", { channel: this.channel, currentVersion: this.currentVersion, architecture: this.architecture });
     try {
+      const headers: Record<string, string> = { accept: "application/vnd.github+json", "user-agent": "BulkImg-Studio-Updater" };
+      if (this.releasesEtag) headers["if-none-match"] = this.releasesEtag;
       const response = await fetch(`${GITHUB_API}/repos/${this.config.repository}/releases?per_page=40`, {
-        headers: { accept: "application/vnd.github+json", "user-agent": "BulkImg-Studio-Updater" }, signal: AbortSignal.timeout(15_000),
+        headers, signal: AbortSignal.timeout(15_000),
       });
+      if (response.status === 304) {
+        this.database.setSetting(SETTINGS.lastCheckedAt, new Date().toISOString());
+        this.database.setSetting(SETTINGS.lastError, "");
+        this.record("update_check_complete", { channel: this.channel, unchanged: true, compatibleReleaseCount: this.releases.size });
+        return this.state();
+      }
       if (!response.ok) throw new Error(`GitHub returned ${response.status} while listing releases.`);
       const releases = await response.json() as GitHubRelease[];
+      this.releasesEtag = response.headers.get("etag");
       this.releases.clear();
       for (const release of releases.filter((candidate) => !candidate.draft)) {
         const manifestAsset = release.assets.find((asset) => asset.name === "bulkimg-update.json");
@@ -232,6 +242,7 @@ export class UpdateService {
         }
       }
       this.database.setSetting(SETTINGS.lastCheckedAt, new Date().toISOString());
+      this.database.setSetting(SETTINGS.lastError, "");
       this.record("update_check_complete", { channel: this.channel, publishedReleaseCount: releases.length, compatibleReleaseCount: this.releases.size });
     } catch (error) {
       this.database.setSetting(SETTINGS.lastError, asErrorMessage(error));
