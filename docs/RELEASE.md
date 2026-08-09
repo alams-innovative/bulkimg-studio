@@ -1,6 +1,6 @@
 # Release Guide
 
-Current version: `1.1.0-beta.3`.
+Current version: `1.1.0-beta.4`.
 
 ## Build and verify
 
