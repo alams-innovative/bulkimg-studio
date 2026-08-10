@@ -6,6 +6,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark light" />
   <title>BulkImg Studio</title>
+  <script>
+    try {
+      const savedTheme = localStorage.getItem("bulkimg-theme");
+      if (savedTheme === "dark" || savedTheme === "light") document.documentElement.dataset.theme = savedTheme;
+    } catch {
+      // Dark is the safe first-render default when storage is unavailable.
+    }
+  </script>
   <link rel="stylesheet" href="index.css" />
 </head>
 
@@ -19,9 +27,9 @@
           <img class="brand-logo-light"
             src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
           <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
-              id="brand-version">1.1.0-beta.7</small></span>
+              id="brand-version">1.1.0</small></span>
         </div>
-        <div class="sidebar-controls"><button id="currency-toggle" type="button" class="currency-status" aria-pressed="false" aria-label="Show costs in Pakistani rupees" title="Switch displayed costs between USD and PKR">USD · PKR</button><button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
+        <div class="sidebar-controls"><div class="currency-selector" role="radiogroup" aria-label="Display currency"><button id="currency-usd" type="button" role="radio" aria-checked="true" title="Show costs in US dollars">USD</button><button id="currency-pkr" type="button" role="radio" aria-checked="false" title="Show costs in Pakistani rupees">PKR</button></div><button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
           title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
         </div>
       </div>
@@ -339,7 +347,7 @@
               <option value="batch">Batch</option>
               <option value="direct">Direct</option>
             </select></label><strong id="history-count">0 items</strong><span id="library-selection" class="history-selection" role="status">No images selected</span></div>
-        <div id="history-list" class="history-grid" aria-live="polite"></div>
+        <div id="history-list" class="history-grid" aria-live="polite" tabindex="0" aria-label="Library images"></div>
       </section>
       <section id="exports-view" class="view-content management-view hidden">
         <div class="management-head">
@@ -392,9 +400,9 @@
           <div class="update-card-head"><div><h3 id="update-available-title">Available update</h3><p id="update-available-copy">Check GitHub Releases to see compatible updates.</p></div><span id="update-current-version" class="status-badge">—</span></div>
           <div class="button-row"><button id="download-update" class="primary-button" type="button" disabled><i data-lucide="download"></i>Download &amp; verify</button><button id="install-update" class="secondary-button" type="button" disabled><i data-lucide="package-open"></i>Install and restart</button></div>
         </section>
-        <section class="update-card panel" aria-labelledby="update-history-title">
+        <section class="update-card panel update-history-card" aria-labelledby="update-history-title">
           <div class="update-card-head"><div><h3 id="update-history-title">Version history</h3><p>Only compatible published releases can be installed.</p></div></div>
-          <div id="update-history" class="update-history" aria-live="polite"></div>
+          <div id="update-history" class="update-history" aria-live="polite" tabindex="0" aria-label="Version history"></div>
         </section>
         <footer class="about-footer">BulkImg Studio · © 2026 Alams Innovate · All rights reserved</footer>
       </section>

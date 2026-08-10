@@ -25,6 +25,19 @@ test("generator remains accessible and keyboard operable", async ({ page }) => {
   await expect(page.locator(":focus")).toBeVisible();
 });
 
+test("first render applies the saved theme and fills the live viewport", async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem("bulkimg-theme", "light"));
+  await page.reload();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+  const layout = await page.evaluate(() => ({
+    appHeight: document.querySelector(".app-shell")?.getBoundingClientRect().height,
+    viewportHeight: window.innerHeight,
+    pageOverflow: document.documentElement.scrollHeight > document.documentElement.clientHeight,
+  }));
+  expect(layout.appHeight).toBeGreaterThanOrEqual(layout.viewportHeight - 1);
+  expect(layout.pageOverflow).toBe(false);
+});
+
 test("usage page provides a calculator, observed-cost guidance, limits, and visible pricing details", async ({ page }) => {
   await page.getByRole("button", { name: "Usage" }).click();
   await expect(page.locator("#usage-view").getByRole("heading", { name: "Usage & limits" })).toBeVisible();
@@ -32,15 +45,29 @@ test("usage page provides a calculator, observed-cost guidance, limits, and visi
   await expect(page.getByRole("heading", { name: "Calculator" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Your observed cost" })).toBeVisible();
   await expect(page.getByText("View pricing details", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Show costs in Pakistani rupees" })).toHaveText("USD · PKR");
-  await expect(page.getByLabel("Display currency")).toHaveCount(0);
+  await expect(page.getByRole("radiogroup", { name: "Display currency" })).toBeVisible();
+  await expect(page.getByRole("radio", { name: "USD" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "PKR" })).toHaveAttribute("aria-checked", "false");
   await expect(page.locator("#calculator-result")).toContainText("USD");
   await expect(page.locator("details.pricing-card")).toHaveAttribute("open", "");
   await expect(page.locator("#usage-pricing").getByRole("table")).toBeVisible();
-  await page.getByRole("button", { name: "Show costs in Pakistani rupees" }).click();
-  await expect(page.getByRole("button", { name: "Show costs in US dollars" })).toHaveText("PKR · USD");
+  await page.getByRole("radio", { name: "PKR" }).click();
+  await expect(page.getByRole("radio", { name: "PKR" })).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("radio", { name: "USD" })).toHaveAttribute("aria-checked", "false");
   await expect(page.getByText("Add an Admin key in API keys to load project limits. Generation keys still track this app’s usage.")).toBeVisible();
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("About and Library keep long lists in inline scrollers", async ({ page }) => {
+  await page.getByRole("button", { name: "About" }).click();
+  await expect(page.locator("#update-history")).toBeVisible();
+  expect(await page.locator("#about-view").evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
+  expect(await page.locator("#update-history").evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
+
+  await page.getByRole("button", { name: "Library" }).click();
+  await expect(page.getByLabel("Library images")).toBeVisible();
+  expect(await page.locator("#history-view").evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
+  expect(await page.getByLabel("Library images").evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
 });
 
 test("About keeps beta opt-in and verified update actions together", async ({ page }) => {
@@ -220,11 +247,24 @@ test("preview supports pointer-centred zoom and full one-click prompt copy", asy
 
 test("Library exposes select-all beside each image group", async ({ page }) => {
   await page.getByRole("button", { name: "Library" }).click();
+  await expect(page.locator("#history-list")).toBeVisible();
+  expect(await page.locator("#history-list").evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
   const group = page.locator(".history-group").first();
   await expect(group.locator(":scope > .history-group-head .library-select-group")).toBeVisible();
   await expect(group.locator(".action-menu .library-select-group")).toHaveCount(0);
   await group.locator(".library-select-group").click();
   await expect(page.locator("#library-selection")).toHaveText("2 images selected");
+});
+
+test("Library previews remain inside the inline scroller on hover", async ({ page }) => {
+  await page.getByRole("button", { name: "Library" }).click();
+  const card = page.locator(".history-card").first();
+  await page.waitForTimeout(320);
+  const beforeHover = await card.boundingBox();
+  await card.hover();
+  expect((await card.boundingBox())?.y).toBe(beforeHover?.y);
+  expect(await page.locator("#history-view").evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
+  expect(await page.locator("#history-list").evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
 });
 
 test("deselects, deletes selected rows, deletes one row, and clears the imported matrix", async ({ page }) => {

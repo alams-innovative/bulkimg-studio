@@ -102,7 +102,8 @@ const elements = {
   brandName: byId("brand-name"),
   brandVersion: byId("brand-version"),
   keyCount: byId("key-count"),
-  currencyToggle: byId<HTMLButtonElement>("currency-toggle"),
+  currencyUsd: byId<HTMLButtonElement>("currency-usd"),
+  currencyPkr: byId<HTMLButtonElement>("currency-pkr"),
   themeToggle: byId<HTMLButtonElement>("theme-toggle"),
   themeLabel: byId("theme-label"),
   pageTitle: byId("page-title"),
@@ -960,6 +961,24 @@ function applyTheme(theme: Theme, persist = false): void {
     } catch {
       // Theme still applies for this session when persistence is unavailable.
     }
+  }
+}
+
+async function reportUiReady(): Promise<void> {
+  try {
+    await document.fonts.ready;
+  } catch {
+    // A local font failure must not block the app from opening.
+  }
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())));
+  try {
+    await app.rpc!.request.reportUiReady({
+      theme: document.documentElement.dataset["theme"] === "light" ? "light" : "dark",
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+    });
+  } catch {
+    // The Bun process reveals the window through its bounded startup fallback.
   }
 }
 
@@ -2073,10 +2092,8 @@ function updateFxRateLabel(): void {
 
 function updateCurrencyToggle(): void {
   const showingPkr = displayCurrency === "PKR";
-  elements.currencyToggle.textContent = showingPkr ? "PKR · USD" : "USD · PKR";
-  elements.currencyToggle.setAttribute("aria-pressed", String(showingPkr));
-  elements.currencyToggle.setAttribute("aria-label", showingPkr ? "Show costs in US dollars" : "Show costs in Pakistani rupees");
-  elements.currencyToggle.title = showingPkr ? "Switch displayed costs to USD" : "Switch displayed costs to PKR";
+  elements.currencyUsd.setAttribute("aria-checked", String(!showingPkr));
+  elements.currencyPkr.setAttribute("aria-checked", String(showingPkr));
 }
 
 function refreshMoneyDisplays(): void {
@@ -2087,6 +2104,7 @@ function refreshMoneyDisplays(): void {
 }
 
 async function setDisplayCurrency(next: DisplayCurrency): Promise<void> {
+  if (next === displayCurrency) return;
   const previous = displayCurrency;
   displayCurrency = next;
   updateCurrencyToggle();
@@ -3383,9 +3401,17 @@ elements.converterRun.addEventListener("click", async () => {
   finally { const runLabel = elements.converterRun.querySelector("span"); if (runLabel) runLabel.textContent = "Convert"; elements.converterRun.disabled = converterQueue.length === 0; elements.converterRun.removeAttribute("aria-busy"); }
 });
 
-elements.currencyToggle.addEventListener("click", () => {
-  void setDisplayCurrency(displayCurrency === "USD" ? "PKR" : "USD");
-});
+elements.currencyUsd.addEventListener("click", () => void setDisplayCurrency("USD"));
+elements.currencyPkr.addEventListener("click", () => void setDisplayCurrency("PKR"));
+for (const [button, value] of [[elements.currencyUsd, "USD"], [elements.currencyPkr, "PKR"]] as const) {
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const next = value === "USD" ? elements.currencyPkr : elements.currencyUsd;
+    next.focus();
+    void setDisplayCurrency(value === "USD" ? "PKR" : "USD");
+  });
+}
 elements.csvTab.addEventListener("click", () => setTab("csv"));
 elements.manualTab.addEventListener("click", () => setTab("manual"));
 [elements.csvTab, elements.manualTab].forEach((tab) => {
@@ -4144,6 +4170,7 @@ await bootstrap();
 void loadUpdateState();
 startFxRefresh();
 await restoreGeneratorWorkspace();
+void reportUiReady();
 
 window.addEventListener("error", (event) => {
   const message = event.error instanceof Error ? event.error.message : event.message;

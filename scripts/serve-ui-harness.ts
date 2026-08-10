@@ -75,6 +75,7 @@ const updateState = (state: HarnessState) => ({
 });
 
 const mocks: Record<string, (params: any) => any> = {
+  reportUiReady: () => ({ accepted: true }),
   getBootstrap: (_params: unknown, request?: Request) => ({
     brand: { appName: "BulkImg Studio", version: "1.0.9" },
     models: { defaultModel: "gpt-image-2", models: [{ id: "gpt-image-2", label: "GPT Image 2", enabled: true }] },

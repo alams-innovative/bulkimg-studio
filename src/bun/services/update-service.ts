@@ -17,6 +17,7 @@ const SETTINGS = {
   downloadedVersion: "update_downloaded_version",
   downloadedPath: "update_downloaded_path",
   previousWorkingVersion: "update_previous_working_version",
+  installedVersion: "update_installed_version",
 } as const;
 
 const GITHUB_API = "https://api.github.com";
@@ -85,6 +86,13 @@ export class UpdateService {
   ) {
     this.updateDirectory = join(dataDirectory, "updates");
     mkdirSync(this.updateDirectory, { recursive: true });
+    // A newly installed beta must start on the beta channel. This also fixes
+    // direct GitHub installs, which bypass the in-app install action. Once the
+    // version has been recorded, the user's later Stable/Beta choice wins.
+    if (this.database.getSetting(SETTINGS.installedVersion) !== this.currentVersion) {
+      this.database.setSetting(SETTINGS.channel, parseVersion(this.currentVersion)?.prerelease ? "beta" : "stable");
+      this.database.setSetting(SETTINGS.installedVersion, this.currentVersion);
+    }
   }
 
   private get channel(): UpdateChannel {

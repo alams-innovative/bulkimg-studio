@@ -463,6 +463,10 @@ export type DiagnosticLogView = {
 export type AppRPC = {
   bun: {
     requests: {
+      reportUiReady: {
+        params: { theme: "dark" | "light"; viewportWidth: number; viewportHeight: number };
+        response: { accepted: true };
+      };
       getBootstrap: { params: {}; response: AppBootstrap };
       getFxRate: { params: {}; response: FxRateView };
       getSettings: { params: {}; response: AppSettings };

@@ -20,6 +20,31 @@ test("accepts only a signed GitHub update manifest", () => {
   expect(() => verifySignedUpdateManifest(manifestText, "invalid", config)).toThrow("signature");
 });
 
+test("a newly installed beta selects the beta update channel once", () => {
+  const settings = new Map<string, string>();
+  const database = {
+    getSetting: (key: string, fallback = "") => settings.get(key) ?? fallback,
+    setSetting: (key: string, value: string) => settings.set(key, value),
+    schemaVersion: () => 7,
+  } as unknown as AppDatabase;
+  const directory = mkdtempSync(join(tmpdir(), "bulkimg-update-channel-test-"));
+  try {
+    const service = new UpdateService(database, directory, "1.1.0-beta.7", {
+      repository: "alams-innovative/bulkimg-studio",
+      publicKeyPem: "",
+    }, "x64");
+    expect(service.state().channel).toBe("beta");
+    service.setChannel("stable");
+    new UpdateService(database, directory, "1.1.0-beta.7", {
+      repository: "alams-innovative/bulkimg-studio",
+      publicKeyPem: "",
+    }, "x64");
+    expect(settings.get("update_channel")).toBe("stable");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("uses GitHub's ETag to keep repeated update checks lightweight", async () => {
   const { privateKey, publicKey } = generateKeyPairSync("ed25519");
   const manifest = {

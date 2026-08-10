@@ -16,17 +16,17 @@ import { PricingService } from "./services/pricing-service";
 import { parseCSV, parseManualPrompts } from "./services/prompt-parser";
 import { pickOpenFile, readClipboardCsv, readClipboardImages } from "./services/windows-native";
 import { cleanupStaleTemporaryFiles, DiagnosticLog } from "./services/diagnostics";
-import { setNativeWindowIcon } from "./services/window-icon";
+import { setNativeWindowDarkMode, setNativeWindowIcon } from "./services/window-icon";
 import { UpdateService } from "./services/update-service";
 import { getInitialWindowFrame } from "./window-layout";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.0.9 supports Windows 10 and Windows 11 only.");
+  throw new Error("BulkImg Studio 1.1.0 supports Windows 10 and Windows 11 only.");
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.1.0-beta.7",
+  version: "1.1.0",
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -87,6 +87,9 @@ const INSTANCE_PIPE = `\\\\.\\pipe\\bulkimg-studio-${(process.env["USERNAME"] ||
 let mainWindow: BrowserWindow | null = null;
 let windowClosed = false;
 let isQuitting = false;
+let startupUiReady = false;
+let startupRevealTimer: ReturnType<typeof setTimeout> | null = null;
+let nativeWindowTitle = "";
 
 function activateExistingInstance(): void {
   if (mainWindow) showMainWindow();
@@ -143,7 +146,7 @@ const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
 void diagnosticLog.write("startup", {
   cleanedFiles,
-  version: "1.0.9",
+  version: "1.1.0",
   userData: dataDirectory,
   pid: process.pid,
 });
@@ -217,6 +220,13 @@ const rpc = BrowserView.defineRPC<AppRPC>({
   maxRequestTime: 120_000,
   handlers: {
     requests: {
+      reportUiReady: ({ theme, viewportWidth, viewportHeight }) => {
+        startupUiReady = true;
+        syncNativeWebviewFrame();
+        revealMainWindow();
+        void diagnosticLog.write("ui_ready", { theme, viewportWidth, viewportHeight });
+        return { accepted: true };
+      },
       getBootstrap: async () => {
         const admin = adminView(database);
         void diagnosticLog.write("bootstrap", {
@@ -487,8 +497,10 @@ batchEngine.setProgressSink((telemetry) => {
 });
 
 function createMainWindow(): BrowserWindow {
+  startupUiReady = false;
   const frame = getInitialWindowFrame(Screen.getPrimaryDisplay().workArea);
   const windowTitle = `${brand.appName} ${brand.version}`;
+  nativeWindowTitle = windowTitle;
   const window = new BrowserWindow({
     title: windowTitle,
     url: "views://mainview/index.html",
@@ -500,20 +512,29 @@ function createMainWindow(): BrowserWindow {
   window.on("close", () => {
     windowClosed = true;
     mainWindow = null;
+    nativeWindowTitle = "";
+    if (startupRevealTimer) {
+      clearTimeout(startupRevealTimer);
+      startupRevealTimer = null;
+    }
     if (isQuitting) return;
     Utils.showNotification({
       title: brand.appName,
       body: "BulkImg Studio is still running in the system tray. Select its tray icon to open it again.",
     });
   });
-  // Start at a work-area-bounded restored size. Maximizing during the first
-  // WebView2 paint can briefly leave stale compositor bounds on Windows.
-  window.show();
-  setTimeout(() => {
-    if (nativeIconPath && !setNativeWindowIcon(windowTitle, nativeIconPath)) {
-      console.warn("Could not apply the native window icon.");
+  // Configure native chrome while the window is still hidden. This avoids the
+  // white first-frame title bar on a dark-first application.
+  setTimeout(applyNativeWindowChrome, 40);
+  // A broken or unexpectedly slow renderer must never leave a blank app
+  // window forever. Normal startup reveals only after the WebView reports a
+  // stable first layout.
+  startupRevealTimer = setTimeout(() => {
+    if (!startupUiReady) {
+      console.warn("UI readiness timed out; revealing the app window.");
+      revealMainWindow();
     }
-  }, 120);
+  }, 2_500);
   return window;
 }
 
@@ -532,9 +553,45 @@ function showMainWindow(): void {
     windowClosed = false;
     return;
   }
-  mainWindow.show();
+  revealMainWindow();
   mainWindow.maximize();
   mainWindow.activate();
+}
+
+function revealMainWindow(): void {
+  if (!mainWindow || windowClosed) return;
+  if (startupRevealTimer) {
+    clearTimeout(startupRevealTimer);
+    startupRevealTimer = null;
+  }
+  mainWindow.show();
+  mainWindow.activate();
+  setTimeout(applyNativeWindowChrome, 0);
+}
+
+function syncNativeWebviewFrame(): void {
+  if (!mainWindow || windowClosed) return;
+  try {
+    const frame = mainWindow.getFrame();
+    // Electrobun's Windows CEF view occasionally misses its first WM_SIZE.
+    // Re-applying the hidden window's frame before it is revealed gives the
+    // WebView the same native resize signal as a user drag, without a flash.
+    mainWindow.setFrame(frame.x, frame.y, frame.width, frame.height + 1);
+    mainWindow.setFrame(frame.x, frame.y, frame.width, frame.height);
+    void diagnosticLog.write("native_webview_frame_sync", { width: frame.width, height: frame.height });
+  } catch (error) {
+    void diagnosticLog.write("native_webview_frame_sync", { ok: false, message: error instanceof Error ? error.message.slice(0, 160) : "error" });
+  }
+}
+
+function applyNativeWindowChrome(): void {
+  if (!nativeWindowTitle) return;
+  if (!setNativeWindowDarkMode(nativeWindowTitle, true)) {
+    console.warn("Could not apply native dark window chrome.");
+  }
+  if (nativeIconPath && !setNativeWindowIcon(nativeWindowTitle, nativeIconPath)) {
+    console.warn("Could not apply the native window icon.");
+  }
 }
 
 function updateTrayStatus(status: string, message = ""): void {

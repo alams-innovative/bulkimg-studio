@@ -27,6 +27,8 @@
 }
 
 :root {
+  color-scheme: dark;
+  background: #0b0f14;
   --black: #0b0f14;
   --midnight: #11171f;
   --deep: #18212b;
@@ -85,13 +87,16 @@
   --shadow: 0 8px 24px rgba(52, 65, 80, .1)
 }
 
+[data-theme=light] { background: #e5e8ec }
+
 * {
   box-sizing: border-box
 }
 
 html,
 body {
-  height: 100%;
+  height: 100dvh;
+  min-height: 100vh;
   margin: 0;
   overflow: hidden
 }
@@ -151,8 +156,8 @@ svg {
 }
 
 .app-shell {
-  height: 100%;
-  min-height: 0;
+  height: 100dvh;
+  min-height: 100vh;
   display: grid;
   grid-template-columns: 168px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr)
@@ -463,8 +468,10 @@ svg {
 
 /* Beta 1.1: calculator-first usage page and quieter sidebar controls. */
 .sidebar-controls { display:flex; align-items:center; gap:6px }
-.currency-status { padding:5px 7px; border:1px solid var(--subtle); border-radius:6px; background:var(--surface); color:var(--text2); font:700 10px "JetBrains Mono"; white-space:nowrap; cursor:pointer }
-.currency-status:hover { background:var(--hover); color:var(--text) }
+.currency-selector { display:flex; align-items:center; padding:2px; border:1px solid var(--subtle); border-radius:7px; background:var(--surface); font:700 10px "JetBrains Mono" }
+.currency-selector button { min-width:34px; min-height:24px; padding:3px 6px; border:0; border-radius:4px; background:transparent; color:var(--text3); font:inherit; line-height:1; }
+.currency-selector button:hover { color:var(--text); background:var(--hover) }
+.currency-selector button[aria-checked="true"] { background:var(--raised); color:var(--text); box-shadow:inset 0 0 0 1px var(--border) }
 .calculator-card { display:grid; gap:16px }
 .calculator-inputs { display:grid; grid-template-columns:repeat(5,minmax(110px,1fr)); gap:10px }
 .calculator-inputs label { display:grid; gap:5px; color:var(--text3); font-size:11px; font-weight:700 }
@@ -1311,6 +1318,29 @@ textarea {
   overflow: auto
 }
 
+/* About and Library keep their controls visible; only their long lists scroll. */
+#about-view,
+#history-view {
+  min-height: 0;
+  overflow: hidden;
+}
+
+#about-view:not(.hidden) {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(96px, 1fr) auto;
+  gap: 12px;
+}
+
+#about-view .update-card { margin-top: 0; }
+.update-history-card { min-height: 0; grid-template-rows: auto minmax(0, 1fr); }
+.update-history { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; scrollbar-gutter: stable; }
+
+#history-view:not(.hidden) {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 0;
+}
+
 .management-head {
   display: flex;
   align-items: flex-start;
@@ -1914,7 +1944,12 @@ textarea {
 }
 
 .history-grid {
-  display: block
+  display: block;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  scrollbar-gutter: stable
 }
 
 .history-card {
@@ -1926,10 +1961,10 @@ textarea {
   border: 1px solid var(--subtle);
   border-radius: var(--r2);
   overflow: visible;
-  transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease
+  transition: border-color 160ms ease, box-shadow 160ms ease
 }
 
-.history-card:hover { border-color: color-mix(in srgb, var(--accent) 44%, var(--border)); box-shadow: 0 10px 24px color-mix(in srgb, #000 16%, transparent); transform: translateY(-2px) }
+.history-card:hover { border-color: color-mix(in srgb, var(--accent) 44%, var(--border)); box-shadow: 0 6px 16px color-mix(in srgb, #000 14%, transparent) }
 .history-card:has(.library-select-item:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 10px 24px color-mix(in srgb, #000 14%, transparent) }
 
 .history-select {
@@ -1955,7 +1990,7 @@ textarea {
 
 .history-image {
   aspect-ratio: 4 / 3;
-  min-height: 166px;
+  min-height: 124px;
   position: relative;
   background: var(--side);
   display: grid;
@@ -2721,7 +2756,7 @@ button:disabled {
 }
 
 .history-card:hover {
-  transform: translateY(-1px)
+  transform: none
 }
 
 .history-image {
@@ -3066,7 +3101,7 @@ button:disabled {
 }
 
 .history-group {
-  margin-bottom: 20px;
+  margin-bottom: 12px;
   padding: 0 2px 2px;
   border: 1px solid var(--subtle);
   border-radius: var(--r2);
@@ -3107,8 +3142,8 @@ button:disabled {
 .library-group-content.hidden { display: none }
 
 .history-group .history-grid-inner {
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px
+  grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+  gap: 10px
 }
 
 .history-group-actions {
