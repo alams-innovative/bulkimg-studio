@@ -70,6 +70,14 @@ test("About and Library keep long lists in inline scrollers", async ({ page }) =
   expect(await page.getByLabel("Library images").evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
 });
 
+test("Logs offers a copyable support report and diagnostics download", async ({ page }) => {
+  await page.getByRole("button", { name: "Logs" }).click();
+  await expect(page.getByRole("button", { name: "Copy support report" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Download diagnostics" })).toBeVisible();
+  await page.getByRole("button", { name: "Download diagnostics" }).click();
+  await expect(page.getByText("Diagnostics ZIP saved.")).toBeVisible();
+});
+
 test("About keeps beta opt-in and verified update actions together", async ({ page }) => {
   await page.getByRole("button", { name: "About" }).click();
   await expect(page.locator("#about-view").getByRole("heading", { name: "About & updates" })).toBeVisible();
@@ -103,7 +111,7 @@ test("renders at most 100 rows and selects across 1,000 prompts", async ({ page 
   await expect(page.locator(".prompt-card").last()).toHaveAttribute("aria-pressed", "true");
 });
 
-test("reveals editable batch waves only after prompts are selected", async ({ page }) => {
+test("reveals an editable batch plan only after prompts are selected", async ({ page }) => {
   await expect(page.locator("#wave-controls")).toBeHidden();
   await page.getByRole("tab", { name: "Manual" }).click();
   await page.getByLabel("Manual prompts").fill(Array.from({ length: 230 }, (_, index) => `Prompt ${index + 1}`).join("\n"));
@@ -111,7 +119,7 @@ test("reveals editable batch waves only after prompts are selected", async ({ pa
   await page.locator('button[data-pick="all"]').click();
   await expect(page.locator("#wave-controls")).toBeVisible();
   await expect.poll(() => page.locator("#wave-list input").evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))).toEqual(["10", "100", "100", "20"]);
-  await page.getByRole("button", { name: "Add wave" }).click();
+  await page.getByRole("button", { name: "Add batch" }).click();
   await expect(page.locator("#wave-list input")).toHaveCount(5);
 });
 

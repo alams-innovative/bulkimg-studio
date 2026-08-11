@@ -542,6 +542,7 @@ export type AppRPC = {
         params: { limit?: number; query?: string; event?: string };
         response: DiagnosticLogView;
       };
+      exportDiagnostics: { params: {}; response: { filePath: string | null } };
       revealLogsFolder: { params: {}; response: { directory: string } };
       writeDiagnosticLog: {
         params: { event: string; fields?: Record<string, unknown> };

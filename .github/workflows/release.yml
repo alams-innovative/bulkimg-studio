@@ -25,6 +25,7 @@ jobs:
         with:
           bun-version: 1.3.14
       - run: bun install --frozen-lockfile
+      - run: bun run version:check
       - run: bun run check
       - run: bun test
       - run: bun run test:ui

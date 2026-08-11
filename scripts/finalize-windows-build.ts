@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { APP_VERSION } from "../src/shared/build-info";
 
 const channel = Bun.argv[2] ?? "stable";
 if (channel !== "stable" && channel !== "beta") {
@@ -21,6 +22,7 @@ const packageVersion = (JSON.parse(readFileSync(join(projectRoot, "package.json"
 if (typeof packageVersion !== "string" || !packageVersion.trim()) {
   throw new Error("package.json must provide the version embedded in the installer verification step.");
 }
+if (packageVersion !== APP_VERSION) throw new Error(`package.json version ${packageVersion} does not match ${APP_VERSION}.`);
 // Beta is a release-discovery preference, not a second local app: it replaces
 // the stable installation selected by the verified update helper.
 const buildEnvironment = "stable";

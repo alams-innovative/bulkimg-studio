@@ -27,7 +27,7 @@
           <img class="brand-logo-light"
             src="views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-light-256.png" alt="" />
           <span class="brand-text"><strong id="brand-name">BulkImg Studio</strong><small
-              id="brand-version">1.1.0</small></span>
+              id="brand-version">—</small></span>
         </div>
         <div class="sidebar-controls"><div class="currency-selector" role="radiogroup" aria-label="Display currency"><button id="currency-usd" type="button" role="radio" aria-checked="true" title="Show costs in US dollars">USD</button><button id="currency-pkr" type="button" role="radio" aria-checked="false" title="Show costs in Pakistani rupees">PKR</button></div><button id="sidebar-toggle" type="button" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true"
           title="Collapse sidebar" aria-label="Collapse sidebar"><i data-lucide="panel-left-close"></i></button>
@@ -188,13 +188,13 @@
             </fieldset>
             <div id="wave-controls" class="wave-controls">
               <label>Batch delivery<select id="wave-strategy">
-                <option value="guided" selected>One wave at a time — recommended</option>
-                <option value="parallel">Submit all waves together</option>
-                <option value="all">One batch (no waves)</option>
-              </select><small>Waves are submitted as separate OpenAI batches. You decide their exact sizes below.</small></label>
+                <option value="guided" selected>One batch at a time — recommended</option>
+                <option value="parallel">Submit all batches together</option>
+                <option value="all">One batch (no splitting)</option>
+              </select><small>Each batch is submitted separately to OpenAI. You decide the exact batch sizes below.</small></label>
               <div id="wave-size-field" class="wave-size-field">
-                <div id="wave-list" class="wave-list" aria-label="Batch waves"></div>
-                <div class="wave-actions"><button id="add-wave" class="secondary-button" type="button"><i data-lucide="plus"></i>Add wave</button><span>New waves take one prompt; set any size you need.</span></div>
+                <div id="wave-list" class="wave-list" aria-label="Batch plan"></div>
+                <div class="wave-actions"><button id="add-wave" class="secondary-button" type="button"><i data-lucide="plus"></i>Add batch</button><span>New batches take one prompt; set any size you need.</span></div>
                 <small id="wave-math" class="field-hint"></small>
               </div>
             </div>
@@ -297,7 +297,7 @@
       </section>
       <section id="sessions-view" class="view-content management-view hidden">
         <div class="management-head">
-          <p>Runs and waves on this device.</p><button id="refresh-sessions" class="icon-button" type="button" aria-label="Refresh runs" title="Refresh runs"><i data-lucide="refresh-cw"></i></button>
+          <p>Runs and batches on this device.</p><button id="refresh-sessions" class="icon-button" type="button" aria-label="Refresh runs" title="Refresh runs"><i data-lucide="refresh-cw"></i></button>
         </div>
         <div id="session-list" class="data-list" aria-live="polite"></div>
       </section>
@@ -362,7 +362,8 @@
           <p>Local diagnostic events. Ready to copy — secrets and image payloads are redacted.</p>
           <div class="button-row compact-header-actions">
             <button id="refresh-logs" class="icon-button" type="button" aria-label="Refresh logs" title="Refresh logs"><i data-lucide="refresh-cw"></i></button>
-            <button id="copy-logs" class="icon-button" type="button" aria-label="Copy logs" title="Copy logs"><i data-lucide="copy"></i></button>
+            <button id="copy-logs" class="icon-button" type="button" aria-label="Copy support report" title="Copy support report"><i data-lucide="copy"></i></button>
+            <button id="download-diagnostics" class="icon-button" type="button" aria-label="Download diagnostics" title="Download diagnostics"><i data-lucide="download"></i></button>
             <button id="open-logs-folder" class="icon-button" type="button" aria-label="Open logs folder" title="Open logs folder"><i data-lucide="folder-open"></i></button>
           </div>
         </div>
@@ -382,7 +383,7 @@
           <label><span class="sr-only">Filter by result</span><select id="logs-outcome" aria-label="Filter by result"><option value="">Any result</option><option value="success">Success</option><option value="failure">Failure</option></select></label>
           <strong id="logs-count">0 lines</strong>
         </div>
-        <p class="logs-hint">Shown in your local time. Copy Logs keeps the original diagnostic data for support.</p>
+        <p class="logs-hint">Shown in your local time. Copy support report is paste-ready; Download diagnostics creates a sanitized ZIP for support.</p>
         <pre id="logs-list" class="logs-list" aria-live="polite" tabindex="0"></pre>
         <p id="logs-path" class="logs-path"></p>
       </section>

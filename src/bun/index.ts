@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
 import type { AdminConfigView, AppRPC, BrandTheme, RateLimitHeaderProbe, RateLimitSnapshot } from "../shared/contracts";
+import { APP_CHANNEL, APP_VERSION } from "../shared/build-info";
 import type { UpdateConfig, UpdateState } from "../shared/update-contracts";
 import { APP_LIMITS } from "../shared/contracts";
 import { AppDatabase } from "./database";
@@ -21,12 +22,12 @@ import { UpdateService } from "./services/update-service";
 import { getInitialWindowFrame } from "./window-layout";
 
 if (process.platform !== "win32") {
-  throw new Error("BulkImg Studio 1.1.0 supports Windows 10 and Windows 11 only.");
+  throw new Error(`BulkImg Studio ${APP_VERSION} supports Windows 10 and Windows 11 only.`);
 }
 
 const fallbackBrand: BrandTheme = {
   appName: "BulkImg Studio",
-  version: "1.1.0",
+  version: APP_VERSION,
   logoPath: "views://assets/brand-pack/BulkImg_Studio_Brand_Pack/logos/bulkimg-studio-logo-dark-256.png",
   iconPath: "views://assets/brand/app_icon.ico",
   accentColor: "#D5DAE0",
@@ -146,7 +147,7 @@ const diagnosticLog = new DiagnosticLog(dataDirectory);
 const cleanedFiles = cleanupStaleTemporaryFiles(dataDirectory);
 void diagnosticLog.write("startup", {
   cleanedFiles,
-  version: "1.1.0",
+  version: APP_VERSION,
   userData: dataDirectory,
   pid: process.pid,
 });
@@ -175,7 +176,7 @@ if (recovered > 0) {
   void diagnosticLog.write("startup_recover", { recovered });
 }
 
-const brand = await readJson(assetRoots.map((root) => join(root, "brand", "theme.json")), fallbackBrand);
+const brand = { ...await readJson(assetRoots.map((root) => join(root, "brand", "theme.json")), fallbackBrand), version: APP_VERSION };
 const nativeIconPath = assetRoots
   .map((root) => join(root, "brand", "app_icon.ico"))
   .find(existsSync);
@@ -397,6 +398,14 @@ const rpc = BrowserView.defineRPC<AppRPC>({
         filePath: await withUpdateWork("export", () => exportService.exportSelectedHistory(assetIds, { pickPath: Boolean(pickPath) })),
       })),
       getDiagnosticLogs: ({ limit, query, event }) => diagnosticLog.read({ limit, query, event }),
+      exportDiagnostics: async () => logged("diagnostics_export_requested", { version: brand.version }, async () => ({
+        filePath: await diagnosticLog.exportSupportBundle({
+          version: brand.version,
+          channel: APP_CHANNEL,
+          platform: process.platform,
+          architecture: process.arch,
+        }),
+      })),
       revealLogsFolder: () => {
         const directory = diagnosticLog.logDirectory;
         Bun.spawn(["explorer.exe", directory], { stdout: "ignore", stderr: "ignore" });

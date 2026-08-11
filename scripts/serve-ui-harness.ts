@@ -427,6 +427,7 @@ const mocks: Record<string, (params: any) => any> = {
     events: ["startup", "session_created", "batch_poll", "batch_download_error"],
     total: 4,
   }),
+  exportDiagnostics: () => ({ filePath: "C:\\Users\\demo\\Downloads\\BulkImgStudio-Diagnostics-demo.zip" }),
   pickCsvFile: () => null,
   readClipboardImages: ({ maxCount }: { maxCount?: number }) => ({
     images: [

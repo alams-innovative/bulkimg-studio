@@ -1,5 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
+import { strToU8, zipSync } from "fflate";
+import { pickSaveFile } from "./windows-native";
 
 const MAX_LOG_BYTES = 1_000_000;
 const STALE_MS = 24 * 60 * 60 * 1000;
@@ -13,7 +15,9 @@ function redact(value: unknown): unknown {
   }
   if (Array.isArray(value)) return value.map(redact);
   if (value && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value).filter(([key]) => !/prompt|image|keyValue|apiKey/i.test(key)).map(([key, item]) => [key, redact(item)]));
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !/prompt|image|keyValue|apiKey|authorization|token|password|cookie|secret|fileContent|path|directory|userData/i.test(key))
+      .map(([key, item]) => [key, redact(item)]));
   }
   return value;
 }
@@ -29,6 +33,13 @@ export type DiagnosticLogReadResult = {
   path: string;
   events: string[];
   total: number;
+};
+
+export type DiagnosticBundleOptions = {
+  version: string;
+  channel: "stable" | "beta";
+  platform: string;
+  architecture: string;
 };
 
 export class DiagnosticLog {
@@ -97,11 +108,51 @@ export class DiagnosticLog {
     }
 
     return {
-      lines: filtered.slice(-limit),
+      lines: filtered.slice(-limit).map((line) => this.redactLine(line)),
       path: this.path,
       events: [...events].sort(),
       total: filtered.length,
     };
+  }
+
+  async exportSupportBundle(options: DiagnosticBundleOptions): Promise<string | null> {
+    const createdAt = new Date();
+    const stamp = createdAt.toISOString().replaceAll(":", "-").replace("T", "_").slice(0, 19);
+    const defaultName = `BulkImgStudio-Diagnostics-${stamp}.zip`;
+    const destination = await pickSaveFile({
+      title: "Download BulkImg Studio diagnostics",
+      defaultName,
+      filter: "*.zip",
+      filterLabel: "ZIP archive",
+    });
+    if (!destination) return null;
+
+    const lines = this.read({ limit: 2_000 }).lines.map((line) => this.redactLine(line));
+    const report = [
+      "BulkImg Studio support diagnostics",
+      `Version: ${options.version} (${options.channel})`,
+      `Platform: ${options.platform} ${options.architecture}`,
+      `Created: ${createdAt.toISOString()}`,
+      `Included event lines: ${lines.length}`,
+      "",
+      "This archive is sanitized for support. It does not include API keys, prompts, image data, cookies, or file contents.",
+      "Attach this ZIP to a support request or paste support-report.txt together with the relevant error.",
+    ].join("\r\n");
+    const archive = zipSync({
+      "support-report.txt": strToU8(`${report}\r\n`),
+      "diagnostics.jsonl": strToU8(`${lines.join("\n")}\n`),
+    }, { level: 6 });
+    await Bun.write(destination, archive);
+    await this.write("diagnostics_export", { ok: true, version: options.version, lineCount: lines.length });
+    return destination;
+  }
+
+  private redactLine(line: string): string {
+    try {
+      return JSON.stringify(redact(JSON.parse(line)));
+    } catch {
+      return String(redact(line));
+    }
   }
 
   private rotate(): void {

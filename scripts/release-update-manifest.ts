@@ -1,6 +1,7 @@
 import { createHash, createPrivateKey, sign } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { APP_VERSION } from "../src/shared/build-info";
 
 const channel = Bun.argv[2] ?? "stable";
 const tag = Bun.argv[3];
@@ -11,6 +12,7 @@ const signingKey = Bun.env["BULKIMG_UPDATE_SIGNING_PRIVATE_KEY"];
 if (!signingKey) throw new Error("BULKIMG_UPDATE_SIGNING_PRIVATE_KEY is required to sign a release manifest.");
 const root = resolve(import.meta.dir, "..");
 const version = tag.slice(1);
+if (version !== APP_VERSION) throw new Error(`Release tag ${tag} does not match ${APP_VERSION}.`);
 const artifacts = join(root, "artifacts");
 const sourceZip = join(artifacts, `${channel}-win-x64-BulkImgStudio-Setup.zip`);
 if (!existsSync(sourceZip)) throw new Error(`Missing ${sourceZip}. Build the ${channel} package first.`);

@@ -176,6 +176,7 @@ const elements = {
   converterPropertiesList: byId("converter-properties-list"),
   refreshLogs: byId<HTMLButtonElement>("refresh-logs"),
   copyLogs: byId<HTMLButtonElement>("copy-logs"),
+  downloadDiagnostics: byId<HTMLButtonElement>("download-diagnostics"),
   openLogsFolder: byId<HTMLButtonElement>("open-logs-folder"),
   logsEvent: byId<HTMLSelectElement>("logs-event"),
   logsRange: byId<HTMLSelectElement>("logs-range"),
@@ -455,7 +456,7 @@ function updateWaveUi(): void {
   setHidden(elements.waveMath, !showMath);
   if (showMath) {
     if (!split) elements.waveMath.textContent = `${selected.size} prompts will run in one batch.`;
-    else elements.waveMath.textContent = `${selected.size} prompts across ${waveSizes.length} wave${waveSizes.length === 1 ? "" : "s"}: ${waveSizes.join(" + ")}.`;
+    else elements.waveMath.textContent = `${selected.size} prompts across ${waveSizes.length} batch${waveSizes.length === 1 ? "" : "es"}: ${waveSizes.join(" + ")}.`;
   }
 }
 
@@ -483,7 +484,7 @@ function ensureWavePlan(): void {
 
 function renderWaveList(): void {
   if (!waveSizes.length) { elements.waveList.innerHTML = ""; return; }
-  elements.waveList.innerHTML = waveSizes.map((size, index) => `<div class="wave-row"><span>Wave ${index + 1}</span><label><span class="sr-only">Prompts in wave ${index + 1}</span><input type="number" min="1" max="${appLimits.batchPromptLimit}" value="${size}" data-wave-index="${index}" /> <small>prompts</small></label><button class="icon-button wave-remove" type="button" data-remove-wave="${index}" aria-label="Remove wave ${index + 1}" title="Remove wave">×</button></div>`).join("");
+  elements.waveList.innerHTML = waveSizes.map((size, index) => `<div class="wave-row"><span>Batch ${index + 1}</span><label><span class="sr-only">Prompts in batch ${index + 1}</span><input type="number" min="1" max="${appLimits.batchPromptLimit}" value="${size}" data-wave-index="${index}" /> <small>prompts</small></label><button class="icon-button wave-remove" type="button" data-remove-wave="${index}" aria-label="Remove batch ${index + 1}" title="Remove batch">×</button></div>`).join("");
   elements.waveList.querySelectorAll<HTMLInputElement>("input[data-wave-index]").forEach((input) => input.addEventListener("change", () => {
     const index = Number(input.dataset["waveIndex"]);
     const value = Math.max(1, Math.min(appLimits.batchPromptLimit, Math.floor(Number(input.value) || 1)));
@@ -2348,7 +2349,7 @@ async function loadSessions(): Promise<void> {
               <button class="secondary-button run-export" data-run-id="${run.runId}">Export run</button>
             </div>
           </header>
-          ${phaseBits || '<p class="empty-inline">No wave sessions yet.</p>'}
+          ${phaseBits || '<p class="empty-inline">No batch sessions yet.</p>'}
         </section>`;
       }).join("");
       const orphanHtml = orphans.map((item) => `
@@ -2609,6 +2610,19 @@ function renderLogLines(lines: string[]): void {
   }).join("");
   elements.copyLogs.disabled = lines.length === 0;
   elements.logsList.scrollTop = elements.logsList.scrollHeight;
+}
+
+function supportReport(lines: string[]): string {
+  return [
+    "BulkImg Studio support report",
+    `Version: ${elements.brandVersion.textContent ?? "unknown"}`,
+    `Captured: ${new Date().toISOString()}`,
+    `Included event lines: ${lines.length}`,
+    "",
+    "Paste the error you saw above this report. The JSONL section is sanitized diagnostic data.",
+    "--- diagnostics.jsonl ---",
+    ...lines,
+  ].join("\n");
 }
 
 async function loadLogs(): Promise<void> {
@@ -2934,7 +2948,7 @@ function renderHistory(animateCards = false): void {
       existing.items.push(item);
       continue;
     }
-    const wave = item.waveIndex != null ? ` · wave ${item.waveIndex + 1}` : "";
+    const wave = item.waveIndex != null ? ` · batch ${item.waveIndex + 1}` : "";
     groups.set(key, {
       title: item.parentRunId ? `Run ${item.parentRunId.slice(0, 8)}` : `Session ${item.sessionId.slice(0, 8)}`,
       subtitle: `${librarySessions.get(item.sessionId)?.status ?? item.status} · ${item.runMode}${wave}`,
@@ -4151,10 +4165,23 @@ elements.logsSearch.addEventListener("input", () => {
 elements.copyLogs.addEventListener("click", async () => {
   if (!logsLines.length) return;
   try {
-    await navigator.clipboard.writeText(logsLines.join("\n"));
-    showToast("Logs copied.");
+    await navigator.clipboard.writeText(supportReport(logsLines));
+    showToast("Support report copied.");
   } catch {
-    showToast("Could not copy logs", true);
+    showToast("Could not copy support report", true);
+  }
+});
+elements.downloadDiagnostics.addEventListener("click", async () => {
+  elements.downloadDiagnostics.disabled = true;
+  elements.downloadDiagnostics.setAttribute("aria-busy", "true");
+  try {
+    const result = await app.rpc!.request.exportDiagnostics({});
+    if (result.filePath) showToast("Diagnostics ZIP saved.");
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : "Could not download diagnostics", true);
+  } finally {
+    elements.downloadDiagnostics.disabled = false;
+    elements.downloadDiagnostics.removeAttribute("aria-busy");
   }
 });
 elements.openLogsFolder.addEventListener("click", async () => {

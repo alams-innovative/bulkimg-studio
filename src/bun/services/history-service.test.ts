@@ -24,6 +24,24 @@ function makeOutputLine(customId: string, b64: string): string {
   });
 }
 
+test("diagnostic logs redact secrets and prompt contents before persistence", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "bulkimg-diagnostics-"));
+  const diagnostics = new DiagnosticLog(directory);
+  await diagnostics.write("support_test", {
+    apiKey: "sk-this-must-not-appear-123456789",
+    authorization: "Bearer private-token",
+    promptText: "private prompt",
+    filePath: "C:\\Users\\private\\secret.png",
+    message: "safe summary",
+  });
+  const line = diagnostics.read().lines[0] ?? "";
+  expect(line).toContain("safe summary");
+  expect(line).not.toContain("private-token");
+  expect(line).not.toContain("private prompt");
+  expect(line).not.toContain("sk-this-must-not-appear");
+  expect(line).not.toContain("C:\\Users\\private");
+});
+
 describe("HistoryService batch JSONL persist", () => {
   test("persists batch lines from disk one by one", async () => {
     const root = mkdtempSync(join(tmpdir(), "bulkimg-history-"));
