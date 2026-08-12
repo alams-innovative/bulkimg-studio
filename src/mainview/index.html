@@ -68,8 +68,8 @@
           <div class="composer panel">
             <div class="section-heading">
               <div>
-                <h2>Add prompts</h2>
-                <p>Import a CSV or paste one prompt per line.</p>
+                <h2>Prompts</h2>
+                <p>Import a CSV or add prompts manually, then select what to generate.</p>
               </div>
               <div class="segmented" role="tablist" aria-label="Prompt input mode">
                 <button id="csv-tab" class="active" role="tab" aria-selected="true"
@@ -113,15 +113,7 @@
                   <button type="button" data-pick="none">
                     Deselect all
                   </button>
-
-                  <button id="delete-selected-prompts" class="danger-button" type="button" disabled>
-                    Delete selected
-                  </button>
-
-                  <button id="clear-imported-prompts" class="danger-button" type="button" disabled>
-                    <i data-lucide="trash-2"></i>
-                    Clear imported
-                  </button>
+                  <details class="action-menu prompt-actions-menu"><summary aria-label="More prompt actions" title="More prompt actions"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Prompt actions</p><button id="delete-selected-prompts" class="menu-action danger-button" type="button" disabled><i data-lucide="trash-2"></i>Delete selected</button><button id="clear-imported-prompts" class="menu-action danger-button" type="button" disabled><i data-lucide="trash-2"></i>Clear imported</button></div></details>
                 </div>
               </div>
             </div>
@@ -153,32 +145,41 @@
                 <p>Choose the image shape and size.</p>
               </div>
             </div>
-            <div id="reference-control" class="reference-control" data-count="0">
-              <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i
-                  data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small
-                    id="reference-hint">Drop or browse · up to 16 images · 50 MB each</small></span><b
-                  id="reference-badge" class="hidden" hidden>0/16</b></button>
-              <div class="reference-actions">
-                <button id="pick-reference" class="secondary-button" type="button"><i
-                    data-lucide="folder-open"></i>Browse images</button>
+            <div class="output-section">
+              <h3>Output</h3>
+              <p>Choose the format and quality for the selected prompts.</p>
+              <div class="output-fields">
+                <label>Format<select id="size">
+                    <option value="square">Square · 1:1 · 1024×1024</option>
+                    <option value="portrait">Portrait · 4:5 · 1024×1280</option>
+                    <option value="landscape">Landscape · 16:9 · 1536×864</option>
+                    <option value="story">Story · 9:16 · 864×1536</option>
+                  </select></label>
+                <label>Quality<select id="quality">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                  </select><small class="field-hint">Higher quality costs more.</small></label>
               </div>
-              <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
-              <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images"
-                hidden></div>
-              <span id="reference-status" class="sr-only" role="status" aria-live="polite"></span>
             </div>
-            <label class="model-field">Model<select id="model" disabled></select></label>
-            <label>Format<select id="size">
-                <option value="square">Square · 1:1 · 1024×1024</option>
-                <option value="portrait">Portrait · 4:5 · 1024×1280</option>
-                <option value="landscape">Landscape · 16:9 · 1536×864</option>
-                <option value="story">Story · 9:16 · 864×1536</option>
-              </select></label>
-            <label>Quality<select id="quality">
-                <option value="low">Low</option>
-                <option value="medium" selected>Medium</option>
-                <option value="high">High</option>
-              </select><small class="field-hint">Higher quality uses more output tokens and increases the estimate.</small></label>
+            <select id="model" disabled hidden aria-hidden="true" tabindex="-1"></select>
+            <details id="reference-disclosure" class="generator-disclosure reference-disclosure">
+              <summary><span>Reference images <small id="reference-summary">Optional</small></span></summary>
+              <div id="reference-control" class="reference-control" data-count="0">
+                <button id="reference-dock" class="reference-dock" type="button" aria-describedby="reference-hint"><i
+                    data-lucide="image-plus"></i><span><strong id="reference-title">Add reference images</strong><small
+                      id="reference-hint">Drop or browse · up to 16 images · 50 MB each</small></span><b
+                    id="reference-badge" class="hidden" hidden>0/16</b></button>
+                <div class="reference-actions">
+                  <button id="pick-reference" class="secondary-button" type="button"><i
+                      data-lucide="folder-open"></i>Browse images</button>
+                </div>
+                <input id="reference-file" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden />
+                <div id="reference-list" class="reference-list hidden" role="list" aria-label="Attached reference images"
+                  hidden></div>
+                <span id="reference-status" class="sr-only" role="status" aria-live="polite"></span>
+              </div>
+            </details>
             <fieldset>
               <legend>Run mode</legend>
               <label class="mode-option selected"><input type="radio" name="run-mode" value="batch"
@@ -186,18 +187,21 @@
               <label class="mode-option"><input type="radio" name="run-mode"
                   value="direct" /><span><strong>Direct</strong><small>Up to 4 images</small></span></label>
             </fieldset>
-            <div id="wave-controls" class="wave-controls">
-              <label>Batch delivery<select id="wave-strategy">
-                <option value="guided" selected>One batch at a time — recommended</option>
-                <option value="parallel">Submit all batches together</option>
-                <option value="all">One batch (no splitting)</option>
-              </select><small>Each batch is submitted separately to OpenAI. You decide the exact batch sizes below.</small></label>
-              <div id="wave-size-field" class="wave-size-field">
-                <div id="wave-list" class="wave-list" aria-label="Batch plan"></div>
-                <div class="wave-actions"><button id="add-wave" class="secondary-button" type="button"><i data-lucide="plus"></i>Add batch</button><span>New batches take one prompt; set any size you need.</span></div>
-                <small id="wave-math" class="field-hint"></small>
+            <details id="batch-plan-disclosure" class="generator-disclosure batch-plan-disclosure" hidden>
+              <summary><span>Batch plan <small id="batch-plan-summary">Optional</small></span></summary>
+              <div id="wave-controls" class="wave-controls">
+                <label>Batch delivery<select id="wave-strategy">
+                  <option value="guided" selected>One batch at a time — recommended</option>
+                  <option value="parallel">Submit all batches together</option>
+                  <option value="all">One batch (no splitting)</option>
+                </select><small>Each batch is submitted separately. Set the exact batch sizes below when needed.</small></label>
+                <div id="wave-size-field" class="wave-size-field">
+                  <div id="wave-list" class="wave-list" aria-label="Batch plan"></div>
+                  <div class="wave-actions"><button id="add-wave" class="secondary-button" type="button"><i data-lucide="plus"></i>Add batch</button><span>New batches take one prompt; set any size you need.</span></div>
+                  <small id="wave-math" class="field-hint"></small>
+                </div>
               </div>
-            </div>
+            </details>
             <div id="estimate-box" class="estimate-box hidden" hidden><span id="rail-estimate-label">Estimated cost</span><strong><span
                   id="rail-estimate">$0.00</span> <small id="rail-pkr">PKR 0.00</small></strong></div>
             </div>
@@ -527,6 +531,13 @@
   <dialog id="converter-properties-dialog" class="keys-dialog panel converter-properties-dialog" aria-labelledby="converter-properties-title">
     <form method="dialog" class="dialog-head"><div><h2 id="converter-properties-title">Image properties</h2><p id="converter-properties-subtitle">Local image details</p></div><button class="icon-button" aria-label="Close properties" value="cancel"><i data-lucide="x"></i></button></form>
     <dl id="converter-properties-list" class="converter-properties-list"></dl>
+  </dialog>
+  <dialog id="generation-start-dialog" class="keys-dialog panel generation-start-dialog" aria-labelledby="generation-start-title">
+    <form method="dialog">
+      <div class="dialog-head"><div><h2 id="generation-start-title">Generation started</h2><p id="generation-start-message">Your images are now queued. Progress will appear below.</p></div><button class="icon-button" aria-label="Close generation confirmation" value="confirm"><i data-lucide="x"></i></button></div>
+      <div class="generation-start-notice"><i data-lucide="check"></i><div><strong>Sequence initiated</strong><p>You can keep using the app while BulkImg Studio tracks this run.</p></div></div>
+      <div class="dialog-actions"><button id="generation-start-confirm" class="primary-button" value="confirm">Got it</button></div>
+    </form>
   </dialog>
   <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Image preview" hidden>
     <button type="button" class="lightbox-close" id="lightbox-close" aria-label="Close preview"><i

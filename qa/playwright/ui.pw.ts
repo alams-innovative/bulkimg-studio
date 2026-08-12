@@ -117,10 +117,26 @@ test("reveals an editable batch plan only after prompts are selected", async ({ 
   await page.getByLabel("Manual prompts").fill(Array.from({ length: 230 }, (_, index) => `Prompt ${index + 1}`).join("\n"));
   await page.getByRole("button", { name: "Add prompts" }).click();
   await page.locator('button[data-pick="all"]').click();
+  await page.getByText("Batch plan", { exact: false }).click();
   await expect(page.locator("#wave-controls")).toBeVisible();
   await expect.poll(() => page.locator("#wave-list input").evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))).toEqual(["10", "100", "100", "20"]);
   await page.getByRole("button", { name: "Add batch" }).click();
   await expect(page.locator("#wave-list input")).toHaveCount(5);
+});
+
+test("confirms that one generation sequence was initiated and guards the launch action", async ({ page }) => {
+  await page.getByRole("tab", { name: "Manual" }).click();
+  await page.getByLabel("Manual prompts").fill("Prompt one");
+  await page.getByRole("button", { name: "Add prompts" }).click();
+  await page.getByRole("button", { name: "Select all", exact: true }).click();
+  await page.getByRole("button", { name: "Generate 1", exact: true }).click();
+
+  const confirmation = page.getByRole("dialog", { name: "Generation started" });
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation).toContainText("has been initiated");
+  await expect(page.getByRole("button", { name: "Running…" })).toBeDisabled();
+  await confirmation.getByRole("button", { name: "Got it" }).click();
+  await expect(confirmation).toBeHidden();
 });
 
 test("restores an active session into the Generator status area", async ({ page }) => {
@@ -136,6 +152,7 @@ test("shows queued guided waves in the live bar and runs the ready wave", async 
   await page.getByRole("button", { name: "Add prompts" }).click();
   await page.getByRole("button", { name: "Select all", exact: true }).click();
   await page.getByRole("button", { name: "Generate 3", exact: true }).click();
+  await page.getByRole("dialog", { name: "Generation started" }).getByRole("button", { name: "Got it" }).click();
 
   const queue = page.locator("#wave-queue");
   await expect(queue).toBeVisible();
@@ -154,6 +171,7 @@ test("cancels unstarted guided waves from the live bar and keeps completed outpu
   await page.getByRole("button", { name: "Add prompts" }).click();
   await page.getByRole("button", { name: "Select all", exact: true }).click();
   await page.getByRole("button", { name: "Generate 3", exact: true }).click();
+  await page.getByRole("dialog", { name: "Generation started" }).getByRole("button", { name: "Got it" }).click();
 
   const queue = page.locator("#wave-queue");
   await expect(queue.getByRole("button", { name: "Cancel remaining" })).toBeVisible();
@@ -289,6 +307,7 @@ test("deselects, deletes selected rows, deletes one row, and clears the imported
   await expect(page.locator(".prompt-card")).toHaveCount(3);
 
   await page.locator(".prompt-card").first().click();
+  await page.locator(".prompt-actions-menu > summary").click();
   await page.getByRole("button", { name: "Delete selected" }).click();
   await expect(page.locator(".prompt-card")).toHaveCount(2);
   await expect(page.locator("#source-summary")).toHaveText("2 prompts");
@@ -297,10 +316,12 @@ test("deselects, deletes selected rows, deletes one row, and clears the imported
   await expect(page.locator(".prompt-card")).toHaveCount(1);
   await expect(page.locator("#source-summary")).toHaveText("1 prompt");
 
-  await page.getByRole("button", { name: "Clear imported" }).click();
+  const clearImported = page.getByRole("button", { name: "Clear imported" });
+  if (!await clearImported.isVisible()) await page.locator(".prompt-actions-menu > summary").click();
+  await clearImported.click();
   await expect(page.getByText("No prompts loaded")).toBeVisible();
   await expect(page.locator("#source-name")).toHaveText("No prompts yet");
-  await expect(page.getByRole("button", { name: "Clear imported" })).toBeDisabled();
+  await expect(page.locator("#clear-imported-prompts")).toBeDisabled();
 });
 
 test("keeps image paste explicit to the reference section", async ({ page }) => {

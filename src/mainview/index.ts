@@ -216,6 +216,8 @@ const elements = {
   size: byId<HTMLSelectElement>("size"),
   quality: byId<HTMLSelectElement>("quality"),
   referenceControl: byId("reference-control"),
+  referenceDisclosure: byId<HTMLDetailsElement>("reference-disclosure"),
+  referenceSummary: byId("reference-summary"),
   referenceDock: byId<HTMLButtonElement>("reference-dock"),
   referenceFile: byId<HTMLInputElement>("reference-file"),
   referenceTitle: byId("reference-title"),
@@ -328,6 +330,8 @@ const elements = {
   railPkr: byId("rail-pkr"),
   railEstimateLabel: byId("rail-estimate-label"),
   waveControls: byId("wave-controls"),
+  batchPlanDisclosure: byId<HTMLDetailsElement>("batch-plan-disclosure"),
+  batchPlanSummary: byId("batch-plan-summary"),
   waveStrategy: byId<HTMLSelectElement>("wave-strategy"),
   waveList: byId("wave-list"),
   addWave: byId<HTMLButtonElement>("add-wave"),
@@ -338,6 +342,8 @@ const elements = {
   waveQueueSummary: byId("wave-queue-summary"),
   waveQueueList: byId("wave-queue-list"),
   waveCancelRemaining: byId<HTMLButtonElement>("wave-cancel-remaining"),
+  generationStartDialog: byId<HTMLDialogElement>("generation-start-dialog"),
+  generationStartMessage: byId("generation-start-message"),
   toast: byId("toast"),
   checkIconTemplate: byId("check-icon-template"),
 };
@@ -355,10 +361,13 @@ let toastEndsAt = 0;
 let adminEditingKey = false;
 let adminConfiguredState = false;
 let runSubmitInFlight = false;
+let generationClickLockedUntil = 0;
+let generationClickLockTimer: number | null = null;
 const SIDEBAR_STORAGE_KEY = "bulkimg.sidebar.collapsed";
 const LIBRARY_COLLAPSED_GROUPS_STORAGE_KEY = "bulkimg.library.collapsed-groups";
 const TOAST_MS_OK = 4200;
 const TOAST_MS_ERR = 7000;
+const GENERATION_CLICK_LOCK_MS = 10_000;
 let logsLines: string[] = [];
 let logsSearchTimer: number | null = null;
 let currentFxRate = 276.61;
@@ -448,6 +457,7 @@ function updateWaveUi(): void {
   const batch = currentMode() === "batch";
   const split = elements.waveStrategy.value !== "all";
   const hasPrompts = selected.size > 0;
+  setHidden(elements.batchPlanDisclosure, !batch || !hasPrompts);
   setHidden(elements.waveControls, !batch || !hasPrompts);
   setHidden(elements.waveSizeField, !batch || !hasPrompts || !split);
   if (hasPrompts && split) ensureWavePlan();
@@ -458,6 +468,11 @@ function updateWaveUi(): void {
     if (!split) elements.waveMath.textContent = `${selected.size} prompts will run in one batch.`;
     else elements.waveMath.textContent = `${selected.size} prompts across ${waveSizes.length} batch${waveSizes.length === 1 ? "" : "es"}: ${waveSizes.join(" + ")}.`;
   }
+  elements.batchPlanSummary.textContent = !hasPrompts
+    ? "Optional"
+    : !split
+      ? "One batch"
+      : `${waveSizes.length} batch${waveSizes.length === 1 ? "" : "es"}`;
 }
 
 function defaultWavePlan(total: number): number[] {
@@ -584,15 +599,17 @@ function syncActionState(): void {
   const overDirectLimit = currentMode() === "direct" && count > directPromptLimit();
   const active = isSessionActive();
   const canResume = canResumeSession();
+  const launchLocked = Date.now() < generationClickLockedUntil;
   const busy = runSubmitInFlight || elements.runButton.getAttribute("aria-busy") === "true";
   const noKeys = activeKeyCount === 0;
-  const canGenerate = !busy && count > 0 && !overDirectLimit && !noKeys && !active;
+  const canGenerate = !busy && !launchLocked && count > 0 && !overDirectLimit && !noKeys && !active;
 
   elements.runButton.disabled = !canGenerate;
   const label = elements.runButton.querySelector("span");
   if (label) {
     if (busy) label.textContent = "Starting…";
     else if (active) label.textContent = "Running…";
+    else if (launchLocked) label.textContent = "Initiated";
     else if (noKeys) label.textContent = "Add API key";
     else if (overDirectLimit) label.textContent = `Choose up to ${directPromptLimit()}`;
     else if (count) label.textContent = `Generate ${count}`;
@@ -606,6 +623,8 @@ function syncActionState(): void {
         ? `Direct mode allows up to ${directPromptLimit()} prompts`
         : active
           ? "A run is already in progress"
+          : launchLocked
+            ? "Generation was just initiated. Please wait."
           : "Start generation";
 
   setHidden(elements.cancelButton, !active);
@@ -724,6 +743,26 @@ function setKeyTypeTab(type: "generation" | "admin"): void {
 
 function resumeConfirmMessage(): string {
   return "Resume starts a new OpenAI batch for remaining prompts. Saved images stay. You do not need to re-import the CSV.";
+}
+
+function generationClickLocked(): boolean {
+  return Date.now() < generationClickLockedUntil;
+}
+
+function lockGenerationClick(): void {
+  generationClickLockedUntil = Date.now() + GENERATION_CLICK_LOCK_MS;
+  if (generationClickLockTimer !== null) window.clearTimeout(generationClickLockTimer);
+  generationClickLockTimer = window.setTimeout(() => {
+    generationClickLockTimer = null;
+    syncActionState();
+  }, GENERATION_CLICK_LOCK_MS);
+}
+
+function showGenerationStarted(next: SessionTelemetry): void {
+  const mode = currentMode() === "batch" ? "Batch" : "Direct";
+  elements.generationStartMessage.textContent = `${mode} generation for ${next.totalPrompts} image${next.totalPrompts === 1 ? "" : "s"} has been initiated. Progress is shown below.`;
+  if (!elements.generationStartDialog.open) elements.generationStartDialog.showModal();
+  window.requestAnimationFrame(() => elements.generationStartDialog.querySelector<HTMLButtonElement>("#generation-start-confirm")?.focus());
 }
 
 async function startSessionPolling(sessionId: string): Promise<void> {
@@ -1871,6 +1910,10 @@ function renderReferenceImages(announcement?: string): void {
     ? `Drop or browse · up to ${limit} images · 50 MB each`
     : count >= limit ? "Remove an image to add another" : "Click, browse, or drop to add more";
   elements.referenceBadge.textContent = `${count}/${limit}`;
+  elements.referenceSummary.textContent = count === 0
+    ? "Optional"
+    : `${count} attached`;
+  if (count) elements.referenceDisclosure.open = true;
   setHidden(elements.referenceBadge, count === 0);
   setHidden(elements.referenceList, count === 0);
   elements.referenceList.innerHTML = referenceImages.map((reference, index) => `
@@ -3726,7 +3769,7 @@ window.addEventListener("paste", (event) => {
 elements.pasteCsv.addEventListener("click", () => void pasteCsvOnly("paste_button"));
 
 elements.runButton.addEventListener("click", async () => {
-  if (!matrix) return;
+  if (!matrix || runSubmitInFlight || generationClickLocked()) return;
   if (activeKeyCount === 0) {
     await loadKeys();
     openKeysDialog(elements.apiKey);
@@ -3738,6 +3781,7 @@ elements.runButton.addEventListener("click", async () => {
     return;
   }
   if (currentMode() === "batch" && selected.size > 100 && !window.confirm(`Submit ${selected.size} prompts as a paid Batch run?`)) return;
+  lockGenerationClick();
   runSubmitInFlight = true;
   elements.runButton.disabled = true;
   elements.runButton.setAttribute("aria-busy", "true");
@@ -3759,7 +3803,10 @@ elements.runButton.addEventListener("click", async () => {
     renderTelemetry(next);
     await loadKeys();
     if (next.status === "failed") showToast(next.message, true);
-    if (next.status === "pending" || next.status === "processing") await startSessionPolling(next.sessionId);
+    else showGenerationStarted(next);
+    if (next.status === "pending" || next.status === "processing") {
+      await startSessionPolling(next.sessionId);
+    }
   } catch (error) {
     showToast(error instanceof Error ? error.message : "Could not start generation", true);
   } finally {

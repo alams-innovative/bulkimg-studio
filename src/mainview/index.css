@@ -459,6 +459,10 @@ svg {
 .converter-session-item { display: flex; gap: 8px; align-items: center; padding: 9px; border: 1px solid var(--subtle); border-radius: var(--r1); background: var(--muted) }
 .converter-session-item span { min-width: 0 }.converter-session-item strong,.converter-session-item small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }.converter-session-item small { color:var(--text3); font-size:10px }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 12px }
+.generation-start-dialog { width: min(430px, calc(100vw - 32px)) }
+.generation-start-notice { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; padding: 12px; border: 1px solid color-mix(in srgb, var(--success) 34%, var(--subtle)); border-radius: var(--r1); background: color-mix(in srgb, var(--success) 8%, var(--muted)) }
+.generation-start-notice > i { flex: 0 0 auto; width: 17px; height: 17px; color: var(--success) }
+.generation-start-notice strong,.generation-start-notice p { display:block; margin:0 }.generation-start-notice strong { color:var(--text2); font-size:12px }.generation-start-notice p { margin-top:3px; color:var(--text3); font-size:11px; line-height:1.45 }
 .converter-properties-dialog { width: min(480px, calc(100vw - 32px)) }
 .converter-properties-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 12px 0 0; border: 1px solid var(--subtle); border-radius: var(--r1); overflow: hidden; background: var(--subtle) }
 .converter-properties-list div { min-width: 0; padding: 9px; background: var(--muted) }.converter-properties-list dt { color: var(--text3); font-size: 10px }.converter-properties-list dd { margin: 3px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px }
@@ -711,6 +715,13 @@ svg {
   color: var(--text)
 }
 
+.prompt-actions-menu > summary {
+  height: 29px;
+  min-height: 29px;
+  min-width: 29px;
+  width: 29px
+}
+
 .prompt-matrix {
   min-height: 0;
   overflow: auto;
@@ -902,6 +913,85 @@ textarea {
   margin-bottom: 6px
 }
 
+.output-section {
+  display: grid;
+  gap: 4px
+}
+
+.output-section h3,
+.output-section p {
+  margin: 0
+}
+
+.output-section h3 {
+  color: var(--text2);
+  font: 700 12px Manrope, sans-serif
+}
+
+.output-section p {
+  color: var(--text3);
+  font-size: 10px;
+  line-height: 1.4
+}
+
+.output-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px
+}
+
+.generator-disclosure {
+  border: 1px solid var(--subtle);
+  border-radius: var(--r1);
+  background: var(--muted)
+}
+
+.generator-disclosure > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 0 10px;
+  cursor: pointer;
+  color: var(--text2);
+  font-size: 11px;
+  font-weight: 700;
+  list-style: none
+}
+
+.generator-disclosure > summary::-webkit-details-marker {
+  display: none
+}
+
+.generator-disclosure > summary::after {
+  content: "+";
+  color: var(--text3);
+  font-size: 16px;
+  font-weight: 400
+}
+
+.generator-disclosure[open] > summary::after {
+  content: "−"
+}
+
+.generator-disclosure > summary span {
+  display: flex;
+  align-items: baseline;
+  gap: 6px
+}
+
+.generator-disclosure > summary small {
+  color: var(--text3);
+  font-size: 10px;
+  font-weight: 400
+}
+
+.generator-disclosure > .reference-control,
+.generator-disclosure > .wave-controls {
+  margin: 0 9px 9px
+}
+
 .mode-option {
   display: flex;
   align-items: center;
@@ -942,6 +1032,10 @@ textarea {
   display: grid;
   gap: 6px;
   min-width: 0
+}
+
+.reference-disclosure[open] {
+  background: var(--surface)
 }
 
 .reference-dock {
@@ -4023,6 +4117,10 @@ button.history-image:disabled {
   }
 
   .usage-example {
+    grid-template-columns: 1fr
+  }
+
+  .output-fields {
     grid-template-columns: 1fr
   }
 }
