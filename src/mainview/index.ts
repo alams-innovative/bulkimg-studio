@@ -2476,7 +2476,7 @@ function renderSessionDetailHtml(detail: SessionDetail): string {
       ${t.runMode === "batch" && ["pending", "processing"].includes(t.status) ? `<button type="button" class="secondary-button session-check" data-session-id="${t.sessionId}">Check now</button>` : ""}
       ${canResume ? `<button type="button" class="secondary-button session-resume" data-session-id="${t.sessionId}">Resume leftovers</button>` : ""}
       ${["pending", "processing"].includes(t.status) ? `<button type="button" class="secondary-button session-cancel" data-session-id="${t.sessionId}">Cancel</button>` : ""}
-      <button type="button" class="secondary-button session-export" data-session-id="${t.sessionId}">Export ZIP</button>
+      <button type="button" class="secondary-button session-export" data-session-id="${t.sessionId}">Export</button>
       <button type="button" class="secondary-button session-diagnostic" data-diagnostic-id="${escapeHtml(t.diagnosticId)}">Copy diagnostic ID</button>
     </div>
     <h4 class="session-prompts-heading">Prompts</h4>
@@ -2562,13 +2562,13 @@ function bindSessionListHandlers(root: ParentNode = elements.sessionList, listRo
   root.querySelectorAll<HTMLButtonElement>(".session-export").forEach((button) => {
     button.onclick = async () => {
       const result = await app.rpc!.request.exportSessionZip({ sessionId: button.dataset["sessionId"]!, pickPath: true });
-      if (result.filePath) showToast("Session ZIP exported.");
+      if (result.filePath) showToast(result.kind === "image" ? "Image downloaded." : "Session ZIP exported.");
     };
   });
   root.querySelectorAll<HTMLButtonElement>(".run-export").forEach((button) => {
     button.onclick = async () => {
       const result = await app.rpc!.request.exportRunZip({ runId: button.dataset["runId"]!, pickPath: true });
-      if (result.filePath) showToast("Run ZIP exported.");
+      if (result.filePath) showToast(result.kind === "image" ? "Image downloaded." : "Run ZIP exported.");
     };
   });
   root.querySelectorAll<HTMLButtonElement>(".session-diagnostic").forEach((button) => {
@@ -2590,11 +2590,11 @@ async function loadExports(): Promise<void> {
     elements.exportList.innerHTML = exports.length ? exports.map((item) => `
       <article class="data-row">
         <div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.filePath)}</span></div>
-        <div><span>Type</span><strong>ZIP archive</strong></div>
+        <div><span>Type</span><strong>${item.kind === "zip" ? "ZIP archive" : "Image file"}</strong></div>
         <div><span>Size</span><strong>${formatBytes(item.sizeBytes)}</strong></div>
         <div><span>Modified</span><strong>${formatDate(item.modifiedAt)}</strong></div>
         <div><span>Location</span><strong>App exports folder</strong></div>
-      </article>`).join("") : '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="archive"></i></span><strong>No exports yet</strong><small>Exported session ZIPs will appear here.</small></div>';
+      </article>`).join("") : '<div class="empty-state"><span class="empty-icon" aria-hidden="true"><i data-lucide="archive"></i></span><strong>No exports yet</strong><small>Downloaded images and ZIP exports will appear here.</small></div>';
     enterVisibleItems(elements.exportList, ".data-row");
   } catch (error) {
     elements.exportList.innerHTML = `<div class="warnings">${escapeHtml(error instanceof Error ? error.message : "Could not load exports")}</div>`;
@@ -3039,13 +3039,13 @@ function renderHistory(animateCards = false): void {
     const canResume = sessions.some((session) => session.retryableCount > 0 && ["partial", "failed", "cancelled"].includes(session.status));
     const canContinue = Boolean(run?.waveStrategy === "guided" && run.sessions.some((session) => session.status === "pending"));
     const exportAction = run
-      ? `<button type="button" class="secondary-button run-export" data-run-id="${escapeHtml(run.runId)}">Export ZIP</button>`
-      : `<button type="button" class="secondary-button session-export" data-session-id="${escapeHtml(primarySession.sessionId)}">Export ZIP</button>`;
+      ? `<button type="button" class="secondary-button run-export" data-run-id="${escapeHtml(run.runId)}">Export</button>`
+      : `<button type="button" class="secondary-button session-export" data-session-id="${escapeHtml(primarySession.sessionId)}">Export</button>`;
     const imagesHtml = group.items.length
       ? `<div class="history-grid-inner">${group.items.map(renderHistoryCard).join("")}</div>`
       : '<p class="empty-inline">No images saved for this session yet.</p>';
     return `<section class="history-group">
-      <header class="history-group-head"><button type="button" class="library-group-toggle" data-group-id="${escapeHtml(group.id)}" aria-expanded="${collapsedLibraryGroups.has(group.id) ? "false" : "true"}"><i data-lucide="${collapsedLibraryGroups.has(group.id) ? "chevron-right" : "chevron-down"}" aria-hidden="true"></i><span><strong>${escapeHtml(group.title)}</strong><small>${escapeHtml(group.subtitle)} · ${group.items.length} image${group.items.length === 1 ? "" : "s"}</small></span></button><div class="history-group-actions">${group.items.length ? `<button type="button" class="secondary-button library-select-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="check"></i>Select all images</button>` : ""}<details class="action-menu"><summary aria-label="Run options" title="Run options"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Run options</p>${group.items.length ? `<button type="button" class="menu-action preview-library-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="images"></i>Preview and details</button>` : ""}${exportAction.replace("secondary-button", "menu-action").replace(">Export ZIP<", "><i data-lucide=\"download\"></i>Download all images<")}${activeSession ? `<button type="button" class="menu-action session-live" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="images"></i>Open progress</button>${activeSession.runMode === "batch" ? `<button type="button" class="menu-action session-check" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="refresh-cw"></i>Check for updates</button>` : ""}<button type="button" class="menu-action danger-button session-cancel" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="x"></i>Cancel this run</button>` : ""}${canResume ? `<button type="button" class="menu-action ${run ? "run-resume" : "session-resume"}" data-${run ? "run-id" : "session-id"}="${escapeHtml(run?.runId ?? primarySession.sessionId)}"><i data-lucide="refresh-cw"></i>Resume unfinished images</button>` : ""}${canContinue ? `<button type="button" class="menu-action run-continue" data-run-id="${escapeHtml(run!.runId)}"><i data-lucide="images"></i>Continue next batch</button>` : ""}</div></details></div></header>
+      <header class="history-group-head"><button type="button" class="library-group-toggle" data-group-id="${escapeHtml(group.id)}" aria-expanded="${collapsedLibraryGroups.has(group.id) ? "false" : "true"}"><i data-lucide="${collapsedLibraryGroups.has(group.id) ? "chevron-right" : "chevron-down"}" aria-hidden="true"></i><span><strong>${escapeHtml(group.title)}</strong><small>${escapeHtml(group.subtitle)} · ${group.items.length} image${group.items.length === 1 ? "" : "s"}</small></span></button><div class="history-group-actions">${group.items.length ? `<button type="button" class="secondary-button library-select-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="check"></i>Select all images</button>` : ""}<details class="action-menu"><summary aria-label="Run options" title="Run options"><i data-lucide="more-horizontal"></i></summary><div class="action-menu-popover"><p class="action-menu-label">Run options</p>${group.items.length ? `<button type="button" class="menu-action preview-library-group" data-group-id="${escapeHtml(group.id)}"><i data-lucide="images"></i>Preview and details</button>` : ""}${exportAction.replace("secondary-button", "menu-action").replace(">Export<", "><i data-lucide=\"download\"></i>Download all images<")}${activeSession ? `<button type="button" class="menu-action session-live" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="images"></i>Open progress</button>${activeSession.runMode === "batch" ? `<button type="button" class="menu-action session-check" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="refresh-cw"></i>Check for updates</button>` : ""}<button type="button" class="menu-action danger-button session-cancel" data-session-id="${escapeHtml(activeSession.sessionId)}"><i data-lucide="x"></i>Cancel this run</button>` : ""}${canResume ? `<button type="button" class="menu-action ${run ? "run-resume" : "session-resume"}" data-${run ? "run-id" : "session-id"}="${escapeHtml(run?.runId ?? primarySession.sessionId)}"><i data-lucide="refresh-cw"></i>Resume unfinished images</button>` : ""}${canContinue ? `<button type="button" class="menu-action run-continue" data-run-id="${escapeHtml(run!.runId)}"><i data-lucide="images"></i>Continue next batch</button>` : ""}</div></details></div></header>
       <div class="library-group-content${collapsedLibraryGroups.has(group.id) ? " hidden" : ""}"${collapsedLibraryGroups.has(group.id) ? " hidden" : ""}><div class="session-detail-panel hidden" data-detail-for="${escapeHtml(primarySession.sessionId)}" hidden></div>${imagesHtml}</div>
     </section>`;
   }).join("");
@@ -4039,7 +4039,7 @@ elements.exportButton.addEventListener("click", async () => {
       : await app.rpc!.request.exportSessionZip({ sessionId: session.sessionId, pickPath: true });
     if (result.filePath) {
       elements.sessionMessage.textContent = `Exported to ${result.filePath}`;
-      showToast("ZIP exported.");
+      showToast(result.kind === "image" ? "Image downloaded." : "ZIP exported.");
       await loadExports();
     }
   } catch (error) {
@@ -4096,7 +4096,7 @@ elements.libraryDownloadSelected.addEventListener("click", async () => {
   try {
     const result = await app.rpc!.request.exportSelectedHistoryZip({ assetIds, pickPath: true });
     if (result.filePath) {
-      showToast(`${assetIds.length} image${assetIds.length === 1 ? "" : "s"} downloaded as a ZIP.`);
+      showToast(result.kind === "image" ? "Image downloaded." : `${result.imageCount} images downloaded as a ZIP.`);
       await loadExports();
     }
   } catch (error) {

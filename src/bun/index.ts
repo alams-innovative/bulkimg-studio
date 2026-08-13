@@ -389,13 +389,13 @@ const rpc = BrowserView.defineRPC<AppRPC>({
       listExports: () => exportService.list(),
       revealExportsFolder: () => ({ directory: exportService.revealFolder() }),
       exportSessionZip: async ({ sessionId, pickPath }) => logged("export_session", { sessionId }, async () => ({
-        filePath: await withUpdateWork("export", () => exportService.export(sessionId, { pickPath: Boolean(pickPath) })),
+        ...await withUpdateWork("export", () => exportService.export(sessionId, { pickPath: Boolean(pickPath) })),
       })),
       exportRunZip: async ({ runId, pickPath }) => logged("export_run", { runId }, async () => ({
-        filePath: await withUpdateWork("export", () => exportService.exportRun(runId, { pickPath: Boolean(pickPath) })),
+        ...await withUpdateWork("export", () => exportService.exportRun(runId, { pickPath: Boolean(pickPath) })),
       })),
       exportSelectedHistoryZip: async ({ assetIds, pickPath }) => logged("export_history_selected", { count: assetIds.length }, async () => ({
-        filePath: await withUpdateWork("export", () => exportService.exportSelectedHistory(assetIds, { pickPath: Boolean(pickPath) })),
+        ...await withUpdateWork("export", () => exportService.exportSelectedHistory(assetIds, { pickPath: Boolean(pickPath) })),
       })),
       getDiagnosticLogs: ({ limit, query, event }) => diagnosticLog.read({ limit, query, event }),
       exportDiagnostics: async () => logged("diagnostics_export_requested", { version: brand.version }, async () => ({

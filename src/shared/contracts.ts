@@ -318,6 +318,13 @@ export type ExportSummary = {
   filePath: string;
   sizeBytes: number;
   modifiedAt: string;
+  kind: "image" | "zip";
+};
+
+export type ExportResult = {
+  filePath: string | null;
+  kind: "image" | "zip";
+  imageCount: number;
 };
 
 export type ConverterFormat = "png" | "jpg" | "webp" | "avif" | "tiff" | "bmp";
@@ -535,9 +542,9 @@ export type AppRPC = {
       clearHistory: { params: {}; response: { deletedPrompts: number; deletedAssets: number } };
       listExports: { params: {}; response: ExportSummary[] };
       revealExportsFolder: { params: {}; response: { directory: string } };
-      exportSessionZip: { params: { sessionId: string; pickPath?: boolean }; response: { filePath: string | null } };
-      exportRunZip: { params: { runId: string; pickPath?: boolean }; response: { filePath: string | null } };
-      exportSelectedHistoryZip: { params: { assetIds: string[]; pickPath?: boolean }; response: { filePath: string | null } };
+      exportSessionZip: { params: { sessionId: string; pickPath?: boolean }; response: ExportResult };
+      exportRunZip: { params: { runId: string; pickPath?: boolean }; response: ExportResult };
+      exportSelectedHistoryZip: { params: { assetIds: string[]; pickPath?: boolean }; response: ExportResult };
       getDiagnosticLogs: {
         params: { limit?: number; query?: string; event?: string };
         response: DiagnosticLogView;

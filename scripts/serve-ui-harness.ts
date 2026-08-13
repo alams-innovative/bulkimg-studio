@@ -414,8 +414,16 @@ const mocks: Record<string, (params: any) => any> = {
       filePath: "C:\\\\Users\\\\demo\\\\AppData\\\\BulkImg Studio\\\\exports\\\\run-demo-parent.zip",
       sizeBytes: 48_120_000,
       modifiedAt: new Date().toISOString(),
+      kind: "zip" as const,
     },
   ],
+  exportSessionZip: () => ({ filePath: "C:\\Users\\demo\\Downloads\\image.png", kind: "image" as const, imageCount: 1 }),
+  exportRunZip: () => ({ filePath: "C:\\Users\\demo\\Downloads\\run.zip", kind: "zip" as const, imageCount: 2 }),
+  exportSelectedHistoryZip: ({ assetIds }: { assetIds: string[] }) => ({
+    filePath: assetIds.length === 1 ? "C:\\Users\\demo\\Downloads\\image.png" : "C:\\Users\\demo\\Downloads\\images.zip",
+    kind: assetIds.length === 1 ? "image" as const : "zip" as const,
+    imageCount: assetIds.length,
+  }),
   getDiagnosticLogs: () => ({
     lines: [
       '{"ts":"2026-08-04T06:00:00.000Z","event":"startup","version":"1.0.9"}',

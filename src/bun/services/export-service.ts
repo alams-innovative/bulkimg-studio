@@ -1,8 +1,11 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, extname, join } from "node:path";
 import { strToU8, zipSync } from "fflate";
 import type { AppDatabase } from "../database";
+import type { ExportResult } from "../../shared/contracts";
 import { pickSaveFile, showNotification } from "./windows-native";
+
+type LocalAsset = { image_filename: string; file_path: string };
 
 function csvValue(value: string | number): string {
   const text = String(value ?? "");
@@ -24,7 +27,32 @@ function rowsToCsv(rows: Array<Record<string, string | number>>): string {
 export class ExportService {
   constructor(private readonly database: AppDatabase, private readonly dataDirectory: string) {}
 
-  async export(sessionId: string, options?: { pickPath?: boolean }): Promise<string | null> {
+  private exportsDirectory(): string {
+    const directory = join(this.dataDirectory, "exports");
+    mkdirSync(directory, { recursive: true });
+    return directory;
+  }
+
+  private async exportSingleImage(asset: LocalAsset, root: string, options?: { pickPath?: boolean }): Promise<ExportResult> {
+    const extension = extname(asset.image_filename) || extname(asset.file_path) || ".png";
+    const filename = basename(asset.image_filename) || `image${extension}`;
+    let filePath = join(this.exportsDirectory(), `${root}_${filename}`);
+    if (options?.pickPath) {
+      const chosen = await pickSaveFile({
+        title: "Download image",
+        defaultName: filename,
+        filter: `*${extension}`,
+        filterLabel: `${extension.slice(1).toUpperCase()} image`,
+      });
+      if (!chosen) return { filePath: null, kind: "image", imageCount: 1 };
+      filePath = extname(chosen).toLowerCase() === extension.toLowerCase() ? chosen : `${chosen}${extension}`;
+    }
+    copyFileSync(asset.file_path, filePath);
+    void showNotification("BulkImg Studio", "Downloaded 1 image.");
+    return { filePath, kind: "image", imageCount: 1 };
+  }
+
+  async export(sessionId: string, options?: { pickPath?: boolean }): Promise<ExportResult> {
     const telemetry = this.database.getTelemetry(sessionId);
     const rows = this.database.getExportRows(sessionId);
     const assets = this.database.listSessionAssets(sessionId);
@@ -41,6 +69,8 @@ export class ExportService {
       `Key: ${row["Key_Used"]}`,
       `Prompt: ${row["Prompt_Text"]}`,
     ].join("\r\n")).join("\r\n\r\n");
+    const availableAssets = assets.filter((asset) => existsSync(asset.file_path));
+    if (availableAssets.length === 1) return this.exportSingleImage(availableAssets[0]!, root, options);
     const missing = assets.filter((asset) => !existsSync(asset.file_path));
     const readme = `# BulkImg Studio export\r\n\r\n` +
       `- Session: ${sessionId}\r\n` +
@@ -69,9 +99,7 @@ export class ExportService {
     }
 
     const archive = zipSync(files, { level: 6 });
-    const exportsDirectory = join(this.dataDirectory, "exports");
-    mkdirSync(exportsDirectory, { recursive: true });
-    let filePath = join(exportsDirectory, `${root}.zip`);
+    let filePath = join(this.exportsDirectory(), `${root}.zip`);
 
     if (options?.pickPath) {
       const chosen = await pickSaveFile({
@@ -80,21 +108,22 @@ export class ExportService {
         filter: "*.zip",
         filterLabel: "ZIP archive",
       });
-      if (!chosen) return null;
+      if (!chosen) return { filePath: null, kind: "zip", imageCount: availableAssets.length };
       filePath = chosen;
     }
 
     await Bun.write(filePath, archive);
-    void showNotification("BulkImg Studio", `Exported ${assets.length} image(s) to ZIP.`);
-    return filePath;
+    void showNotification("BulkImg Studio", `Exported ${availableAssets.length} image(s) to ZIP.`);
+    return { filePath, kind: "zip", imageCount: availableAssets.length };
   }
 
-  async exportRun(runId: string, options?: { pickPath?: boolean }): Promise<string | null> {
+  async exportRun(runId: string, options?: { pickPath?: boolean }): Promise<ExportResult> {
     const sessionIds = this.database.listSessionIdsForRun(runId);
     if (!sessionIds.length) throw new Error("That run has no sessions to export.");
     const timestamp = new Date().toISOString().replaceAll(":", "-").replace("T", "_").slice(0, 19);
     const root = `BulkImg_Run_${timestamp}`;
     const files: Record<string, Uint8Array> = {};
+    const availableAssets: LocalAsset[] = [];
     let imageCount = 0;
     for (const sessionId of sessionIds) {
       const rows = this.database.getExportRows(sessionId);
@@ -102,18 +131,18 @@ export class ExportService {
       files[`${root}/${sessionId}/metadata.csv`] = strToU8(rowsToCsv(rows));
       for (const asset of assets) {
         if (!existsSync(asset.file_path)) continue;
+        availableAssets.push(asset);
         const bytes = new Uint8Array(await Bun.file(asset.file_path).arrayBuffer());
         files[`${root}/${sessionId}/images/${asset.image_filename}`] = bytes;
         imageCount += 1;
       }
     }
+    if (availableAssets.length === 1) return this.exportSingleImage(availableAssets[0]!, root, options);
     files[`${root}/README.md`] = strToU8(
       `# BulkImg Studio run export\r\n\r\n- Run: ${runId}\r\n- Sessions: ${sessionIds.length}\r\n- Images: ${imageCount}\r\n`,
     );
     const archive = zipSync(files, { level: 6 });
-    const exportsDirectory = join(this.dataDirectory, "exports");
-    mkdirSync(exportsDirectory, { recursive: true });
-    let filePath = join(exportsDirectory, `${root}.zip`);
+    let filePath = join(this.exportsDirectory(), `${root}.zip`);
     if (options?.pickPath) {
       const chosen = await pickSaveFile({
         title: "Export run ZIP",
@@ -121,53 +150,54 @@ export class ExportService {
         filter: "*.zip",
         filterLabel: "ZIP archive",
       });
-      if (!chosen) return null;
+      if (!chosen) return { filePath: null, kind: "zip", imageCount };
       filePath = chosen;
     }
     await Bun.write(filePath, archive);
     void showNotification("BulkImg Studio", `Exported run (${imageCount} image(s)).`);
-    return filePath;
+    return { filePath, kind: "zip", imageCount };
   }
 
-  async exportSelectedHistory(assetIds: string[], options?: { pickPath?: boolean }): Promise<string | null> {
+  async exportSelectedHistory(assetIds: string[], options?: { pickPath?: boolean }): Promise<ExportResult> {
     const uniqueIds = [...new Set(assetIds.filter(Boolean))];
     if (!uniqueIds.length) throw new Error("Choose at least one image to download.");
     const timestamp = new Date().toISOString().replaceAll(":", "-").replace("T", "_").slice(0, 19);
     const root = `BulkImg_Selected_${timestamp}`;
     const files: Record<string, Uint8Array> = {};
+    const availableAssets: LocalAsset[] = [];
     let imageCount = 0;
     for (const assetId of uniqueIds) {
       const asset = this.database.getAsset(assetId);
       if (!asset || !existsSync(asset.file_path)) continue;
+      availableAssets.push(asset);
       const filename = imageCount ? `${imageCount + 1}_${asset.image_filename}` : asset.image_filename;
       files[`${root}/images/${filename}`] = new Uint8Array(await Bun.file(asset.file_path).arrayBuffer());
       imageCount += 1;
     }
     if (!imageCount) throw new Error("The selected images are no longer available locally.");
+    if (availableAssets.length === 1) return this.exportSingleImage(availableAssets[0]!, root, options);
     files[`${root}/README.md`] = strToU8(`# BulkImg Studio selected images\r\n\r\n- Images: ${imageCount}\r\n- Exported: ${new Date().toISOString()}\r\n`);
     const archive = zipSync(files, { level: 6 });
-    const exportsDirectory = join(this.dataDirectory, "exports");
-    mkdirSync(exportsDirectory, { recursive: true });
-    let filePath = join(exportsDirectory, `${root}.zip`);
+    let filePath = join(this.exportsDirectory(), `${root}.zip`);
     if (options?.pickPath) {
       const chosen = await pickSaveFile({ title: "Download selected images", defaultName: `${root}.zip`, filter: "*.zip", filterLabel: "ZIP archive" });
-      if (!chosen) return null;
+      if (!chosen) return { filePath: null, kind: "zip", imageCount };
       filePath = chosen;
     }
     await Bun.write(filePath, archive);
     void showNotification("BulkImg Studio", `Downloaded ${imageCount} selected image(s) as a ZIP.`);
-    return filePath;
+    return { filePath, kind: "zip", imageCount };
   }
 
   list() {
     const exportsDirectory = join(this.dataDirectory, "exports");
     mkdirSync(exportsDirectory, { recursive: true });
     return readdirSync(exportsDirectory)
-      .filter((name) => name.toLowerCase().endsWith(".zip"))
+      .filter((name) => /\.(zip|png|jpe?g|webp|avif|gif|bmp|tiff)$/i.test(name))
       .map((name) => {
         const filePath = join(exportsDirectory, name);
         const stat = statSync(filePath);
-        return { name, filePath, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString() };
+        return { name, filePath, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString(), kind: name.toLowerCase().endsWith(".zip") ? "zip" as const : "image" as const };
       })
       .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
   }

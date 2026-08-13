@@ -282,6 +282,14 @@ test("Library exposes select-all beside each image group", async ({ page }) => {
   await expect(page.locator("#library-selection")).toHaveText("2 images selected");
 });
 
+test("Library downloads one selected image as its original image file", async ({ page }) => {
+  await page.getByRole("button", { name: "Library" }).click();
+  await page.locator(".library-select-item").first().check();
+  await expect(page.locator("#library-selection")).toHaveText("1 image selected");
+  await page.getByRole("button", { name: "Download selected" }).click();
+  await expect(page.locator("#toast-message")).toHaveText("Image downloaded.");
+});
+
 test("Library previews remain inside the inline scroller on hover", async ({ page }) => {
   await page.getByRole("button", { name: "Library" }).click();
   const card = page.locator(".history-card").first();
